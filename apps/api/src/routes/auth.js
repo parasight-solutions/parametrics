@@ -1,0 +1,47 @@
+// apps/api/src/routes/auth.js
+import { Router } from "express";
+import bcrypt from "bcryptjs";
+import { col } from "../lib/mongo.js";
+import { signJwt } from "../lib/jwt.js";
+
+export const auth = Router();
+
+/**
+ * POST /api/v1/auth/login
+ * body: { email, password }
+ */
+auth.post("/login", async (req, res) => {
+  try {
+    const { email, password } = req.body || {};
+    if (!email || !password) {
+      return res.status(400).json({ error: { code: "bad_request" } });
+    }
+
+    const normalized = String(email).trim().toLowerCase();
+    const users = await col("users");
+
+    const user =
+      (await users.findOne({ normalized_email: normalized })) ||
+      (await users.findOne({ email: new RegExp(`^${normalized}$`, "i") }));
+
+    if (!user || !user.password) {
+      return res.status(401).json({ error: { code: "invalid" } });
+    }
+
+    const ok = await bcrypt.compare(password, user.password);
+    if (!ok) return res.status(401).json({ error: { code: "invalid" } });
+
+    const role = user.role || "user";
+    const token = signJwt({ user_id: user.id, role, email: user.email });
+
+    return res.json({
+      token,
+      user: { id: user.id, email: user.email, role },
+    });
+  } catch (e) {
+    console.error("[auth/login] error", e);
+    return res.status(500).json({ error: { code: "server_error" } });
+  }
+});
+
+export default auth;

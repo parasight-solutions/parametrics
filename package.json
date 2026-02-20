@@ -1,0 +1,25 @@
+{
+  "name": "parametrics",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "npm-run-all -p api:dev web:dev",
+    "api:dev": "npm-run-all -p api:serve api:workers api:scheduler",
+    "api:migrate": "npm run -w @parametrics/api migrate",
+    "api:seed": "node apps/api/src/scripts/seed.mongo.js",
+    "web:dev": "npm run -w @parametrics/web dev",
+    "api:serve": "node apps/api/src/server.js",
+    "api:workers": "node apps/api/src/workers/index.js",
+    "api:scheduler": "node apps/api/src/jobs/scheduler.js"
+  },
+  "devDependencies": {
+    "baseline-browser-mapping": "^2.9.11",
+    "npm-run-all": "^4.1.5"
+  },
+  "dependencies": {
+    "undici": "^7.16.0"
+  }
+}

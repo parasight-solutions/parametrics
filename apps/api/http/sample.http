@@ -1,0 +1,15 @@
+### Health
+GET http://localhost:5050/api/v1/health
+
+### Login (seeded admin)
+POST http://localhost:5050/api/v1/auth/login
+Content-Type: application/json
+
+{ "email":"admin@example.com", "password":"Admin@123456" }
+
+### Enqueue publish (replace {{token}} and postId from seed output)
+POST http://localhost:5050/api/v1/demo/enqueue/publish
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{ "postId":"REPLACE_WITH_SEEDED_POST_ID" }
