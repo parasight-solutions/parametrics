@@ -68,7 +68,12 @@ router.post("/sync", authenticate, async (req, res) => {
 
   const syncState = await getSyncState(userId, locationId);
 
-  // If already running/queued, don’t enqueue again (prevents spam + keeps UI clean)
+  // ✅ compute staleness BEFORE using it
+  const STALE_MS = 60 * 60 * 1000; // 60 min
+  const lastUpdMs = syncState?.updated_at ? new Date(syncState.updated_at).getTime() : 0;
+  const isStale = !syncState || !lastUpdMs || (Date.now() - lastUpdMs) > STALE_MS;
+
+  // If already running/queued and not stale, don’t enqueue again
   if (!force && !isStale && (syncState?.status === "running" || syncState?.status === "queued")) {
     return res.json({
       queued: true,
@@ -78,15 +83,10 @@ router.post("/sync", authenticate, async (req, res) => {
     });
   }
 
-  const STALE_MS = 60 * 60 * 1000; // 60 min
-  const lastUpd = syncState?.updated_at ? new Date(syncState.updated_at).getTime() : 0;
-  const isStale = lastUpd && (Date.now() - lastUpd) > STALE_MS;
-
   // Cursor for incremental sync (safe cursor: last_success_started_at)
   const cursor = syncState?.last_success_started_at || syncState?.last_synced_at || null;
   const since = !force && cursor ? new Date(cursor).toISOString() : null;
 
-  // ✅ Deterministic jobId per user+location (NO ":" allowed; underscore only)
   const jobId = `reviewSync_${userId}_${locationId}`;
 
   const job = await reviewSyncQueue.add(
@@ -101,7 +101,6 @@ router.post("/sync", authenticate, async (req, res) => {
     }
   );
 
-  // ✅ Reflect queued immediately (worker will flip to running)
   await setSyncQueued(userId, locationId, {
     last_job_id: String(job.id),
     since,
@@ -109,7 +108,6 @@ router.post("/sync", authenticate, async (req, res) => {
 
   res.json({ queued: true, jobId: String(job.id), since });
 });
-
 
 // PUT /api/v1/reviews/:id/reply { comment }
 router.put("/:id/reply", authenticate, async (req, res) => {

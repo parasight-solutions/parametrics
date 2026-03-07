@@ -34,13 +34,43 @@ const SCOPES = [
   'openid', 'email', 'profile'
 ].join(' ')
 
-const redirectUri = () =>
-  process.env.GOOGLE_REDIRECT_URI ||
-  `http://localhost:${process.env.PORT || 5050}/api/v1/integrations/google/callback`
+function reqOrigin(req) {
+  const host = req.get('x-forwarded-host') || req.get('host');
+  const proto = req.get('x-forwarded-proto') || req.protocol || 'http';
+  return `${proto}://${host}`;
+}
 
-const postConnectRedirect = () =>
-  process.env.GOOGLE_POST_CONNECT_REDIRECT ||
-  'http://localhost:5173/integrations/google/connected'
+// Prefer env for prod, but in dev compute from actual request host+port (prevents 5000 vs 5050 mismatch)
+function computeRedirectUri(req) {
+  return process.env.GOOGLE_REDIRECT_URI || `${reqOrigin(req)}/api/v1/integrations/google/callback`;
+}
+
+function postConnectRedirect() {
+  return process.env.GOOGLE_POST_CONNECT_REDIRECT || 'http://localhost:5173/integrations/google/connected';
+}
+
+function decodeJwtPayload(idToken) {
+  try {
+    const parts = String(idToken || '').split('.');
+    if (parts.length < 2) return null;
+    const b64 = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+    const pad = '='.repeat((4 - (b64.length % 4)) % 4);
+    const json = Buffer.from(b64 + pad, 'base64').toString('utf8');
+    return JSON.parse(json);
+  } catch {
+    return null;
+  }
+}
+
+async function fetchWithTimeout(url, options = {}, ms = 15000) {
+  const ac = new AbortController();
+  const t = setTimeout(() => ac.abort(), ms);
+  try {
+    return await fetch(url, { ...options, signal: ac.signal });
+  } finally {
+    clearTimeout(t);
+  }
+}
 
 function normalizeAccount(a) {
   const accountId = (a?.name || "").split("/").pop() || null
@@ -200,95 +230,123 @@ async function pickIntegrationForAccount(userId, accountName) {
 // 1) START (no auth mw)
 // ----------------------
 router.get('/start', (req, res) => {
-  const clientId = process.env.GOOGLE_CLIENT_ID || ''
+  const clientId = process.env.GOOGLE_CLIENT_ID || '';
   if (!clientId) {
-    return res.status(500).json({ error: { code: 'config', message: 'GOOGLE_CLIENT_ID missing in .env' } })
+    return res.status(500).json({ error: { code: 'config', message: 'GOOGLE_CLIENT_ID missing in .env' } });
   }
 
-  const u = userFromReq(req)
+  const u = userFromReq(req);
   if (!u?.user_id) {
-    console.error('[integrations.google/start] unauthorized: missing/invalid jwt. header=', !!req.headers.authorization, 'tParam=', !!req.query?.t)
-    return res.status(401).json({ error: { code: 'unauthorized', message: 'pass JWT as Bearer or ?t=' } })
+    console.error('[integrations.google/start] unauthorized: missing/invalid jwt. header=', !!req.headers.authorization, 'tParam=', !!req.query?.t);
+    return res.status(401).json({ error: { code: 'unauthorized', message: 'pass JWT as Bearer or ?t=' } });
   }
 
-  const state = signJwt({ uid: u.user_id, at: Date.now() }, { expiresIn: '10m' })
+  const ru = computeRedirectUri(req);
+
+  // Put redirect_uri inside state so callback uses the same value (prevents port/host mismatch)
+  const state = signJwt({ uid: u.user_id, ru, at: Date.now() }, { expiresIn: '10m' });
+
   const params = new URLSearchParams({
     client_id: clientId,
-    redirect_uri: redirectUri(),
+    redirect_uri: ru,
     response_type: 'code',
     scope: SCOPES,
     access_type: 'offline',
     prompt: 'consent',
     include_granted_scopes: 'true',
-    state
-  })
-  res.redirect(`${AUTH_BASE}?${params.toString()}`)
-})
+    state,
+  });
+
+  res.redirect(`${AUTH_BASE}?${params.toString()}`);
+});
 
 // -------------------------
 // 2) CALLBACK (no auth mw)
 // -------------------------
 router.get('/callback', async (req, res) => {
   try {
-    const { code, state } = req.query
-    if (!code || !state) return res.status(400).send('Missing code/state')
+    const { code, state } = req.query;
+    if (!code || !state) return res.status(400).send('Missing code/state');
 
-    let uid
-    try { uid = verifyJwt(String(state)).uid } catch { return res.status(400).send('Bad state') }
+    let uid, ru;
+    try {
+      const st = verifyJwt(String(state));
+      uid = st?.uid;
+      ru = st?.ru;
+    } catch {
+      return res.status(400).send('Bad state');
+    }
+
+    if (!uid) return res.status(400).send('Bad state (missing uid)');
+    if (!ru) return res.status(400).send('Bad state (missing redirect_uri)');
 
     const body = new URLSearchParams({
       code: String(code),
       client_id: process.env.GOOGLE_CLIENT_ID || '',
       client_secret: process.env.GOOGLE_CLIENT_SECRET || '',
-      redirect_uri: redirectUri(),
-      grant_type: 'authorization_code'
-    })
+      redirect_uri: String(ru),
+      grant_type: 'authorization_code',
+    });
 
-    const tokRes = await fetch(TOKEN_URL, {
+    const tokRes = await fetchWithTimeout(TOKEN_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body
-    })
+      body,
+    }, 15000);
 
     if (!tokRes.ok) {
-      const msg = await tokRes.text().catch(() => '')
-      console.error('[integrations.google/callback] token exchange failed:', tokRes.status, msg)
-      return res.status(502).send('Token exchange failed')
+      const msg = await tokRes.text().catch(() => '');
+      console.error('[integrations.google/callback] token exchange failed:', tokRes.status, msg);
+      return res.redirect(`${postConnectRedirect()}?google=fail&reason=token_exchange`);
     }
 
-    const tok = await tokRes.json()
-    if (!tok.id_token) return res.status(502).send('No id_token')
+    const tok = await tokRes.json();
 
-    const inf = await fetch(`${TOKENINFO_URL}?id_token=${encodeURIComponent(tok.id_token)}`)
-    if (!inf.ok) return res.status(502).send('Invalid id_token')
-    const info = await inf.json()
+    if (!tok.id_token) {
+      console.error('[integrations.google/callback] missing id_token');
+      return res.redirect(`${postConnectRedirect()}?google=fail&reason=missing_id_token`);
+    }
 
-    // IMPORTANT: preserve prior refresh_token if Google doesn't return it on reconnect
+    // Decode id_token locally (faster + fewer failure points than tokeninfo)
+    const info = decodeJwtPayload(tok.id_token) || {};
+    const sub = info.sub || null;
+    const email = info.email || null;
+
+    if (!sub) {
+      console.error('[integrations.google/callback] could not decode id_token sub');
+      return res.redirect(`${postConnectRedirect()}?google=fail&reason=bad_id_token`);
+    }
+
+    // Preserve refresh_token for SAME identity
     let prev = {};
     try {
-      // IMPORTANT: preserve refresh_token only for the SAME Google identity (sub)
-      const existing = await getGoogleIntegrationBySubject(uid, info.sub);
+      const existing = await getGoogleIntegrationBySubject(uid, sub);
       if (existing?.secrets_json) prev = decJson(existing.secrets_json || "{}") || {};
-    } catch { }
+    } catch {}
+
+    const expiresInSec = Number(tok.expires_in || 3600);
 
     const secrets = {
       access_token: tok.access_token,
       refresh_token: tok.refresh_token || prev.refresh_token || null,
-      expiry_date: Math.floor(Date.now() / 1000) + Number(tok.expires_in || 3600),
+
+      // IMPORTANT: store in MS (most refresh logic compares with Date.now())
+      expiry_date: Date.now() + (expiresInSec * 1000),
+
       scope: tok.scope,
       token_type: tok.token_type || 'Bearer',
       id_token: tok.id_token,
-      email: info.email || prev.email || null,
-      sub: info.sub || prev.sub || null
-    }
-    // Safety-net: ensure legacy unique index is gone + required indexes exist
+      email: email || prev.email || null,
+      sub: sub || prev.sub || null,
+    };
+
     await ensureGoogleIntegrationIndexes();
 
     try {
       await upsertGoogleIntegration(uid, {
         provider: "google",
-        provider_email: info.email || prev.email || null,
-        provider_subject: info.sub || prev.sub || null,
+        provider_email: email || prev.email || null,
+        provider_subject: sub || prev.sub || null,
         needs_reauth: false,
         revoked_at: null,
         reauth_reason: null,
@@ -296,14 +354,13 @@ router.get('/callback', async (req, res) => {
         secrets_json: encJson({ ...prev, ...secrets }),
       });
     } catch (e) {
-      // If the legacy unique index reappears, drop it and retry once
       if (e?.code === 11000 && e?.keyPattern?.user_id === 1 && e?.keyPattern?.provider === 1) {
         console.warn("[integrations.google/callback] duplicate on {user_id,provider}; fixing indexes and retrying once");
         await ensureGoogleIntegrationIndexes();
         await upsertGoogleIntegration(uid, {
           provider: "google",
-          provider_email: info.email || prev.email || null,
-          provider_subject: info.sub || prev.sub || null,
+          provider_email: email || prev.email || null,
+          provider_subject: sub || prev.sub || null,
           needs_reauth: false,
           revoked_at: null,
           reauth_reason: null,
@@ -315,12 +372,12 @@ router.get('/callback', async (req, res) => {
       }
     }
 
-    return res.redirect(postConnectRedirect())
+    return res.redirect(`${postConnectRedirect()}?google=ok`);
   } catch (e) {
-    console.error('[integrations.google/callback] fatal error:', e)
-    return res.status(500).send('Google connect failed. Check server logs.')
+    console.error('[integrations.google/callback] fatal error:', e);
+    return res.redirect(`${postConnectRedirect()}?google=fail&reason=server_error`);
   }
-})
+});
 
 // ---------------------------
 // 3) STATUS (Bearer auth)

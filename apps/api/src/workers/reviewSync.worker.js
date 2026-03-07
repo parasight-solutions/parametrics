@@ -1,5 +1,5 @@
 // apps/api/src/workers/reviewSync.worker.js
-import "dotenv/config";
+import "../startup/env.js";
 import { Worker } from "bullmq";
 import pino from "pino";
 import crypto from "crypto";
