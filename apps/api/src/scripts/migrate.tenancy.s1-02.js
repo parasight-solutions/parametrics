@@ -192,6 +192,7 @@ async function resolveTenancyFromLocationDoc(locationDoc) {
       clientId: "",
       source: "missing_location",
       orgName: "",
+      verified: false,
     };
   }
 
@@ -212,10 +213,21 @@ async function resolveTenancyFromLocationDoc(locationDoc) {
       clientId: "",
       source: "no_org_binding",
       orgName: "",
+      verified: false,
     };
   }
 
   const org = await getOrgById(organizationId);
+  if (!org?.id) {
+    return {
+      organizationId,
+      clientId: "",
+      source: "org_not_found",
+      orgName: "",
+      verified: false,
+    };
+  }
+
   const orgName = cleanStr(org?.name, 200);
 
   const currentClientId = cleanStr(locationDoc.client_id, 200);
@@ -226,6 +238,8 @@ async function resolveTenancyFromLocationDoc(locationDoc) {
     clientId: currentClientId || cleanStr(defaultClient?.id, 200),
     source: currentOrgId ? "location" : "location_org_map",
     orgName,
+    verified: true,
+    defaultClientMissing: !currentClientId && !defaultClient,
   };
 }
 
@@ -248,10 +262,13 @@ async function backfillOrgs() {
 
   const result = {
     scanned: 0,
+    backfillable: 0,
+    applied: 0,
     updated: 0,
     ownerUserIdBackfilled: 0,
     slugBackfilled: 0,
     statusBackfilled: 0,
+    defaultClientsBackfillable: 0,
     defaultClientsCreated: 0,
     skippedMissingId: 0,
     skippedMissingOwnerAndUser: 0,
@@ -297,14 +314,16 @@ async function backfillOrgs() {
 
     if (Object.keys(updates).length > 0) {
       updates.updated_at = new Date();
+      result.backfillable += 1;
 
       if (MODE === "apply") {
         await orgs.updateOne({ _id: org._id }, { $set: updates });
+        result.applied += 1;
+        result.updated += 1;
       }
 
-      result.updated += 1;
       pushSample(result.samples, {
-        type: "org_updated",
+        type: MODE === "apply" ? "org_applied" : "org_backfillable",
         id: orgId,
         updates: Object.keys(updates),
       });
@@ -322,15 +341,20 @@ async function backfillOrgs() {
     }
 
     const before = await getDefaultClientCached(orgId, orgName);
-    if (!before && MODE === "apply") {
-      const created = await getOrCreateDefaultClientForOrganization({
-        organizationId: orgId,
-        organizationName: orgName,
-      });
-      cache.defaultClientByOrgId.set(orgId, created || null);
-      result.defaultClientsCreated += 1;
+    if (!before) {
+      result.defaultClientsBackfillable += 1;
+
+      if (MODE === "apply") {
+        const created = await getOrCreateDefaultClientForOrganization({
+          organizationId: orgId,
+          organizationName: orgName,
+        });
+        cache.defaultClientByOrgId.set(orgId, created || null);
+        result.defaultClientsCreated += 1;
+      }
+
       pushSample(result.samples, {
-        type: "default_client_created",
+        type: MODE === "apply" ? "default_client_created" : "default_client_backfillable",
         organization_id: orgId,
       });
     }
@@ -356,7 +380,10 @@ async function backfillLocationOrgMapMirror() {
 
   const result = {
     scanned: 0,
+    backfillable: 0,
+    applied: 0,
     updated: 0,
+    skippedMissingOrgId: 0,
     samples: [],
   };
 
@@ -366,7 +393,18 @@ async function backfillLocationOrgMapMirror() {
     const orgId = cleanStr(row.org_id, 200);
     const organizationId = cleanStr(row.organization_id, 200);
 
-    if (!orgId || organizationId === orgId) continue;
+    if (!orgId) {
+      result.skippedMissingOrgId += 1;
+      pushSample(result.samples, {
+        type: "location_org_map_missing_org_id",
+        user_id: row.user_id,
+        location_id: row.location_id,
+      });
+      continue;
+    }
+    if (organizationId === orgId) continue;
+
+    result.backfillable += 1;
 
     if (MODE === "apply") {
       await mapCol.updateOne(
@@ -378,11 +416,12 @@ async function backfillLocationOrgMapMirror() {
           },
         }
       );
+      result.applied += 1;
+      result.updated += 1;
     }
 
-    result.updated += 1;
     pushSample(result.samples, {
-      type: "location_org_map_mirror_updated",
+      type: MODE === "apply" ? "location_org_map_mirror_applied" : "location_org_map_mirror_backfillable",
       user_id: row.user_id,
       location_id: row.location_id,
       organization_id: orgId,
@@ -411,8 +450,12 @@ async function backfillLocations() {
 
   const result = {
     scanned: 0,
+    backfillable: 0,
+    applied: 0,
     updated: 0,
     orphans: 0,
+    orphanUnboundSkipped: 0,
+    missingDefaultClientSkipped: 0,
     samples: [],
   };
 
@@ -422,6 +465,7 @@ async function backfillLocations() {
     const locationId = cleanStr(loc.id, 200);
     if (!locationId) {
       result.orphans += 1;
+      result.orphanUnboundSkipped += 1;
       pushSample(result.samples, {
         type: "location_missing_id",
         title: cleanStr(loc.title, 200) || null,
@@ -432,11 +476,16 @@ async function backfillLocations() {
     const tenancy = await resolveTenancyFromLocationDoc(loc);
     if (!tenancy.organizationId || !tenancy.clientId) {
       result.orphans += 1;
+      result.orphanUnboundSkipped += 1;
+      if (tenancy.verified && tenancy.defaultClientMissing) {
+        result.missingDefaultClientSkipped += 1;
+      }
       pushSample(result.samples, {
         type: "location_missing_tenancy",
         id: locationId,
         title: cleanStr(loc.title, 200) || null,
         source: tenancy.source,
+        organization_id: tenancy.organizationId || null,
       });
       continue;
     }
@@ -455,6 +504,7 @@ async function backfillLocations() {
     if (Object.keys(updates).length === 0) continue;
 
     updates.updated_at = new Date();
+    result.backfillable += 1;
 
     if (MODE === "apply") {
       await locations.updateOne({ _id: loc._id }, { $set: updates });
@@ -471,11 +521,12 @@ async function backfillLocations() {
       const arr = cache.locationRowsById.get(loc.id) || [];
       const replaced = arr.map((x) => (x.id === loc.id && x.user_id === loc.user_id ? merged : x));
       cache.locationRowsById.set(loc.id, replaced.length ? replaced : [merged]);
+      result.applied += 1;
+      result.updated += 1;
     }
 
-    result.updated += 1;
     pushSample(result.samples, {
-      type: "location_updated",
+      type: MODE === "apply" ? "location_applied" : "location_backfillable",
       id: locationId,
       organization_id: tenancy.organizationId,
       client_id: tenancy.clientId,
@@ -508,8 +559,11 @@ async function backfillByLocationReference({
 
   const result = {
     scanned: 0,
+    backfillable: 0,
+    applied: 0,
     updated: 0,
     orphans: 0,
+    orphanUnboundSkipped: 0,
     samples: [],
   };
 
@@ -519,6 +573,7 @@ async function backfillByLocationReference({
     const locationId = cleanStr(doc.location_id, 200);
     if (!locationId) {
       result.orphans += 1;
+      result.orphanUnboundSkipped += 1;
       pushSample(result.samples, {
         type: `${collectionName}_missing_location_id`,
         id: cleanStr(doc.id, 200) || null,
@@ -529,6 +584,7 @@ async function backfillByLocationReference({
     const loc = getLocationForRef(doc.user_id, locationId);
     if (!loc) {
       result.orphans += 1;
+      result.orphanUnboundSkipped += 1;
       pushSample(result.samples, {
         type: `${collectionName}_location_not_found`,
         id: cleanStr(doc.id, 200) || null,
@@ -541,10 +597,13 @@ async function backfillByLocationReference({
     const tenancy = await resolveTenancyFromLocationDoc(loc);
     if (!tenancy.organizationId || !tenancy.clientId) {
       result.orphans += 1;
+      result.orphanUnboundSkipped += 1;
       pushSample(result.samples, {
         type: `${collectionName}_missing_tenancy`,
         id: cleanStr(doc.id, 200) || null,
         location_id: locationId,
+        source: tenancy.source,
+        organization_id: tenancy.organizationId || null,
       });
       continue;
     }
@@ -572,14 +631,16 @@ async function backfillByLocationReference({
     if (Object.keys(updates).length === 0) continue;
 
     updates.updated_at = new Date();
+    result.backfillable += 1;
 
     if (MODE === "apply") {
       await collection.updateOne({ _id: doc._id }, { $set: updates });
+      result.applied += 1;
+      result.updated += 1;
     }
 
-    result.updated += 1;
     pushSample(result.samples, {
-      type: `${collectionName}_updated`,
+      type: MODE === "apply" ? `${collectionName}_applied` : `${collectionName}_backfillable`,
       id: cleanStr(doc.id, 200) || null,
       location_id: locationId,
       organization_id: tenancy.organizationId,
@@ -692,6 +753,15 @@ async function dryRun() {
   console.log(
     json({
       mode: MODE,
+      safety: {
+        dryRunDefault: true,
+        writesPerformed: false,
+        applyRequiresFlag: "--apply",
+        noDestructiveCleanup: true,
+        noAutoBindImportedLocations: true,
+        noActiveUserOrOrgGuessing: true,
+        onlyVerifiedMappingsBackfillable: true,
+      },
       orgs,
       locationOrgMap: map,
       locations,
@@ -703,7 +773,7 @@ async function dryRun() {
   );
 
   console.log("");
-  console.log("No writes were performed.");
+  console.log("No writes were performed. Use --apply only after review.");
   process.exit(0);
 }
 
@@ -748,6 +818,13 @@ async function apply() {
   console.log(
     json({
       mode: MODE,
+      safety: {
+        writesPerformed: true,
+        noDestructiveCleanup: true,
+        noAutoBindImportedLocations: true,
+        noActiveUserOrOrgGuessing: true,
+        onlyVerifiedMappingsBackfilled: true,
+      },
       orgs,
       locationOrgMap: map,
       locations,

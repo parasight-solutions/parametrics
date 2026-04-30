@@ -63,9 +63,40 @@ Google location import must not bind locations to an organization or client auto
 
 Import may update provider metadata and Google integration references on `locations`, but it must leave `organization_id`, `client_id`, and `org_id` untouched unless the user performs an explicit bind action.
 
-## S1-10 Migration And Cleanup
+## S1-10 Migration Audit
 
-S1-10 or a later cleanup task should handle data migration and removal planning, including:
+The tenancy migration script is the current audit entrypoint:
+
+```bash
+npm run -w @parametrics/api migrate:tenancy:s1-02
+```
+
+Dry-run is the default. It must not write data.
+
+Apply mode requires an explicit flag and should only be run after proof review:
+
+```bash
+npm run -w @parametrics/api migrate:tenancy:s1-02 -- --apply
+```
+
+The dry-run/apply output distinguishes:
+
+- `backfillable`: records with verified source data that can be updated safely.
+- `applied`: records actually changed in `--apply` mode.
+- `orphans` / `orphanUnboundSkipped`: records that cannot be backfilled because a location, organization, client, or verified binding is missing.
+
+Safe backfill rules:
+
+- Organizations may receive missing `owner_user_id`, `slug`, `status`, and a default client.
+- `location_org_map.organization_id` may be mirrored from `location_org_map.org_id` for legacy compatibility.
+- Locations may receive canonical `organization_id` and `client_id` only from a verified location or legacy explicit binding that resolves to a real organization and safe client.
+- Posts, reviews, review sync state, and recurrence rules may receive canonical scope only from their referenced location.
+
+The migration must not auto-bind imported Google locations, bind by active user, bind by active organization guesses, or delete stale data.
+
+## Future Cleanup
+
+Later cleanup should handle removal planning, including:
 
 - Backfilling canonical fields for verified legacy bindings.
 - Auditing rows that have `location_org_map` entries but missing canonical fields.
@@ -73,7 +104,7 @@ S1-10 or a later cleanup task should handle data migration and removal planning,
 - Deciding when legacy map reads can be removed.
 - Deciding when `location_org_map` and `locations.org_id` can stop being written.
 
-No destructive migration or collection removal is part of S1-09.
+No destructive migration or collection removal is part of S1-10.
 
 ## Forbidden Behavior
 

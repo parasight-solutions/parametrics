@@ -25,7 +25,8 @@ That target state is not implemented by assumption. It should guide safe naming 
 - S1-06 API process entrypoint: API, worker, and scheduler runtimes remain separate, with an explicit API startup command and documented runtime contract.
 - S1-07 worker process entrypoint: worker startup has a dedicated production-style command and documented runtime contract without starting API or scheduler runtimes.
 - S1-08 scheduler process entrypoint: scheduler startup has a dedicated production-style command and documented runtime contract without starting API or worker runtimes.
-- S1-09 location-org mapping direction in progress: `locations.organization_id` and `locations.client_id` are the canonical binding source, while `locations.org_id` and `location_org_map` remain legacy compatibility only.
+- S1-09 location-org mapping direction: `locations.organization_id` and `locations.client_id` are the canonical binding source, while `locations.org_id` and `location_org_map` remain legacy compatibility only.
+- S1-10 tenancy migration audit in progress: dry-run migration/audit output must distinguish backfillable, applied, and orphan/unbound records without auto-binding imported Google locations.
 
 ## Explicit Forbidden Work
 
@@ -36,6 +37,8 @@ Do not fake tenant support. UI or backend code must not pretend tenant switching
 Do not auto-bind imported Google locations. Imported Google locations must not be silently attached to an org/client just to make UI state look complete.
 
 For location-org binding, explicit bind writes canonical `locations.organization_id` and `locations.client_id` first. Legacy `locations.org_id` and `location_org_map` may be dual-written for compatibility, but reads should prefer canonical location fields and must not require the legacy bridge when canonical fields exist.
+
+Migration/audit scripts must be dry-run by default. Apply mode must require an explicit flag, must only backfill verified mappings, and must not delete records or infer bindings from active user/org state.
 
 Do not loosen backend ownership guards. If a stale Beetle or other location id returns 404 for another user, that is correct backend behavior.
 
