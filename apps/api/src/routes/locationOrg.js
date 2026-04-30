@@ -7,6 +7,7 @@ import {
   normalizeLocationBinding,
   resolveCanonicalLocationScope,
 } from "../services/locationBinding.js";
+import { auditSuccess } from "../services/auditLog.js";
 
 const router = Router();
 
@@ -159,6 +160,14 @@ router.put("/", authenticate, async (req, res) => {
     locationId,
     organizationId: org.id,
     clientId: defaultClient.id,
+  });
+
+  await auditSuccess(req, "location.bind", {
+    target_type: "location",
+    target_id: locationId,
+    organization_id: org.id,
+    client_id: defaultClient.id,
+    location_id: locationId,
   });
 
   return res.json({

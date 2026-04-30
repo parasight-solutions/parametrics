@@ -5,6 +5,7 @@ import { col } from "../lib/mongo.js";
 import { authenticate } from "../middleware/auth.js";
 import { getOrCreateDefaultClientForOrganization } from "../services/clients.js";
 import { normalizeLocationBinding } from "../services/locationBinding.js";
+import { auditSuccess } from "../services/auditLog.js";
 
 const router = Router();
 
@@ -212,6 +213,14 @@ router.post("/bind-location", authenticate, async (req, res) => {
     locationId: locId,
     organizationId: org.id,
     clientId: defaultClient.id,
+  });
+
+  await auditSuccess(req, "location.bind", {
+    target_type: "location",
+    target_id: locId,
+    organization_id: org.id,
+    client_id: defaultClient.id,
+    location_id: locId,
   });
 
   return res.json({

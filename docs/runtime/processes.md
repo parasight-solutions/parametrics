@@ -52,6 +52,15 @@ API rate limiting behavior:
 - Basic health checks are not rate-limited.
 - Sensitive endpoints return HTTP `429` with JSON `error.code: "rate_limited"` and `error.retry_after_seconds`.
 - Authenticated route limit keys prefer `req.user.user_id`; unauthenticated route limit keys fall back to client IP. Each limiter includes its action bucket in the key.
+- Rate-limited events are not written to audit logs in S1-13 to avoid noisy logs from unauthenticated probes. Distributed rate-limit telemetry remains a future hardening follow-up.
+
+API audit logging behavior:
+
+- Critical user/provider actions are written best-effort to the MongoDB `audit_logs` collection by the API process.
+- Audit write failures are logged server-side and must not fail the user-facing request.
+- Audit records include request context, actor identifiers when available, target identifiers, tenancy/location fields when available, provider when relevant, status, sanitized metadata, and `created_at`.
+- Secrets must never be written to audit logs. Do not log passwords, JWTs, OAuth access tokens, refresh tokens, ID tokens, raw Google auth codes, authorization headers, encrypted secret payloads, or large request bodies.
+- Audit metadata must stay compact and sanitized; store identifiers, counts, outcome reasons, and small flags rather than provider payloads or full request bodies.
 
 ## Worker Process
 

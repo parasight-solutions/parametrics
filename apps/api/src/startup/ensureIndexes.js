@@ -327,4 +327,29 @@ export async function ensureIndexes() {
   await ensureIndex(locationOrgMap, { org_id: 1, updated_at: -1 }, {
     name: "idx_location_org_map_org_updated_at",
   });
+
+  // ---------------------------------------------------------------------------
+  // audit_logs
+  // ---------------------------------------------------------------------------
+  const auditLogs = await col("audit_logs");
+
+  await ensureIndex(auditLogs, { created_at: -1 }, {
+    name: "idx_audit_logs_created_at_desc",
+  });
+
+  await ensureIndex(auditLogs, { actor_user_id: 1, created_at: -1 }, {
+    name: "idx_audit_logs_actor_created_at",
+  });
+
+  await ensureIndex(auditLogs, { action: 1, created_at: -1 }, {
+    name: "idx_audit_logs_action_created_at",
+  });
+
+  await ensureIndex(auditLogs, { organization_id: 1, created_at: -1 }, {
+    name: "idx_audit_logs_org_created_at",
+  });
+
+  await ensureIndex(auditLogs, { location_id: 1, created_at: -1 }, {
+    name: "idx_audit_logs_location_created_at",
+  });
 }

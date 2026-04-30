@@ -5,6 +5,7 @@ import { config } from "../config.js";
 import { signJwt, verifyJwt } from "../lib/jwt.js";
 import { col } from "../lib/mongo.js";
 import { oauthRateLimit } from "../middleware/rateLimit.js";
+import { auditFailure, auditSuccess } from "../services/auditLog.js";
 
 const router = Router();
 
@@ -181,6 +182,11 @@ router.get("/callback", oauthRateLimit, async (req, res) => {
     const { code, state } = req.query;
 
     if (!code || !state) {
+      await auditFailure(req, "auth.google.callback", {
+        target_type: "user",
+        provider: "google",
+        metadata: { reason: "missing_code_or_state" },
+      });
       return res.status(400).send("Missing code/state");
     }
 
@@ -188,6 +194,11 @@ router.get("/callback", oauthRateLimit, async (req, res) => {
     try {
       st = verifyJwt(String(state));
     } catch {
+      await auditFailure(req, "auth.google.callback", {
+        target_type: "user",
+        provider: "google",
+        metadata: { reason: "bad_state" },
+      });
       return res.status(400).send("Bad state");
     }
 
@@ -200,6 +211,11 @@ router.get("/callback", oauthRateLimit, async (req, res) => {
     const idToken = tok?.id_token;
 
     if (!idToken) {
+      await auditFailure(req, "auth.google.callback", {
+        target_type: "user",
+        provider: "google",
+        metadata: { reason: "missing_id_token" },
+      });
       return res.status(502).send("No id_token from Google");
     }
 
@@ -221,11 +237,26 @@ router.get("/callback", oauthRateLimit, async (req, res) => {
       email: user.email,
     });
 
+    await auditSuccess(req, "auth.google.callback", {
+      actor_user_id: user.id,
+      actor_role: user.role,
+      target_type: "user",
+      target_id: user.id,
+      provider: "google",
+      metadata: { email: user.email },
+    });
+
     return res.redirect(
       `${returnUrl}?gjwt=${encodeURIComponent(appJwt)}`
     );
   } catch (e) {
     console.error("[auth/google/callback] error", e);
+    const reason = String(e?.message || "server_error").split(":").slice(0, 2).join(":");
+    await auditFailure(req, "auth.google.callback", {
+      target_type: "user",
+      provider: "google",
+      metadata: { reason },
+    });
     return res.status(500).send("Google login failed");
   }
 });

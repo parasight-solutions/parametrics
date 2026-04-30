@@ -10,6 +10,7 @@ import {
   requireOwnedLocation,
   toApiError,
 } from "../services/ownership.js";
+import { auditFailure, auditSuccess } from "../services/auditLog.js";
 
 const router = Router();
 
@@ -66,6 +67,7 @@ router.get("/", authenticate, async (req, res) => {
 });
 
 router.put("/", authenticate, mutationRateLimit, async (req, res) => {
+  let auditTarget = {};
   try {
     const userId = req.user.user_id;
     const locationId = String(req.query.locationId || "").trim();
@@ -74,6 +76,13 @@ router.put("/", authenticate, mutationRateLimit, async (req, res) => {
     }
 
     const loc = await requireOwnedLocation(userId, locationId, { provider: "google" });
+    auditTarget = {
+      target_type: "recurrence_rule",
+      organization_id: loc.organization_id,
+      client_id: loc.client_id,
+      location_id: loc.id,
+      provider: "google",
+    };
 
     const body = req.body || {};
 
@@ -214,8 +223,18 @@ router.put("/", authenticate, mutationRateLimit, async (req, res) => {
       { projection: { _id: 0 } }
     );
 
+    await auditSuccess(req, "recurrence.rule.upsert", {
+      ...auditTarget,
+      target_id: saved?.id || doc.id,
+      metadata: { enabled, mode, frequency, count },
+    });
+
     return res.json({ rule: saved });
   } catch (e) {
+    await auditFailure(req, "recurrence.rule.upsert", {
+      ...auditTarget,
+      metadata: { reason: e?.message || e?.code || "server_error" },
+    });
     return toApiError(res, e);
   }
 });
@@ -253,6 +272,7 @@ router.get("/posts", authenticate, async (req, res) => {
 });
 
 router.post("/plan-now", authenticate, generationRateLimit, async (req, res) => {
+  let auditTarget = {};
   try {
     const userId = req.user.user_id;
     const locationId = String(req.query.locationId || "").trim();
@@ -261,6 +281,13 @@ router.post("/plan-now", authenticate, generationRateLimit, async (req, res) => 
     }
 
     const loc = await requireOwnedLocation(userId, locationId, { provider: "google" });
+    auditTarget = {
+      target_type: "recurrence_rule",
+      organization_id: loc.organization_id,
+      client_id: loc.client_id,
+      location_id: loc.id,
+      provider: "google",
+    };
 
     const rules = await col("recurrence_rules");
     const rule = await rules.findOne(
@@ -276,8 +303,20 @@ router.post("/plan-now", authenticate, generationRateLimit, async (req, res) => 
     }
 
     const out = await planForRule(rule);
+    await auditSuccess(req, "recurrence.plan_now", {
+      ...auditTarget,
+      target_id: rule.id,
+      metadata: {
+        planned: out?.planned ?? null,
+        skipped: out?.skipped ?? null,
+      },
+    });
     return res.json({ ok: true, ...out });
   } catch (e) {
+    await auditFailure(req, "recurrence.plan_now", {
+      ...auditTarget,
+      metadata: { reason: e?.message || e?.code || "server_error" },
+    });
     return toApiError(res, e);
   }
 });

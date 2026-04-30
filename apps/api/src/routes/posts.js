@@ -16,6 +16,7 @@ import {
   requireOwnedLocation,
   toApiError,
 } from "../services/ownership.js";
+import { auditQueued, auditSuccess } from "../services/auditLog.js";
 
 const router = Router();
 const publishQueue = makeQueue("post-publish");
@@ -392,9 +393,28 @@ router.post("/", authenticate, generationRateLimit, async (req, res) => {
 
     if (b.publishNow) {
       await enqueuePublishNow({ postId: id, userId, reason: "manual-publish" });
+      await auditQueued(req, "post.publish.queue", {
+        target_type: "post",
+        target_id: id,
+        organization_id: loc.organization_id,
+        client_id: loc.client_id,
+        location_id: loc.id,
+        provider: "google",
+        metadata: { reason: "manual-publish" },
+      });
     } else {
       await removePublishJob(id);
     }
+
+    await auditSuccess(req, "post.create", {
+      target_type: "post",
+      target_id: id,
+      organization_id: loc.organization_id,
+      client_id: loc.client_id,
+      location_id: loc.id,
+      provider: "google",
+      metadata: { status: doc.status, publishNow: b.publishNow },
+    });
 
     return res.json({
       post: {
@@ -475,9 +495,28 @@ router.patch("/:id", authenticate, generationRateLimit, async (req, res) => {
 
     if (updated.status === "queued") {
       await enqueuePublishNow({ postId: id, userId, reason: "edit-publish" });
+      await auditQueued(req, "post.publish.queue", {
+        target_type: "post",
+        target_id: id,
+        organization_id: loc.organization_id,
+        client_id: loc.client_id,
+        location_id: loc.id,
+        provider: "google",
+        metadata: { reason: "edit-publish" },
+      });
     } else {
       await removePublishJob(id);
     }
+
+    await auditSuccess(req, "post.update", {
+      target_type: "post",
+      target_id: id,
+      organization_id: loc.organization_id,
+      client_id: loc.client_id,
+      location_id: loc.id,
+      provider: "google",
+      metadata: { status: updated.status, queued: updated.status === "queued" },
+    });
 
     return res.json({ post: updated });
   } catch (e) {
@@ -535,6 +574,16 @@ router.post("/:id/retry", authenticate, generationRateLimit, async (req, res) =>
 
     await enqueuePublishNow({ postId: id, userId, reason: "manual-retry" });
 
+    await auditQueued(req, "post.retry", {
+      target_type: "post",
+      target_id: id,
+      organization_id: loc.organization_id,
+      client_id: loc.client_id,
+      location_id: loc.id,
+      provider: "google",
+      metadata: { reason: "manual-retry" },
+    });
+
     return res.json({ ok: true });
   } catch (e) {
     return toApiError(res, e);
@@ -562,6 +611,15 @@ router.delete("/:id", authenticate, mutationRateLimit, async (req, res) => {
       organization_id: loc.organization_id,
       client_id: loc.client_id,
       location_id: loc.id,
+    });
+
+    await auditSuccess(req, "post.delete", {
+      target_type: "post",
+      target_id: id,
+      organization_id: loc.organization_id,
+      client_id: loc.client_id,
+      location_id: loc.id,
+      provider: "google",
     });
 
     return res.json({ ok: true });

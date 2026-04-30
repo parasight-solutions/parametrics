@@ -22,6 +22,7 @@ import {
 import { authenticate } from '../middleware/auth.js'
 import { mutationRateLimit, oauthRateLimit, syncRateLimit } from '../middleware/rateLimit.js'
 import { ensureGoogleIntegrationIndexes } from "../integrations/google.indexes.js";
+import { auditFailure, auditSuccess } from "../services/auditLog.js";
 
 const router = Router()
 
@@ -207,12 +208,22 @@ async function pickIntegrationForAccount(userId, accountName) {
 router.get('/start', oauthRateLimit, (req, res) => {
   const clientId = process.env.GOOGLE_CLIENT_ID || '';
   if (!clientId) {
+    auditFailure(req, "google.oauth.start", {
+      target_type: "integration",
+      provider: "google",
+      metadata: { reason: "missing_client_id" },
+    });
     return res.status(500).json({ error: { code: 'config', message: 'GOOGLE_CLIENT_ID missing in .env' } });
   }
 
   const u = userFromReq(req);
   if (!u?.user_id) {
     console.error('[integrations.google/start] unauthorized: missing/invalid jwt. header=', !!req.headers.authorization, 'tParam=', !!req.query?.t);
+    auditFailure(req, "google.oauth.start", {
+      target_type: "integration",
+      provider: "google",
+      metadata: { reason: "unauthorized" },
+    });
     return res.status(401).json({ error: { code: 'unauthorized', message: 'pass JWT as Bearer or ?t=' } });
   }
 
@@ -232,6 +243,13 @@ router.get('/start', oauthRateLimit, (req, res) => {
     state,
   });
 
+  auditSuccess(req, "google.oauth.start", {
+    actor_user_id: u.user_id,
+    actor_role: u.role,
+    target_type: "integration",
+    provider: "google",
+  });
+
   res.redirect(`${AUTH_BASE}?${params.toString()}`);
 });
 
@@ -239,21 +257,49 @@ router.get('/start', oauthRateLimit, (req, res) => {
 // 2) CALLBACK (no auth mw)
 // -------------------------
 router.get('/callback', oauthRateLimit, async (req, res) => {
+  let uid = null;
   try {
     const { code, state } = req.query;
-    if (!code || !state) return res.status(400).send('Missing code/state');
+    if (!code || !state) {
+      await auditFailure(req, "google.oauth.callback", {
+        target_type: "integration",
+        provider: "google",
+        metadata: { reason: "missing_code_or_state" },
+      });
+      return res.status(400).send('Missing code/state');
+    }
 
-    let uid, ru;
+    let ru;
     try {
       const st = verifyJwt(String(state));
       uid = st?.uid;
       ru = st?.ru;
     } catch {
+      await auditFailure(req, "google.oauth.callback", {
+        target_type: "integration",
+        provider: "google",
+        metadata: { reason: "bad_state" },
+      });
       return res.status(400).send('Bad state');
     }
 
-    if (!uid) return res.status(400).send('Bad state (missing uid)');
-    if (!ru) return res.status(400).send('Bad state (missing redirect_uri)');
+    if (!uid) {
+      await auditFailure(req, "google.oauth.callback", {
+        target_type: "integration",
+        provider: "google",
+        metadata: { reason: "missing_uid" },
+      });
+      return res.status(400).send('Bad state (missing uid)');
+    }
+    if (!ru) {
+      await auditFailure(req, "google.oauth.callback", {
+        actor_user_id: uid,
+        target_type: "integration",
+        provider: "google",
+        metadata: { reason: "missing_redirect_uri" },
+      });
+      return res.status(400).send('Bad state (missing redirect_uri)');
+    }
 
     const body = new URLSearchParams({
       code: String(code),
@@ -272,6 +318,12 @@ router.get('/callback', oauthRateLimit, async (req, res) => {
     if (!tokRes.ok) {
       const msg = await tokRes.text().catch(() => '');
       console.error('[integrations.google/callback] token exchange failed:', tokRes.status, msg);
+      await auditFailure(req, "google.oauth.callback", {
+        actor_user_id: uid,
+        target_type: "integration",
+        provider: "google",
+        metadata: { reason: "token_exchange", status: tokRes.status },
+      });
       return res.redirect(`${postConnectRedirect()}?google=fail&reason=token_exchange`);
     }
 
@@ -279,6 +331,12 @@ router.get('/callback', oauthRateLimit, async (req, res) => {
 
     if (!tok.id_token) {
       console.error('[integrations.google/callback] missing id_token');
+      await auditFailure(req, "google.oauth.callback", {
+        actor_user_id: uid,
+        target_type: "integration",
+        provider: "google",
+        metadata: { reason: "missing_id_token" },
+      });
       return res.redirect(`${postConnectRedirect()}?google=fail&reason=missing_id_token`);
     }
 
@@ -289,6 +347,12 @@ router.get('/callback', oauthRateLimit, async (req, res) => {
 
     if (!sub) {
       console.error('[integrations.google/callback] could not decode id_token sub');
+      await auditFailure(req, "google.oauth.callback", {
+        actor_user_id: uid,
+        target_type: "integration",
+        provider: "google",
+        metadata: { reason: "bad_id_token" },
+      });
       return res.redirect(`${postConnectRedirect()}?google=fail&reason=bad_id_token`);
     }
 
@@ -318,8 +382,9 @@ router.get('/callback', oauthRateLimit, async (req, res) => {
 
     await ensureGoogleIntegrationIndexes();
 
+    let savedIntegration = null;
     try {
-      await upsertGoogleIntegration(uid, {
+      savedIntegration = await upsertGoogleIntegration(uid, {
         provider: "google",
         provider_email: email || prev.email || null,
         provider_subject: sub || prev.sub || null,
@@ -333,7 +398,7 @@ router.get('/callback', oauthRateLimit, async (req, res) => {
       if (e?.code === 11000 && e?.keyPattern?.user_id === 1 && e?.keyPattern?.provider === 1) {
         console.warn("[integrations.google/callback] duplicate on {user_id,provider}; fixing indexes and retrying once");
         await ensureGoogleIntegrationIndexes();
-        await upsertGoogleIntegration(uid, {
+        savedIntegration = await upsertGoogleIntegration(uid, {
           provider: "google",
           provider_email: email || prev.email || null,
           provider_subject: sub || prev.sub || null,
@@ -348,9 +413,23 @@ router.get('/callback', oauthRateLimit, async (req, res) => {
       }
     }
 
+    await auditSuccess(req, "google.oauth.callback", {
+      actor_user_id: uid,
+      target_type: "integration",
+      target_id: savedIntegration?.id || null,
+      provider: "google",
+      metadata: { email },
+    });
+
     return res.redirect(`${postConnectRedirect()}?google=ok`);
   } catch (e) {
     console.error('[integrations.google/callback] fatal error:', e);
+    await auditFailure(req, "google.oauth.callback", {
+      actor_user_id: uid,
+      target_type: "integration",
+      provider: "google",
+      metadata: { reason: e?.message || "server_error" },
+    });
     return res.redirect(`${postConnectRedirect()}?google=fail&reason=server_error`);
   }
 });
@@ -445,9 +524,33 @@ router.get("/connections", authenticate, async (req, res) => {
 });
 
 router.post("/connections/:id/activate", authenticate, mutationRateLimit, async (req, res) => {
-  const updated = await setActiveGoogleIntegration(req.user.user_id, req.params.id);
-  if (!updated) return res.status(404).json({ error: { code: "connection_not_found" } });
-  res.json({ ok: true, activeIntegrationId: updated.id });
+  try {
+    const updated = await setActiveGoogleIntegration(req.user.user_id, req.params.id);
+    if (!updated) {
+      await auditFailure(req, "google.connection.activate", {
+        target_type: "integration",
+        target_id: req.params.id,
+        provider: "google",
+        metadata: { reason: "connection_not_found" },
+      });
+      return res.status(404).json({ error: { code: "connection_not_found" } });
+    }
+    await auditSuccess(req, "google.connection.activate", {
+      target_type: "integration",
+      target_id: updated.id,
+      provider: "google",
+    });
+    return res.json({ ok: true, activeIntegrationId: updated.id });
+  } catch (e) {
+    console.error("[integrations.google/activate] failed", e);
+    await auditFailure(req, "google.connection.activate", {
+      target_type: "integration",
+      target_id: req.params.id,
+      provider: "google",
+      metadata: { reason: e?.message || "server_error" },
+    });
+    return res.status(500).json({ error: { code: "server_error" } });
+  }
 });
 
 router.post("/disconnect", authenticate, mutationRateLimit, async (req, res) => {
@@ -470,9 +573,19 @@ router.post("/disconnect", authenticate, mutationRateLimit, async (req, res) => 
       }
     );
 
+    await auditSuccess(req, "google.connection.disconnect", {
+      target_type: "integration",
+      provider: "google",
+    });
+
     return res.json({ ok: true });
   } catch (e) {
     console.error("[integrations.google/disconnect] failed", e);
+    await auditFailure(req, "google.connection.disconnect", {
+      target_type: "integration",
+      provider: "google",
+      metadata: { reason: e?.message || "server_error" },
+    });
     return res.status(500).json({ error: { code: "server_error" } });
   }
 });
@@ -725,7 +838,14 @@ router.post('/locations/import', authenticate, syncRateLimit, async (req, res) =
     // const integ = await getActiveGoogleIntegration(req.user.user_id)
     const integrationId = String(req.body?.integrationId || "") || null;
     const { access_token, integ } = await getAccessTokenForAccount(req.user.user_id, accountName, integrationId);
-    if (!integ) return res.status(404).json({ error: { code: 'no_integration' } })
+    if (!integ) {
+      await auditFailure(req, "google.locations.import", {
+        target_type: "location",
+        provider: "google",
+        metadata: { accountName, reason: "no_integration" },
+      });
+      return res.status(404).json({ error: { code: 'no_integration' } })
+    }
 
     // const { access_token } = await ensureAccessToken(integ)
     const data = await listLocations(access_token, accountName)
@@ -765,9 +885,20 @@ router.post('/locations/import', authenticate, syncRateLimit, async (req, res) =
       upserted++
     }
 
+    await auditSuccess(req, "google.locations.import", {
+      target_type: "location",
+      provider: "google",
+      metadata: { accountName, integration_id: integ.id, upserted },
+    });
+
     return res.json({ inserted: upserted })
   } catch (err) {
     console.error('[integrations.google/locations.import] failed', err?.status || '', err?.body || err?.message || err)
+    await auditFailure(req, "google.locations.import", {
+      target_type: "location",
+      provider: "google",
+      metadata: { reason: err?.message || "locations_import_failed", status: err?.status || null },
+    });
     return res.status(err?.http_status || err?.status || 502).json({
       error: {
         code: 'locations_import_failed',
@@ -785,6 +916,11 @@ router.post("/locations/reconcile", authenticate, syncRateLimit, async (req, res
 
     const integrations = await listGoogleIntegrations(userId);
     if (!integrations.length) {
+      await auditFailure(req, "google.locations.reconcile", {
+        target_type: "location",
+        provider: "google",
+        metadata: { reason: "no_integration" },
+      });
       return res.status(409).json({ error: { code: "no_integration", message: "Google not connected" } });
     }
 
@@ -832,6 +968,18 @@ router.post("/locations/reconcile", authenticate, syncRateLimit, async (req, res
       }
     }
 
+    await auditSuccess(req, "google.locations.reconcile", {
+      target_type: "location",
+      provider: "google",
+      metadata: {
+        scanned: rows.length,
+        updated,
+        unmatched,
+        integrations_checked: integrations.length,
+        error_count: errors.length,
+      },
+    });
+
     return res.json({
       scanned: rows.length,
       updated,
@@ -841,6 +989,11 @@ router.post("/locations/reconcile", authenticate, syncRateLimit, async (req, res
     });
   } catch (err) {
     console.error("[integrations.google/locations.reconcile] failed", err);
+    await auditFailure(req, "google.locations.reconcile", {
+      target_type: "location",
+      provider: "google",
+      metadata: { reason: err?.message || "server_error" },
+    });
     return res.status(500).json({ error: { code: "server_error", message: err?.message || "server_error" } });
   }
 });

@@ -10,6 +10,7 @@ import {
   updateReviewReply,
   listLocationMedia,
 } from '../integrations/google.js';
+import { auditFailure, auditSuccess } from '../services/auditLog.js';
 
 const router = express.Router();
 
@@ -386,6 +387,7 @@ router.get('/reviews', authenticate, syncRateLimit, async (req, res) => {
 });
 
 router.put('/reviews/reply', authenticate, mutationRateLimit, async (req, res) => {
+  let auditTarget = {};
   try {
     const userId = req.user.user_id;
     const { locationId, reviewName, comment } = req.body || {};
@@ -403,11 +405,25 @@ router.put('/reviews/reply', authenticate, mutationRateLimit, async (req, res) =
     if (!loc) {
       return res.status(404).json({ error: { code: 'not_found', message: 'location not found' } });
     }
+    auditTarget = {
+      target_type: 'review',
+      target_id: reviewName,
+      organization_id: loc.organization_id || null,
+      client_id: loc.client_id || null,
+      location_id: loc.id,
+      provider: 'google',
+    };
 
     const accessToken = await getAccessTokenForLocation(userId, loc);
+    await auditSuccess(req, 'review.reply.attempt', auditTarget);
     const out = await updateReviewReply(reviewName, comment, accessToken);
+    await auditSuccess(req, 'review.reply', auditTarget);
     return res.json({ reply: out });
   } catch (e) {
+    await auditFailure(req, 'review.reply', {
+      ...auditTarget,
+      metadata: { reason: e?.message || e?.code || 'server_error' },
+    });
     if (e?.code === 'reauth_required') {
       return res.status(409).json({
         error: {

@@ -28,7 +28,8 @@ That target state is not implemented by assumption. It should guide safe naming 
 - S1-09 location-org mapping direction: `locations.organization_id` and `locations.client_id` are the canonical binding source, while `locations.org_id` and `location_org_map` remain legacy compatibility only.
 - S1-10 tenancy migration audit: dry-run migration/audit output distinguishes backfillable, applied, and orphan/unbound records without auto-binding imported Google locations.
 - S1-11 environment-restricted CORS: production, staging, and other non-local API runtimes use explicit allowed origins and must not reflect all browser origins.
-- S1-12 rate limiting in progress: auth, OAuth, upload, sync, and high-cost generation/publish paths get centralized rate limiting with consistent JSON `429` responses.
+- S1-12 rate limiting complete: auth, OAuth, upload, sync, and high-cost generation/publish paths have centralized rate limiting with consistent JSON `429` responses.
+- S1-13 backend audit logging in progress: critical backend actions write best-effort sanitized records to `audit_logs` without changing user-facing behavior.
 
 ## Explicit Forbidden Work
 
@@ -61,6 +62,8 @@ App JWT shortcuts are not allowed outside explicit local development. Production
 CORS wildcard or reflect-all origin behavior is not allowed outside explicit local development. Production, staging, and other non-local API runtimes must require explicit allowed origins and must not combine wildcard origins with credentials.
 
 Sensitive endpoints must be rate-limited. At minimum, login, OAuth start/callback, uploads, Google/GBP sync triggers, review sync triggers, and high-cost generation/publish paths need centralized limiter coverage and consistent JSON `429` errors.
+
+Critical backend actions must be audit logged. Audit logging is best-effort and must not break the request if MongoDB audit writes fail. Audit metadata must be small and sanitized, and secrets must never be logged, including passwords, JWTs, OAuth access/refresh/ID tokens, raw Google auth codes, authorization headers, encrypted secret payloads, or full request bodies.
 
 ## Storage And Cache Discipline
 

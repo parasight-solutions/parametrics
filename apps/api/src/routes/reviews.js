@@ -14,6 +14,7 @@ import {
   requireOwnedLocation,
   toApiError,
 } from "../services/ownership.js";
+import { auditFailure, auditQueued, auditSuccess } from "../services/auditLog.js";
 
 const router = Router();
 const reviewSyncQueue = makeQueue("review-sync");
@@ -80,6 +81,7 @@ router.get("/", authenticate, async (req, res) => {
 
 // POST /api/v1/reviews/sync  { locationId, force?: boolean }
 router.post("/sync", authenticate, syncRateLimit, async (req, res) => {
+  let auditTarget = {};
   try {
     const userId = req.user.user_id;
     const locationId = String(req.body?.locationId || req.body?.location_id || "").trim();
@@ -90,6 +92,14 @@ router.post("/sync", authenticate, syncRateLimit, async (req, res) => {
     }
 
     const loc = await requireOwnedLocation(userId, locationId, { provider: "google" });
+    auditTarget = {
+      target_type: "location",
+      target_id: loc.id,
+      organization_id: loc.organization_id,
+      client_id: loc.client_id,
+      location_id: loc.id,
+      provider: "google",
+    };
 
     if (!loc.integration_id) {
       return res.status(409).json({ error: { code: "location_not_bound" } });
@@ -102,6 +112,10 @@ router.post("/sync", authenticate, syncRateLimit, async (req, res) => {
     const isStale = !syncState || !lastUpdMs || (Date.now() - lastUpdMs) > STALE_MS;
 
     if (!force && !isStale && (syncState?.status === "running" || syncState?.status === "queued")) {
+      await auditQueued(req, "review.sync.queue", {
+        ...auditTarget,
+        metadata: { alreadyRunning: true, force, since: syncState?.since || null },
+      });
       return res.json({
         queued: true,
         alreadyRunning: true,
@@ -140,14 +154,24 @@ router.post("/sync", authenticate, syncRateLimit, async (req, res) => {
       client_id: loc.client_id,
     });
 
+    await auditQueued(req, "review.sync.queue", {
+      ...auditTarget,
+      metadata: { jobId: String(job.id), force, since },
+    });
+
     return res.json({ queued: true, jobId: String(job.id), since });
   } catch (e) {
+    await auditFailure(req, "review.sync.queue", {
+      ...auditTarget,
+      metadata: { reason: e?.message || e?.code || "server_error" },
+    });
     return toApiError(res, e);
   }
 });
 
 // PUT /api/v1/reviews/:id/reply { comment }
 router.put("/:id/reply", authenticate, mutationRateLimit, async (req, res) => {
+  let auditTarget = {};
   try {
     const userId = req.user.user_id;
     const id = String(req.params.id || "").trim();
@@ -166,6 +190,14 @@ router.put("/:id/reply", authenticate, mutationRateLimit, async (req, res) => {
 
     const loc = await requireOwnedLocation(userId, review.location_id, { provider: "google" });
     assertDocMatchesLocationScope(review, loc, "review");
+    auditTarget = {
+      target_type: "review",
+      target_id: id,
+      organization_id: loc.organization_id,
+      client_id: loc.client_id,
+      location_id: loc.id,
+      provider: "google",
+    };
 
     if (!loc.integration_id) {
       return res.status(409).json({ error: { code: "location_not_bound" } });
@@ -177,6 +209,11 @@ router.put("/:id/reply", authenticate, mutationRateLimit, async (req, res) => {
     }
 
     const { access_token } = await ensureAccessToken(integ);
+
+    await auditSuccess(req, "review.reply.attempt", {
+      ...auditTarget,
+      metadata: { provider_review_name: review.provider_review_name },
+    });
 
     await updateReviewReply(review.provider_review_name, comment, access_token);
 
@@ -196,8 +233,17 @@ router.put("/:id/reply", authenticate, mutationRateLimit, async (req, res) => {
       }
     );
 
+    await auditSuccess(req, "review.reply", {
+      ...auditTarget,
+      metadata: { provider_review_name: review.provider_review_name },
+    });
+
     return res.json({ ok: true });
   } catch (e) {
+    await auditFailure(req, "review.reply", {
+      ...auditTarget,
+      metadata: { reason: e?.message || e?.code || "server_error" },
+    });
     return toApiError(res, e);
   }
 });
