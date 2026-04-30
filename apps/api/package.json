@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "start": "node src/server.js",
     "dev:api": "node src/server.js",
     "dev:workers": "node src/workers/index.js",
     "dev:scheduler": "node src/jobs/scheduler.js",
