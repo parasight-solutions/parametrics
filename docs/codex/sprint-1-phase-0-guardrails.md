@@ -29,7 +29,8 @@ That target state is not implemented by assumption. It should guide safe naming 
 - S1-10 tenancy migration audit: dry-run migration/audit output distinguishes backfillable, applied, and orphan/unbound records without auto-binding imported Google locations.
 - S1-11 environment-restricted CORS: production, staging, and other non-local API runtimes use explicit allowed origins and must not reflect all browser origins.
 - S1-12 rate limiting complete: auth, OAuth, upload, sync, and high-cost generation/publish paths have centralized rate limiting with consistent JSON `429` responses.
-- S1-13 backend audit logging in progress: critical backend actions write best-effort sanitized records to `audit_logs` without changing user-facing behavior.
+- S1-13 backend audit logging complete: critical backend actions write best-effort sanitized records to `audit_logs` without changing user-facing behavior.
+- S1-14 final Phase 0 proof pack in progress: production-style startup expectations and final Sprint 1 / Phase 0 verification are being documented without adding Phase 2 work.
 
 ## Explicit Forbidden Work
 
