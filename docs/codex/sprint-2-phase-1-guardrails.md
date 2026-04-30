@@ -15,13 +15,13 @@ Phase 1 / Sprint 2 starts with report service MVP work, then workspace/member fo
 Current Sprint 2 task:
 
 - S2-01 report service abstraction complete: pure backend report run metadata helpers for dashboard snapshot inputs are in place.
-- S2-02 PDF output generation in progress: generate minimal backend PDF buffers from S2-01 report run metadata without routes, persistence, queues, or frontend changes.
+- S2-02 PDF output generation complete: minimal backend PDF buffers from S2-01 report run metadata are in place without routes, persistence, queues, or frontend changes.
+- S2-03 XLSX output generation in progress: generate minimal backend XLSX buffers from S2-01 report run metadata without routes, persistence, queues, or frontend changes.
 
 Near follow-up tasks:
 
-- S2-02 PDF export.
-- S2-03 XLSX export.
 - S2-04 report/report_runs persistence.
+- Report route/queue/worker/frontend wiring only after the persistence and runtime boundaries are intentionally designed.
 
 ## Explicit Boundaries
 
@@ -31,6 +31,8 @@ S2-01 must not generate PDF or XLSX files, persist report records, add report qu
 
 S2-02 may generate in-memory PDF buffers only. It must not write files by default, persist report records, add report queues/workers, send emails, schedule recurring reports, expose a public reports API, generate XLSX, or modify frontend export behavior.
 
-Report persistence and XLSX output are separate follow-up tasks. Report services should stay testable so those tasks can build on a stable metadata contract.
+S2-03 may generate in-memory XLSX buffers only. It must not write files by default, persist report records, add report queues/workers, send emails, schedule recurring reports, expose a public reports API, modify PDF behavior, or modify frontend export behavior.
 
-Existing GBP dashboard behavior must not change during S2-01 or S2-02.
+Report persistence is a separate follow-up task. Report services should stay testable so those tasks can build on a stable metadata contract.
+
+Existing GBP dashboard behavior must not change during S2-01, S2-02, or S2-03.

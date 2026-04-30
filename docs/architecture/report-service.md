@@ -27,7 +27,7 @@ The S2-01 metadata service is intentionally pure. It does not import MongoDB, Re
 
 ## S2-02 PDF Output Generation
 
-S2-02 adds backend PDF output generation in `apps/api/src/services/reportPdf.js`.
+S2-02 is complete. It added backend PDF output generation in `apps/api/src/services/reportPdf.js`.
 
 The PDF service accepts a report run produced by `buildDashboardSnapshotReportRun(...)` and produces a minimal text-only PDF buffer for the `pdf` output format. It also returns output metadata compatible with the S2-01 contract.
 
@@ -48,11 +48,28 @@ The renderer uses the sanitized S2-01 `input_snapshot` and does not read raw req
 
 S2-02 intentionally keeps PDF layout simple. It does not add images, chart rendering, branding templates, a report API route, Mongo persistence, queues, workers, scheduling, emails, XLSX generation, or frontend changes.
 
+## S2-03 XLSX Output Generation
+
+S2-03 adds backend XLSX output generation in `apps/api/src/services/reportXlsx.js`.
+
+The XLSX service accepts a report run produced by `buildDashboardSnapshotReportRun(...)` and produces a minimal workbook buffer for the `xlsx` output format. It also returns output metadata compatible with the S2-01 contract.
+
+S2-03 workbook sheets are:
+
+- `Summary`: report name, report key/type, generated timestamp, date range, organization/client/location identifiers, requested-by user id, and dashboard snapshot summary counts.
+- `Cards`: capped card titles, values, and compact details.
+- `Metrics`: capped metric names, values, and compact details.
+- `Tables`: capped table row summaries.
+- `Charts`: capped chart titles, point counts, and compact point summaries.
+
+The XLSX renderer uses the sanitized S2-01 `input_snapshot` and does not read raw request bodies. Text and row counts are capped, secret-like keys are skipped or redacted before output, and large dashboard snapshots are not dumped into the workbook.
+
+S2-03 intentionally keeps workbook output simple. It does not add styling, formulas, charts, images, templates, a report API route, Mongo persistence, queues, workers, scheduling, emails, frontend wiring, or PDF changes.
+
 ## Intentionally Not Implemented
 
-S2-01/S2-02 do not:
+S2-01/S2-02/S2-03 do not:
 
-- Generate XLSX files.
 - Persist `reports` or `report_runs` collections.
 - Add Mongo indexes for reports.
 - Add a public reports API route.
@@ -64,7 +81,7 @@ S2-01/S2-02 do not:
 - Add multi-channel metrics.
 - Add billing or entitlement checks.
 
-S2-02 generates an in-memory PDF buffer only. It does not write files unless a future caller chooses to do so.
+S2-02 generates an in-memory PDF buffer only. S2-03 generates an in-memory XLSX buffer only. Neither service writes files unless a future caller chooses to do so.
 
 ## Dashboard Snapshot Input Contract
 
@@ -189,6 +206,24 @@ S2-02 `buildPdfOutputResult(reportRun, options)` returns:
 
 If PDF generation fails or PDF was not requested, `buffer` is `null` and `output.status` is `"failed"` with a compact error object.
 
+S2-03 `buildXlsxOutputResult(reportRun, options)` returns:
+
+```js
+{
+  buffer: Buffer,
+  output: {
+    format: "xlsx",
+    status: "succeeded",
+    path: null,
+    size: 12345,
+    error: null,
+    completed_at: Date
+  }
+}
+```
+
+If XLSX generation fails or XLSX was not requested, `buffer` is `null` and `output.status` is `"failed"` with a compact error object.
+
 ## Status Lifecycle
 
 The shared status vocabulary is:
@@ -204,8 +239,8 @@ S2-01 creates pending report run metadata only. Later generation tasks can move 
 
 S2-02 PDF export consumes this report run metadata and fills PDF output metadata in memory.
 
-S2-03 XLSX export should consume the same report run metadata and fill XLSX output metadata.
+S2-03 XLSX export consumes the same report run metadata and fills XLSX output metadata in memory.
 
 S2-04 report/report_runs persistence should decide the Mongo collection shapes and indexes for durable report definitions and report run history.
 
-Future queue direction may include a `report-generate` queue and dedicated report worker, but S2-01/S2-02 only document that direction. They do not create a queue or worker.
+Future queue direction may include a `report-generate` queue and dedicated report worker, but S2-01/S2-02/S2-03 only document that direction. They do not create a queue or worker.
