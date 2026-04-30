@@ -5,6 +5,7 @@ import crypto from "crypto";
 import { col } from "../lib/mongo.js";
 import { authenticate } from "../middleware/auth.js";
 import { makeQueue } from "../lib/queues.js";
+import { mutationRateLimit, syncRateLimit } from "../middleware/rateLimit.js";
 import { getGoogleIntegrationById, ensureAccessToken } from "../integrations/google.store.js";
 import { updateReviewReply } from "../integrations/google.js";
 import {
@@ -78,7 +79,7 @@ router.get("/", authenticate, async (req, res) => {
 });
 
 // POST /api/v1/reviews/sync  { locationId, force?: boolean }
-router.post("/sync", authenticate, async (req, res) => {
+router.post("/sync", authenticate, syncRateLimit, async (req, res) => {
   try {
     const userId = req.user.user_id;
     const locationId = String(req.body?.locationId || req.body?.location_id || "").trim();
@@ -146,7 +147,7 @@ router.post("/sync", authenticate, async (req, res) => {
 });
 
 // PUT /api/v1/reviews/:id/reply { comment }
-router.put("/:id/reply", authenticate, async (req, res) => {
+router.put("/:id/reply", authenticate, mutationRateLimit, async (req, res) => {
   try {
     const userId = req.user.user_id;
     const id = String(req.params.id || "").trim();

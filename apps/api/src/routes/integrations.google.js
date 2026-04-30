@@ -20,6 +20,7 @@ import {
   listLocationMedia
 } from '../integrations/google.js'
 import { authenticate } from '../middleware/auth.js'
+import { mutationRateLimit, oauthRateLimit, syncRateLimit } from '../middleware/rateLimit.js'
 import { ensureGoogleIntegrationIndexes } from "../integrations/google.indexes.js";
 
 const router = Router()
@@ -203,7 +204,7 @@ async function pickIntegrationForAccount(userId, accountName) {
 // ----------------------
 // 1) START (no auth mw)
 // ----------------------
-router.get('/start', (req, res) => {
+router.get('/start', oauthRateLimit, (req, res) => {
   const clientId = process.env.GOOGLE_CLIENT_ID || '';
   if (!clientId) {
     return res.status(500).json({ error: { code: 'config', message: 'GOOGLE_CLIENT_ID missing in .env' } });
@@ -237,7 +238,7 @@ router.get('/start', (req, res) => {
 // -------------------------
 // 2) CALLBACK (no auth mw)
 // -------------------------
-router.get('/callback', async (req, res) => {
+router.get('/callback', oauthRateLimit, async (req, res) => {
   try {
     const { code, state } = req.query;
     if (!code || !state) return res.status(400).send('Missing code/state');
@@ -443,13 +444,13 @@ router.get("/connections", authenticate, async (req, res) => {
   res.json({ connections });
 });
 
-router.post("/connections/:id/activate", authenticate, async (req, res) => {
+router.post("/connections/:id/activate", authenticate, mutationRateLimit, async (req, res) => {
   const updated = await setActiveGoogleIntegration(req.user.user_id, req.params.id);
   if (!updated) return res.status(404).json({ error: { code: "connection_not_found" } });
   res.json({ ok: true, activeIntegrationId: updated.id });
 });
 
-router.post("/disconnect", authenticate, async (req, res) => {
+router.post("/disconnect", authenticate, mutationRateLimit, async (req, res) => {
   try {
     const userId = req.user.user_id;
 
@@ -599,7 +600,7 @@ async function listAllAccountsForUser(userId) {
   return { accounts: Array.from(byName.values()), errors };
 }
 
-router.get('/accounts', authenticate, async (req, res) => {
+router.get('/accounts', authenticate, syncRateLimit, async (req, res) => {
   const uid = req.user.user_id
   const entry = ACCOUNTS_CACHE.get(uid) || {}
   const now = Date.now()
@@ -666,7 +667,7 @@ router.get('/accounts', authenticate, async (req, res) => {
 // ---------------------------
 // 5) LOCATIONS (Bearer auth)
 // ---------------------------
-router.get('/locations', authenticate, async (req, res) => {
+router.get('/locations', authenticate, syncRateLimit, async (req, res) => {
   try {
     let accountName;
     try {
@@ -708,7 +709,7 @@ router.get('/locations', authenticate, async (req, res) => {
 // ---------------------------
 // 6) LOCATIONS IMPORT (Bearer auth)
 // ---------------------------
-router.post('/locations/import', authenticate, async (req, res) => {
+router.post('/locations/import', authenticate, syncRateLimit, async (req, res) => {
   try {
     let accountName;
     try {
@@ -778,7 +779,7 @@ router.post('/locations/import', authenticate, async (req, res) => {
   }
 })
 
-router.post("/locations/reconcile", authenticate, async (req, res) => {
+router.post("/locations/reconcile", authenticate, syncRateLimit, async (req, res) => {
   try {
     const userId = req.user.user_id;
 
@@ -847,7 +848,7 @@ router.post("/locations/reconcile", authenticate, async (req, res) => {
 // ---------------------------
 // 7) LOCATION MEDIA (logo/profile photo)
 // ---------------------------
-router.get('/location-media', authenticate, async (req, res) => {
+router.get('/location-media', authenticate, syncRateLimit, async (req, res) => {
   try {
     const accountName = String(req.query.accountName || '')
     const locationName = String(req.query.locationName || '')

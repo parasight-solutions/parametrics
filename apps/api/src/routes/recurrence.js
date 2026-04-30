@@ -3,6 +3,7 @@ import { Router } from "express";
 import crypto from "crypto";
 import { col } from "../lib/mongo.js";
 import { authenticate } from "../middleware/auth.js";
+import { generationRateLimit, mutationRateLimit } from "../middleware/rateLimit.js";
 import { planForRule } from "../services/recurrencePlanner.js";
 import {
   buildLocationScopeFilter,
@@ -64,7 +65,7 @@ router.get("/", authenticate, async (req, res) => {
   }
 });
 
-router.put("/", authenticate, async (req, res) => {
+router.put("/", authenticate, mutationRateLimit, async (req, res) => {
   try {
     const userId = req.user.user_id;
     const locationId = String(req.query.locationId || "").trim();
@@ -251,7 +252,7 @@ router.get("/posts", authenticate, async (req, res) => {
   }
 });
 
-router.post("/plan-now", authenticate, async (req, res) => {
+router.post("/plan-now", authenticate, generationRateLimit, async (req, res) => {
   try {
     const userId = req.user.user_id;
     const locationId = String(req.query.locationId || "").trim();

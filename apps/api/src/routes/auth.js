@@ -3,6 +3,7 @@ import { Router } from "express";
 import bcrypt from "bcryptjs";
 import { col } from "../lib/mongo.js";
 import { signJwt } from "../lib/jwt.js";
+import { authRateLimit } from "../middleware/rateLimit.js";
 
 export const auth = Router();
 
@@ -10,7 +11,7 @@ export const auth = Router();
  * POST /api/v1/auth/login
  * body: { email, password }
  */
-auth.post("/login", async (req, res) => {
+auth.post("/login", authRateLimit, async (req, res) => {
   try {
     const { email, password } = req.body || {};
     if (!email || !password) {

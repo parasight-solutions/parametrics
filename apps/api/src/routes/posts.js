@@ -10,6 +10,7 @@ import {
 } from "../integrations/google.store.js";
 import { createLocalPost, listAccounts, listLocalPosts } from "../integrations/google.js";
 import { makeQueue } from "../lib/queues.js";
+import { generationRateLimit, mutationRateLimit, syncRateLimit } from "../middleware/rateLimit.js";
 import {
   assertDocMatchesLocationScope,
   requireOwnedLocation,
@@ -272,7 +273,7 @@ router.get("/", authenticate, async (req, res) => {
   }
 });
 
-router.get("/provider", authenticate, async (req, res) => {
+router.get("/provider", authenticate, syncRateLimit, async (req, res) => {
   try {
     const userId = req.user.user_id;
     const locationId = String(req.query.locationId || "").trim();
@@ -301,7 +302,7 @@ router.get("/provider", authenticate, async (req, res) => {
   }
 });
 
-router.post("/", authenticate, async (req, res) => {
+router.post("/", authenticate, generationRateLimit, async (req, res) => {
   try {
     const userId = req.user.user_id;
     const b = normalizeCreateBody(req.body);
@@ -406,7 +407,7 @@ router.post("/", authenticate, async (req, res) => {
   }
 });
 
-router.patch("/:id", authenticate, async (req, res) => {
+router.patch("/:id", authenticate, generationRateLimit, async (req, res) => {
   try {
     const userId = req.user.user_id;
     const id = String(req.params.id || "");
@@ -484,7 +485,7 @@ router.patch("/:id", authenticate, async (req, res) => {
   }
 });
 
-router.post("/:id/retry", authenticate, async (req, res) => {
+router.post("/:id/retry", authenticate, generationRateLimit, async (req, res) => {
   try {
     const userId = req.user.user_id;
     const id = String(req.params.id || "");
@@ -540,7 +541,7 @@ router.post("/:id/retry", authenticate, async (req, res) => {
   }
 });
 
-router.delete("/:id", authenticate, async (req, res) => {
+router.delete("/:id", authenticate, mutationRateLimit, async (req, res) => {
   try {
     const userId = req.user.user_id;
     const id = String(req.params.id || "");

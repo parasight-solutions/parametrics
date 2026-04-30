@@ -4,6 +4,7 @@ import crypto from "crypto";
 import { config } from "../config.js";
 import { signJwt, verifyJwt } from "../lib/jwt.js";
 import { col } from "../lib/mongo.js";
+import { oauthRateLimit } from "../middleware/rateLimit.js";
 
 const router = Router();
 
@@ -158,7 +159,7 @@ async function findOrCreateGoogleUser({ email, sub, name }) {
 }
 
 // GET /api/v1/auth/google/start
-router.get("/start", (_req, res) => {
+router.get("/start", oauthRateLimit, (_req, res) => {
   const clientId = cleanStr(process.env.GOOGLE_OIDC_CLIENT_ID, 500);
   const clientSecret = cleanStr(process.env.GOOGLE_OIDC_CLIENT_SECRET, 500);
 
@@ -175,7 +176,7 @@ router.get("/start", (_req, res) => {
 });
 
 // GET /api/v1/auth/google/callback
-router.get("/callback", async (req, res) => {
+router.get("/callback", oauthRateLimit, async (req, res) => {
   try {
     const { code, state } = req.query;
 

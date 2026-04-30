@@ -46,6 +46,13 @@ API CORS behavior:
 - Wildcard or reflect-all CORS is not allowed with credentials.
 - Requests without an `Origin` header, such as server-to-server or curl requests, continue without browser CORS headers.
 
+API rate limiting behavior:
+
+- Phase 0 rate limiting is in-memory and per API process. It is a baseline protection only; horizontally scaled deployments need Redis-backed distributed limiting as a hardening follow-up.
+- Basic health checks are not rate-limited.
+- Sensitive endpoints return HTTP `429` with JSON `error.code: "rate_limited"` and `error.retry_after_seconds`.
+- Authenticated route limit keys prefer `req.user.user_id`; unauthenticated route limit keys fall back to client IP. Each limiter includes its action bucket in the key.
+
 ## Worker Process
 
 Package command:
@@ -134,6 +141,13 @@ API startup currently expects:
 - `APP_ENC_KEY` or `ENCRYPTION_KEY`: required by encrypted Google integration secret handling.
 - `PORT`: optional; defaults to `5050`.
 - `CORS_ORIGINS`: comma-separated browser origins allowed to call the API with credentials. Required outside `NODE_ENV=development` or `NODE_ENV=test`. Example: `https://app.parametrics.example`.
+- `RATE_LIMIT_WINDOW_SECONDS`: shared rate-limit window in seconds. Defaults to `600`.
+- `RATE_LIMIT_AUTH_MAX`: login attempts per window per IP. Defaults to `10`.
+- `RATE_LIMIT_OAUTH_MAX`: OAuth start/callback attempts per window per IP. Defaults to `20`.
+- `RATE_LIMIT_UPLOAD_MAX`: upload attempts per window per user/IP. Defaults to `30`.
+- `RATE_LIMIT_SYNC_MAX`: Google/GBP/review sync trigger attempts per window per user/IP. Defaults to `10`.
+- `RATE_LIMIT_GENERATION_MAX`: AI generation, plan-now, create/publish retry attempts per window per user/IP. Defaults to `20`.
+- `RATE_LIMIT_MUTATION_MAX`: generic mutation attempts per window per user/IP. Defaults to `120`.
 - `REDIS_HOST`, `REDIS_PORT`, and `REDIS_TLS`: currently needed because API route modules initialize BullMQ queues for enqueue operations, even though the API process does not run workers.
 - Google auth/provider variables as needed by Google login and GBP integration routes:
   - `GOOGLE_OIDC_CLIENT_ID`
@@ -272,3 +286,4 @@ Remaining runtime work includes:
 - Health/readiness checks that do not mutate data.
 - CI or smoke checks for runtime startup without long-running commands.
 - Explicit graceful shutdown for scheduler cron tasks, BullMQ workers, Redis connections, and MongoDB connections.
+- Redis-backed distributed rate limiting for multi-process or horizontally scaled deployments.

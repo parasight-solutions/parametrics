@@ -1,6 +1,7 @@
 // apps/api/src/routes/integrations.google.extras.js
 import express from 'express';
 import { authenticate } from '../middleware/auth.js';
+import { mutationRateLimit, syncRateLimit } from '../middleware/rateLimit.js';
 import { col } from '../lib/mongo.js';
 import { getActiveGoogleIntegration, getGoogleIntegrationById, ensureAccessToken } from '../integrations/google.store.js';
 import {
@@ -332,7 +333,7 @@ router.get('/performance-series', authenticate, async (req, res) => {
   }
 });
 
-router.get('/reviews', authenticate, async (req, res) => {
+router.get('/reviews', authenticate, syncRateLimit, async (req, res) => {
   try {
     const userId = req.user.user_id;
     const locationId = req.query.locationId || req.query.location_id;
@@ -384,7 +385,7 @@ router.get('/reviews', authenticate, async (req, res) => {
   }
 });
 
-router.put('/reviews/reply', authenticate, async (req, res) => {
+router.put('/reviews/reply', authenticate, mutationRateLimit, async (req, res) => {
   try {
     const userId = req.user.user_id;
     const { locationId, reviewName, comment } = req.body || {};
@@ -431,7 +432,7 @@ router.put('/reviews/reply', authenticate, async (req, res) => {
   }
 });
 
-router.get('/media', authenticate, async (req, res) => {
+router.get('/media', authenticate, syncRateLimit, async (req, res) => {
   try {
     const userId = req.user.user_id;
     const locationId = req.query.locationId || req.query.location_id;
