@@ -10,7 +10,7 @@ The backend has no report generation route, no report queue, and no report/repor
 
 ## S2-01 Scope
 
-S2-01 adds a pure backend report service abstraction in `apps/api/src/services/reportService.js`.
+S2-01 is complete. It added a pure backend report service abstraction in `apps/api/src/services/reportService.js`.
 
 The service can:
 
@@ -23,13 +23,35 @@ The service can:
 - Create report run metadata with pending output placeholders.
 - Transition output metadata through success/failure helper functions.
 
-The service is intentionally pure. It does not import MongoDB, Redis, BullMQ, Express, Google APIs, or frontend code.
+The S2-01 metadata service is intentionally pure. It does not import MongoDB, Redis, BullMQ, Express, Google APIs, or frontend code.
+
+## S2-02 PDF Output Generation
+
+S2-02 adds backend PDF output generation in `apps/api/src/services/reportPdf.js`.
+
+The PDF service accepts a report run produced by `buildDashboardSnapshotReportRun(...)` and produces a minimal text-only PDF buffer for the `pdf` output format. It also returns output metadata compatible with the S2-01 contract.
+
+S2-02 PDF output includes:
+
+- report name
+- report key and type
+- generated timestamp
+- date range
+- organization, client, and location identifiers when present
+- requested-by user id when present
+- dashboard snapshot summary counts
+- capped card and metric summaries
+- capped table row summaries
+- capped chart summaries
+
+The renderer uses the sanitized S2-01 `input_snapshot` and does not read raw request bodies. Text is capped, secret-like keys are skipped or redacted before output, and large dashboard snapshots are not dumped into the PDF.
+
+S2-02 intentionally keeps PDF layout simple. It does not add images, chart rendering, branding templates, a report API route, Mongo persistence, queues, workers, scheduling, emails, XLSX generation, or frontend changes.
 
 ## Intentionally Not Implemented
 
-S2-01 does not:
+S2-01/S2-02 do not:
 
-- Generate PDF files.
 - Generate XLSX files.
 - Persist `reports` or `report_runs` collections.
 - Add Mongo indexes for reports.
@@ -41,6 +63,8 @@ S2-01 does not:
 - Add dashboard builder behavior.
 - Add multi-channel metrics.
 - Add billing or entitlement checks.
+
+S2-02 generates an in-memory PDF buffer only. It does not write files unless a future caller chooses to do so.
 
 ## Dashboard Snapshot Input Contract
 
@@ -147,6 +171,24 @@ The `input_snapshot` is JSON-safe and sanitized. Secret-like keys are redacted, 
 - compact `error.message`
 - `completed_at` set
 
+S2-02 `buildPdfOutputResult(reportRun, options)` returns:
+
+```js
+{
+  buffer: Buffer,
+  output: {
+    format: "pdf",
+    status: "succeeded",
+    path: null,
+    size: 12345,
+    error: null,
+    completed_at: Date
+  }
+}
+```
+
+If PDF generation fails or PDF was not requested, `buffer` is `null` and `output.status` is `"failed"` with a compact error object.
+
 ## Status Lifecycle
 
 The shared status vocabulary is:
@@ -160,10 +202,10 @@ S2-01 creates pending report run metadata only. Later generation tasks can move 
 
 ## S2 Handoff
 
-S2-02 PDF export should consume this report run metadata and fill PDF output metadata.
+S2-02 PDF export consumes this report run metadata and fills PDF output metadata in memory.
 
 S2-03 XLSX export should consume the same report run metadata and fill XLSX output metadata.
 
 S2-04 report/report_runs persistence should decide the Mongo collection shapes and indexes for durable report definitions and report run history.
 
-Future queue direction may include a `report-generate` queue and dedicated report worker, but S2-01 only documents that direction. It does not create a queue or worker.
+Future queue direction may include a `report-generate` queue and dedicated report worker, but S2-01/S2-02 only document that direction. They do not create a queue or worker.
