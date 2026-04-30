@@ -81,6 +81,12 @@ The worker command does not start the Express API server and does not import `ap
 Package command:
 
 ```bash
+npm run -w @parametrics/api start:scheduler
+```
+
+Existing local alias:
+
+```bash
 npm run -w @parametrics/api dev:scheduler
 ```
 
@@ -90,7 +96,24 @@ Entrypoint:
 apps/api/src/jobs/scheduler.js
 ```
 
-Current status: existing/partial. The scheduler currently polls scheduled posts and enqueues publish jobs. This task documents the boundary only; it does not verify scheduler job behavior end to end.
+The scheduler process imports `apps/api/src/startup/env.js`, creates a BullMQ queue handle for `post-publish`, and registers scheduler loops only. It does not start the Express API server and does not import `apps/api/src/workers/index.js`.
+
+Currently registered scheduler loops:
+
+- Scheduled publish poller: registered by `apps/api/src/jobs/scheduler.js`; runs every minute with cron expression `* * * * *`.
+
+The scheduled publish poller currently:
+
+- Reads due `posts` records from MongoDB where `status` is `scheduled`, `scheduled_at` is due, and AI content is done or not tracked.
+- Atomically moves matching posts to `status: "queued"`.
+- Enqueues BullMQ jobs on the `post-publish` queue with job name `scheduled-publish`.
+- Uses job ids shaped as `publish_${postId}`.
+
+Job files that exist but are not run by `apps/api/src/jobs/scheduler.js` today:
+
+- `apps/api/src/jobs/recurrence.js`
+
+Do not assume recurrence planning runs in the scheduler production command unless it is explicitly imported by the scheduler entrypoint in a future task.
 
 ## Required API Environment
 
@@ -142,6 +165,20 @@ Redis is required for worker startup because BullMQ `Worker` instances connect t
 
 Current worker shutdown behavior: no explicit `SIGTERM`/`SIGINT` handlers are registered in `apps/api/src/workers/index.js` or the registered worker modules. Production process managers should send normal termination signals and apply a grace period; future hardening should close BullMQ workers and Redis/Mongo connections explicitly.
 
+## Required Scheduler Environment
+
+Scheduler startup currently expects:
+
+- `NODE_ENV`: use `development` locally; use a non-local value such as `staging` or `production` in deployed environments.
+- `JWT_SECRET`: required and strong outside `NODE_ENV=development` or `NODE_ENV=test` because the shared startup environment guard runs in the scheduler process.
+- `MONGODB_URI` or `MONGO_URI`: MongoDB connection string. Defaults exist for local development only.
+- `MONGO_DB`, `MONGO_DB_NAME`, or `MONGODB_DB`: database name. Defaults to `parametrics`.
+- `REDIS_HOST`, `REDIS_PORT`, and `REDIS_TLS`: Redis connection settings used by the BullMQ queue handle that enqueues publish jobs.
+
+Redis is required because the scheduler enqueues jobs into BullMQ. MongoDB is required because the scheduler polls and updates the `posts` collection.
+
+Current scheduler shutdown behavior: no explicit `SIGTERM`/`SIGINT` handlers are registered in `apps/api/src/jobs/scheduler.js`. Production process managers should send normal termination signals and apply a grace period; future hardening should stop cron tasks and close Redis/Mongo connections explicitly.
+
 ## Local Development
 
 Run only the API:
@@ -178,6 +215,12 @@ Recommended worker command for a process manager:
 npm run -w @parametrics/api start:workers
 ```
 
+Recommended scheduler command for a process manager:
+
+```bash
+npm run -w @parametrics/api start:scheduler
+```
+
 Run workers and scheduler as separate process-manager services using their package commands. Do not rely on one combined command for production/staging.
 
 ## Verified In S1-06
@@ -201,12 +244,22 @@ This task verifies:
 - The worker entrypoint explicitly imports the currently registered worker modules.
 - Runtime documentation captures the worker startup contract, dependencies, registered queues, shutdown behavior, and hardening gaps.
 
+## Verified In S1-08
+
+This task verifies:
+
+- The scheduler has a dedicated production-style package command: `npm run -w @parametrics/api start:scheduler`.
+- The package keeps `dev:scheduler` as the local alias for `src/jobs/scheduler.js`.
+- The scheduler command does not start the API server.
+- The scheduler command does not start BullMQ workers.
+- The scheduler entrypoint currently registers the scheduled publish poller only.
+- Runtime documentation captures the scheduler startup contract, dependencies, cron frequency, enqueue behavior, shutdown behavior, and hardening gaps.
+
 ## Remaining Work
 
-S1-08 should cover scheduler runtime hardening next. Remaining runtime work includes:
+Remaining runtime work includes:
 
-- Scheduler startup contract and failure behavior.
 - Production process-manager examples.
 - Health/readiness checks that do not mutate data.
 - CI or smoke checks for runtime startup without long-running commands.
-- Explicit graceful shutdown for BullMQ workers, Redis connections, and MongoDB connections.
+- Explicit graceful shutdown for scheduler cron tasks, BullMQ workers, Redis connections, and MongoDB connections.

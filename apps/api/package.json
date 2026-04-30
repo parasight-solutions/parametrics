@@ -6,6 +6,7 @@
   "scripts": {
     "start": "node src/server.js",
     "start:workers": "node src/workers/index.js",
+    "start:scheduler": "node src/jobs/scheduler.js",
     "dev:api": "node src/server.js",
     "dev:workers": "node src/workers/index.js",
     "dev:scheduler": "node src/jobs/scheduler.js",
