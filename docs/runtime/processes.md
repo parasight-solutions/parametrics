@@ -38,6 +38,14 @@ The API process imports `apps/api/src/startup/env.js`, mounts Express routes, ru
 
 The API command does not start workers or the scheduler.
 
+API CORS behavior:
+
+- Local development and test allow localhost origins, including `localhost`, `127.0.0.1`, and `::1`.
+- Production, staging, and other non-local environments must set `CORS_ORIGINS`.
+- Non-local API startup fails fast if `CORS_ORIGINS` is missing.
+- Wildcard or reflect-all CORS is not allowed with credentials.
+- Requests without an `Origin` header, such as server-to-server or curl requests, continue without browser CORS headers.
+
 ## Worker Process
 
 Package command:
@@ -125,6 +133,7 @@ API startup currently expects:
 - `MONGO_DB`, `MONGO_DB_NAME`, or `MONGODB_DB`: database name. Defaults to `parametrics`.
 - `APP_ENC_KEY` or `ENCRYPTION_KEY`: required by encrypted Google integration secret handling.
 - `PORT`: optional; defaults to `5050`.
+- `CORS_ORIGINS`: comma-separated browser origins allowed to call the API with credentials. Required outside `NODE_ENV=development` or `NODE_ENV=test`. Example: `https://app.parametrics.example`.
 - `REDIS_HOST`, `REDIS_PORT`, and `REDIS_TLS`: currently needed because API route modules initialize BullMQ queues for enqueue operations, even though the API process does not run workers.
 - Google auth/provider variables as needed by Google login and GBP integration routes:
   - `GOOGLE_OIDC_CLIENT_ID`

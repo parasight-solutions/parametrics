@@ -9,6 +9,6 @@ export const config = {
   redisUrl: process.env.REDIS_URL || 'redis://localhost:6379',
   encKeyB64: process.env.ENCRYPTION_KEY_BASE64 || '',
   defaultTz: process.env.DEFAULT_TZ || 'UTC',
-  corsOrigins: (process.env.CORS_ORIGIN || 'http://localhost:5173,http://127.0.0.1:5173')
+  corsOrigins: (process.env.CORS_ORIGINS || 'http://localhost:5173,http://127.0.0.1:5173')
     .split(',').map(s => s.trim())
 }

@@ -26,7 +26,8 @@ That target state is not implemented by assumption. It should guide safe naming 
 - S1-07 worker process entrypoint: worker startup has a dedicated production-style command and documented runtime contract without starting API or scheduler runtimes.
 - S1-08 scheduler process entrypoint: scheduler startup has a dedicated production-style command and documented runtime contract without starting API or worker runtimes.
 - S1-09 location-org mapping direction: `locations.organization_id` and `locations.client_id` are the canonical binding source, while `locations.org_id` and `location_org_map` remain legacy compatibility only.
-- S1-10 tenancy migration audit in progress: dry-run migration/audit output must distinguish backfillable, applied, and orphan/unbound records without auto-binding imported Google locations.
+- S1-10 tenancy migration audit: dry-run migration/audit output distinguishes backfillable, applied, and orphan/unbound records without auto-binding imported Google locations.
+- S1-11 environment-restricted CORS in progress: production, staging, and other non-local API runtimes must use explicit allowed origins and must not reflect all browser origins.
 
 ## Explicit Forbidden Work
 
@@ -55,6 +56,8 @@ Provider reauth problems, such as missing Google refresh tokens or invalid Googl
 Only real app auth failures, such as invalid or unauthorized app JWTs, should clear app auth and redirect to login.
 
 App JWT shortcuts are not allowed outside explicit local development. Production, staging, and other non-local environments must require a strong `JWT_SECRET` and must not accept unsigned, decoded-only, mock, or bypass tokens.
+
+CORS wildcard or reflect-all origin behavior is not allowed outside explicit local development. Production, staging, and other non-local API runtimes must require explicit allowed origins and must not combine wildcard origins with credentials.
 
 ## Storage And Cache Discipline
 

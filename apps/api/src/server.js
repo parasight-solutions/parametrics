@@ -5,6 +5,7 @@ import express from "express"
 import helmet from "helmet"
 import cors from "cors"
 import path from "node:path"
+import { createCorsOptions } from "./lib/corsConfig.js"
 import { ensureIndexes } from "./startup/ensureIndexes.js"
 import auth from "./routes/auth.js"
 import googleIntegration from "./routes/integrations.google.js"
@@ -32,14 +33,7 @@ if (!reviewsRoutes) throw new Error("routes/reviews.js must export default or na
 
 const app = express()
 
-app.use(
-  cors({
-    origin: (origin, cb) => cb(null, true), // dev: allow all
-    credentials: true,
-    allowedHeaders: ["Content-Type", "Authorization"],
-    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-  })
-)
+app.use(cors(createCorsOptions()))
 
 app.use(helmet())
 app.use(express.json())
