@@ -10,6 +10,7 @@ import "./index.css";
 import Integrations from "./pages/Integrations";
 import GoogleConnected from "./pages/GoogleConnected";
 import Locations from "./pages/Locations";
+import { clearAuthSession } from "./session";
 
 function isAuthed() {
   return !!localStorage.getItem("token");
@@ -18,7 +19,7 @@ function isAuthed() {
 export default function App() {
   const [authed, setAuthed] = useState(isAuthed());
   function onAuthed() { setAuthed(true); }
-  function onLogout() { localStorage.removeItem("token"); setAuthed(false); }
+  function onLogout() { clearAuthSession(); setAuthed(false); }
 
   return (
     <BrowserRouter>

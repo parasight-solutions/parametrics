@@ -103,7 +103,9 @@ export function useCachedApi(
             }
 
             // Abort any previous request
-            try { abortRef.current?.abort?.(); } catch { }
+            try { abortRef.current?.abort?.(); } catch {
+                // Abort is best-effort during request replacement.
+            }
             const controller = new AbortController();
             abortRef.current = controller;
 
@@ -133,9 +135,17 @@ export function useCachedApi(
                     if (e?.name === "AbortError") return null;
 
                     setError(e);
-                    // If we have cache, keep showing it. Only clear if nothing exists.
-                    const fallback = readCache();
-                    if (!fallback?.data && data == null) setData(null);
+                    if (e?.status === 404) {
+                        try { store.removeItem(key); } catch {
+                            // Cache eviction failure should not keep stale UI data alive.
+                        }
+                        setData(null);
+                        setLastUpdatedAt(null);
+                    } else {
+                        // If we have cache, keep showing it. Only clear if nothing exists.
+                        const fallback = readCache();
+                        if (!fallback?.data && data == null) setData(null);
+                    }
 
                     throw e;
                 } finally {
@@ -148,12 +158,22 @@ export function useCachedApi(
             inflightRef.current = { key, promise: p };
             return p;
         },
-        [enabled, path, key, apiOptions, readCache, writeCache, data]
+        [enabled, path, key, apiOptions, readCache, writeCache, data, store]
     );
 
     // Initial load / key change: show cache immediately, then revalidate
     useEffect(() => {
-        if (!enabled || !key) return;
+        if (!enabled || !key) {
+            setData(null);
+            setError(null);
+            setLastUpdatedAt(null);
+            setLoading(false);
+            setRefreshing(false);
+            try { abortRef.current?.abort?.(); } catch {
+                // Abort is best-effort when disabling the hook.
+            }
+            return;
+        }
 
         mountedRef.current = true;
 
@@ -171,7 +191,9 @@ export function useCachedApi(
 
         return () => {
             mountedRef.current = false;
-            try { abortRef.current?.abort?.(); } catch { }
+            try { abortRef.current?.abort?.(); } catch {
+                // Abort is best-effort during unmount/key changes.
+            }
         };
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [key, enabled]);

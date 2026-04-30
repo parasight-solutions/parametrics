@@ -1,8 +1,9 @@
 // apps/web/src/pages/Reviews.jsx
 import { useEffect, useMemo, useState } from "react";
 import AppShell from "../components/AppShell";
-import ActiveLocationPicker, { getActiveLocationId } from "../components/ActiveLocationPicker";
+import ActiveLocationPicker from "../components/ActiveLocationPicker";
 import { api } from "../apiClient";
+import { getActiveLocationId } from "../session";
 
 function prettyWhen(iso) {
   if (!iso) return "-";

@@ -1,6 +1,7 @@
 // apps/web/src/components/RecurrenceLab.jsx
 import { useEffect, useMemo, useRef, useState } from "react";
-import ActiveLocationPicker, { getActiveLocationId } from "./ActiveLocationPicker";
+import ActiveLocationPicker from "./ActiveLocationPicker";
+import { getActiveLocationId } from "../session";
 
 function authHeaders() {
   const t =

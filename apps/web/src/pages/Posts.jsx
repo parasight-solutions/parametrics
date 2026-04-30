@@ -2,8 +2,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import AppShell from "../components/AppShell";
-import ActiveLocationPicker, { getActiveLocationId } from "../components/ActiveLocationPicker";
+import ActiveLocationPicker from "../components/ActiveLocationPicker";
 import { api } from "../apiClient";
+import { getActiveLocationId } from "../session";
 
 function toLocalInputValue(iso) {
   if (!iso) return "";

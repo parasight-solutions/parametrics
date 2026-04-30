@@ -1,18 +1,25 @@
 // apps/web/src/apiClient.js
-const API_BASE = "/api/v1";
-const TOKEN_KEY = "token";
+import {
+  clearActiveLocationId,
+  clearAuthSession,
+  clearToken as clearStoredToken,
+  getToken as getStoredToken,
+  setToken as setStoredToken,
+} from "./session";
 
 export function getToken() {
-  return localStorage.getItem(TOKEN_KEY) || "";
+  return getStoredToken();
 }
 
 export function setToken(token) {
-  if (token) localStorage.setItem(TOKEN_KEY, token);
+  setStoredToken(token);
 }
 
 export function clearToken() {
-  localStorage.removeItem(TOKEN_KEY);
+  clearStoredToken();
 }
+
+const API_BASE = "/api/v1";
 
 function redirectToLogin() {
   if (window.location.pathname !== "/login") {
@@ -21,14 +28,12 @@ function redirectToLogin() {
 }
 
 function triggerGoogleReauth(err) {
-  // Avoid infinite loops (especially if integrations page calls APIs that also fail)
   const onIntegrations = window.location.pathname.startsWith("/integrations");
 
   const message =
     err?.message ||
     "Google connection expired/revoked. Please reconnect Google.";
 
-  // Persist context so Integrations page can show a banner/CTA (optional UI enhancement later)
   try {
     sessionStorage.setItem(
       "reauth_required",
@@ -39,9 +44,10 @@ function triggerGoogleReauth(err) {
         from: window.location.pathname + window.location.search,
       })
     );
-  } catch {}
+  } catch {
+    // Reauth banners are helpful but should not block request handling.
+  }
 
-  // Alert only once per browser session (consistent with your 401 flow)
   if (!sessionStorage.getItem("reauth_required_alerted")) {
     sessionStorage.setItem("reauth_required_alerted", "1");
     window.alert(message);
@@ -58,12 +64,45 @@ function isGoogleReauthError(payload) {
 
   if (code === "reauth_required") return true;
   if (details?.error === "missing_refresh_token") return true;
+  if (details?.error === "invalid_grant") return true;
 
   return false;
 }
 
+function isRealAppAuthFailure(status, payload) {
+  if (status !== 401) return false;
+
+  const code = String(payload?.code || payload?.error?.code || "").toLowerCase();
+
+  return code === "unauthorized" || code === "invalid";
+}
+
+function getLocationIdFromPath(path) {
+  try {
+    const url = new URL(path, window.location.origin);
+    return url.searchParams.get("locationId") || "";
+  } catch {
+    return "";
+  }
+}
+
+async function parseResponseBody(res) {
+  const text = await res.text().catch(() => "");
+  if (!text) return {};
+
+  try {
+    return JSON.parse(text);
+  } catch {
+    return { raw: text };
+  }
+}
+
 export async function api(path, { method = "GET", body, auth = true, signal } = {}) {
-  const headers = { "Content-Type": "application/json" };
+  const headers = {};
+
+  if (body) {
+    headers["Content-Type"] = "application/json";
+  }
 
   if (auth) {
     const t = getToken();
@@ -78,33 +117,49 @@ export async function api(path, { method = "GET", body, auth = true, signal } = 
     method,
     headers,
     body: body ? JSON.stringify(body) : undefined,
-    signal, // ✅ allows aborts (race-free refresh/location switch)
+    signal,
   });
 
-  if (res.status === 401) {
-    clearToken();
-    if (!sessionStorage.getItem("auth_expired_alerted")) {
-      sessionStorage.setItem("auth_expired_alerted", "1");
-      window.alert("Session expired. Please log in again.");
-    }
-    window.location.href = "/login";
-    throw new Error("Unauthorized");
-  }
+  const parsed = await parseResponseBody(res);
 
   if (!res.ok) {
-    const parsed = await res.json().catch(() => ({}));
-    const err = parsed?.error || parsed || { code: "http_error", status: res.status };
+    const err = parsed?.error || parsed || {
+      code: "http_error",
+      status: res.status,
+      message: `HTTP ${res.status}`,
+    };
+
+    if (typeof err.status !== "number") {
+      err.status = res.status;
+    }
 
     if (isGoogleReauthError(err)) {
       triggerGoogleReauth(err);
       throw err;
     }
 
+    if (res.status === 404) {
+      const locationId = getLocationIdFromPath(path);
+      if (locationId) clearActiveLocationId(locationId);
+    }
+
+    if (auth && isRealAppAuthFailure(res.status, err)) {
+      clearAuthSession();
+
+      if (!sessionStorage.getItem("auth_expired_alerted")) {
+        sessionStorage.setItem("auth_expired_alerted", "1");
+        window.alert("Session expired. Please log in again.");
+      }
+
+      redirectToLogin();
+      throw err;
+    }
+
     throw err;
   }
 
-  return res.json().catch(() => ({}));
+  return parsed || {};
 }
 
-// Back-compat for your Dashboard.jsx usage
+// Back-compat for older imports
 export const apiFetch = api;

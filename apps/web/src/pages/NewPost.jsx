@@ -3,7 +3,8 @@ import { useState } from 'react'
 import { api } from '../apiClient'
 import { useNavigate } from 'react-router-dom'
 import AppShell from "../components/AppShell";
-import ActiveLocationPicker, { getActiveLocationId } from "../components/ActiveLocationPicker";
+import ActiveLocationPicker from "../components/ActiveLocationPicker";
+import { getActiveLocationId } from "../session";
 
 export default function NewPost({ onLogout }) {
   const [locationId, setLocationId] = useState(getActiveLocationId());

@@ -1,16 +1,14 @@
 // apps/web/src/components/ActiveLocationPicker.jsx
 import { useEffect, useState } from "react";
 import { api } from "../apiClient";
-
-const KEY = "active_location_id";
-
-export function getActiveLocationId() {
-  return localStorage.getItem(KEY) || "";
-}
+import {
+  setActiveLocationId,
+} from "../session";
 
 export default function ActiveLocationPicker({ value, onChange }) {
   const [locations, setLocations] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [loaded, setLoaded] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -18,14 +16,25 @@ export default function ActiveLocationPicker({ value, onChange }) {
       try {
         const r = await api("/locations");
         setLocations(r.locations || []);
+        setLoaded(true);
+      } catch {
+        setLoaded(false);
       } finally {
         setLoading(false);
       }
     })();
   }, []);
 
+  useEffect(() => {
+    if (loading || !loaded || !value) return;
+    if (locations.some((l) => String(l.id) === String(value))) return;
+
+    setActiveLocationId("");
+    onChange?.("");
+  }, [loaded, loading, locations, onChange, value]);
+
   function set(v) {
-    localStorage.setItem(KEY, v || "");
+    setActiveLocationId(v);
     onChange?.(v || "");
   }
 

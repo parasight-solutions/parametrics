@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import AppShell from "../components/AppShell";
-import ActiveLocationPicker, { getActiveLocationId } from "../components/ActiveLocationPicker";
+import ActiveLocationPicker from "../components/ActiveLocationPicker";
 import { useCachedApi } from "../hooks/useCachedApi";
 import RecurrenceLab from "../components/RecurrenceLab";
+import { getActiveLocationId } from "../session";
 
 function prettyWhenMs(ms) {
   if (!ms) return "-";
@@ -20,12 +21,17 @@ function ymdLocal(d) {
 }
 
 function parseYmd(s) {
-  const m = String(s || "").trim().match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  const m = String(s || "")
+    .trim()
+    .match(/^(\d{4})-(\d{2})-(\d{2})$/);
   if (!m) return null;
-  const y = Number(m[1]), mo = Number(m[2]), d = Number(m[3]);
+  const y = Number(m[1]),
+    mo = Number(m[2]),
+    d = Number(m[3]);
   if (!y || mo < 1 || mo > 12 || d < 1 || d > 31) return null;
   const dt = new Date(y, mo - 1, d);
-  if (dt.getFullYear() !== y || (dt.getMonth() + 1) !== mo || dt.getDate() !== d) return null;
+  if (dt.getFullYear() !== y || dt.getMonth() + 1 !== mo || dt.getDate() !== d)
+    return null;
   return dt;
 }
 
@@ -56,7 +62,10 @@ function toCsv(rows) {
   return rows.map((r) => r.map(esc).join(",")).join("\n");
 }
 
-async function svgTextToCanvas(svgText, { scale = 2, background = "#ffffff" } = {}) {
+async function svgTextToCanvas(
+  svgText,
+  { scale = 2, background = "#ffffff" } = {},
+) {
   const svgBlob = new Blob([svgText], { type: "image/svg+xml;charset=utf-8" });
   const url = URL.createObjectURL(svgBlob);
 
@@ -165,13 +174,13 @@ function buildDashboardSvg({ metrics, locationId, startStr, endStr }) {
 
   body += `<text x="${leftPad}" y="28" font-size="20" font-family="Arial" fill="#111">ParaMetrics Dashboard</text>`;
   body += `<text x="${leftPad}" y="52" font-size="12" font-family="Arial" fill="#666">Location: ${esc(
-    locationId
+    locationId,
   )} · ${esc(startStr)} to ${esc(endStr)}</text>`;
 
   // KPI tiles
-  let kx = leftPad;
-  let ky = headerH;
-  const kpiTileW = Math.floor((width - leftPad * 2 - (kpiCols - 1) * kpiGap) / kpiCols);
+  const kpiTileW = Math.floor(
+    (width - leftPad * 2 - (kpiCols - 1) * kpiGap) / kpiCols,
+  );
 
   kpis.forEach((k, idx) => {
     const col = idx % kpiCols;
@@ -184,7 +193,7 @@ function buildDashboardSvg({ metrics, locationId, startStr, endStr }) {
     body += `<rect x="${x}" y="${y}" width="${kpiTileW}" height="${kpiH}" rx="12" ry="12" fill="#fff" stroke="#e5e7eb"/>`;
     body += `<text x="${x + 14}" y="${y + 30}" font-size="12" font-family="Arial" fill="#666">${esc(k.label)}</text>`;
     body += `<text x="${x + 14}" y="${y + 66}" font-size="26" font-family="Arial" font-weight="700" fill="#111">${esc(
-      total
+      total,
     )}</text>`;
   });
 
@@ -197,10 +206,10 @@ function buildDashboardSvg({ metrics, locationId, startStr, endStr }) {
     body += `<rect x="${leftPad}" y="${rowTop}" width="${width - leftPad * 2}" height="${rowH}" rx="10" ry="10" fill="#fff" stroke="#e5e7eb"/>`;
 
     body += `<text x="${leftPad + 14}" y="${rowMid}" font-size="13" font-family="Arial" fill="#111">${esc(
-      m.metric
+      m.metric,
     )}</text>`;
     body += `<text x="${width - leftPad - 14}" y="${rowMid}" font-size="13" font-family="Arial" fill="#111" text-anchor="end">${esc(
-      m.total ?? 0
+      m.total ?? 0,
     )}</text>`;
 
     const baseLineY = rowTop + chartPadY + chartH;
@@ -222,20 +231,41 @@ ${body}
 </svg>`;
 }
 
-
 export default function Dashboard({ onLogout }) {
   const [locationId, setLocationId] = useState(getActiveLocationId());
   const exportRef = useRef(null);
 
+  useEffect(() => {
+    function handleActiveLocationCleared(event) {
+      const clearedId = event?.detail?.locationId || "";
+      setLocationId((current) => {
+        if (!clearedId || !current || String(current) === String(clearedId)) return "";
+        return current;
+      });
+    }
+
+    window.addEventListener("pm:active-location-cleared", handleActiveLocationCleared);
+    return () => {
+      window.removeEventListener("pm:active-location-cleared", handleActiveLocationCleared);
+    };
+  }, []);
+
   // ---- range state (per location) ----
-  const rangeKey = useMemo(() => (locationId ? `dashRange:v1:${locationId}` : null), [locationId]);
+  const rangeKey = useMemo(
+    () => (locationId ? `dashRange:v1:${locationId}` : null),
+    [locationId],
+  );
 
   const [startStr, setStartStr] = useState("");
   const [endStr, setEndStr] = useState("");
 
   // load saved range per location (or default last 30 days)
   useEffect(() => {
-    if (!locationId) return;
+    if (!locationId) {
+      setStartStr("");
+      setEndStr("");
+      return;
+    }
 
     const today = new Date();
     const defEnd = ymdLocal(today);
@@ -253,7 +283,9 @@ export default function Dashboard({ onLogout }) {
           e = parsed.end;
         }
       }
-    } catch { }
+    } catch {
+      // Ignore corrupt or unavailable saved ranges and fall back to defaults.
+    }
 
     setStartStr(s);
     setEndStr(e);
@@ -264,8 +296,13 @@ export default function Dashboard({ onLogout }) {
     if (!rangeKey) return;
     if (!startStr || !endStr) return;
     try {
-      sessionStorage.setItem(rangeKey, JSON.stringify({ start: startStr, end: endStr }));
-    } catch { }
+      sessionStorage.setItem(
+        rangeKey,
+        JSON.stringify({ start: startStr, end: endStr }),
+      );
+    } catch {
+      // Dashboard still works without persisted date ranges.
+    }
   }, [rangeKey, startStr, endStr]);
 
   const startDate = useMemo(() => parseYmd(startStr), [startStr]);
@@ -274,7 +311,8 @@ export default function Dashboard({ onLogout }) {
   const rangeError = useMemo(() => {
     if (!locationId) return null;
     if (!startDate || !endDate) return "Pick valid start and end dates.";
-    if (endDate.getTime() < startDate.getTime()) return "End date must be after start date.";
+    if (endDate.getTime() < startDate.getTime())
+      return "End date must be after start date.";
     const days = diffDaysInclusive(startDate, endDate);
     if (days < 1) return "Invalid date range.";
     if (days > 366) return "Range too large (max 366 days).";
@@ -291,18 +329,19 @@ export default function Dashboard({ onLogout }) {
     if (rangeError) return null;
     // start/end are YYYY-MM-DD
     return `/integrations/google/performance-series?locationId=${encodeURIComponent(locationId)}&start=${encodeURIComponent(
-      startStr
+      startStr,
     )}&end=${encodeURIComponent(endStr)}`;
   }, [locationId, startStr, endStr, rangeError]);
 
-  const { data, loading, refreshing, error, lastUpdatedAt, refresh } = useCachedApi(path, {
-    enabled: !!locationId && !rangeError,
-    ttlMs: 5 * 60 * 1000,
-    refreshIntervalMs: 60 * 1000,
-    storage: "session",
-  });
+  const { data, loading, refreshing, error, lastUpdatedAt, refresh } =
+    useCachedApi(path, {
+      enabled: !!locationId && !rangeError,
+      ttlMs: 5 * 60 * 1000,
+      refreshIntervalMs: 60 * 1000,
+      storage: "session",
+    });
 
-  const metrics = data?.metrics || [];
+  const metrics = useMemo(() => data?.metrics || [], [data?.metrics]);
   const byName = useMemo(() => {
     const m = new Map();
     for (const x of metrics) m.set(x.metric, x);
@@ -326,14 +365,24 @@ export default function Dashboard({ onLogout }) {
     // Build a date -> metric -> value map for points
     const metricKeys = metrics.map((m) => m.metric);
     const dateSet = new Set();
-    for (const m of metrics) for (const p of (m.points || [])) dateSet.add(p.date);
+    for (const m of metrics)
+      for (const p of m.points || []) dateSet.add(p.date);
 
-    const dates = Array.from(dateSet.values()).sort((a, b) => a.localeCompare(b));
+    const dates = Array.from(dateSet.values()).sort((a, b) =>
+      a.localeCompare(b),
+    );
 
     const rows = [];
     rows.push([`ParaMetrics Dashboard Export`]);
     rows.push([`Location ID`, locationId]);
-    rows.push([`Range Start`, data?.range?.start || startStr, `Range End`, data?.range?.end || endStr, `Days`, data?.range?.days || daysLabel]);
+    rows.push([
+      `Range Start`,
+      data?.range?.start || startStr,
+      `Range End`,
+      data?.range?.end || endStr,
+      `Days`,
+      data?.range?.days || daysLabel,
+    ]);
     rows.push([]);
     rows.push([`Totals`]);
     rows.push([`Metric`, `Total`]);
@@ -354,7 +403,10 @@ export default function Dashboard({ onLogout }) {
     }
 
     const csv = toCsv(rows);
-    downloadBlob(`dashboard_${locationId}_${startStr}_to_${endStr}.csv`, new Blob([csv], { type: "text/csv;charset=utf-8" }));
+    downloadBlob(
+      `dashboard_${locationId}_${startStr}_to_${endStr}.csv`,
+      new Blob([csv], { type: "text/csv;charset=utf-8" }),
+    );
   }
 
   async function exportPng() {
@@ -362,14 +414,21 @@ export default function Dashboard({ onLogout }) {
 
     try {
       const svg = buildDashboardSvg({ metrics, locationId, startStr, endStr });
-      const canvas = await svgTextToCanvas(svg, { scale: 2, background: "#ffffff" });
+      const canvas = await svgTextToCanvas(svg, {
+        scale: 2,
+        background: "#ffffff",
+      });
 
       const blob = await new Promise((resolve) =>
-        canvas.toBlob((b) => resolve(b), "image/png")
+        canvas.toBlob((b) => resolve(b), "image/png"),
       );
 
-      if (!blob) throw new Error("PNG export failed (canvas.toBlob returned null)");
-      downloadBlob(`dashboard_${locationId}_${startStr}_to_${endStr}.png`, blob);
+      if (!blob)
+        throw new Error("PNG export failed (canvas.toBlob returned null)");
+      downloadBlob(
+        `dashboard_${locationId}_${startStr}_to_${endStr}.png`,
+        blob,
+      );
     } catch (e) {
       console.error("[exportPng] failed", e);
       window.alert(e?.message || "PNG export failed. Check console.");
@@ -381,7 +440,10 @@ export default function Dashboard({ onLogout }) {
 
     try {
       const svg = buildDashboardSvg({ metrics, locationId, startStr, endStr });
-      const canvas = await svgTextToCanvas(svg, { scale: 2, background: "#ffffff" });
+      const canvas = await svgTextToCanvas(svg, {
+        scale: 2,
+        background: "#ffffff",
+      });
 
       const imgData = canvas.toDataURL("image/png");
 
@@ -439,10 +501,9 @@ export default function Dashboard({ onLogout }) {
 
     downloadBlob(
       `dashboard_${locationId}_${startStr}_to_${endStr}.svg`,
-      new Blob([svg], { type: "image/svg+xml;charset=utf-8" })
+      new Blob([svg], { type: "image/svg+xml;charset=utf-8" }),
     );
   }
-
 
   return (
     <AppShell
@@ -452,7 +513,7 @@ export default function Dashboard({ onLogout }) {
       actions={
         <div className="flex items-center gap-2">
           <button
-            onClick={() => refresh().catch(() => { })}
+            onClick={() => refresh().catch(() => {})}
             disabled={!locationId || loading || refreshing || !!rangeError}
             className="px-3 py-2 rounded-lg border bg-white text-sm hover:bg-gray-100 disabled:opacity-50"
             title="Force refresh"
@@ -462,7 +523,7 @@ export default function Dashboard({ onLogout }) {
 
           <div className="inline-flex rounded-lg border overflow-hidden">
             <button
-              onClick={() => exportCsv().catch?.(() => { })}
+              onClick={() => exportCsv().catch?.(() => {})}
               disabled={!data}
               className="px-3 py-2 bg-white text-sm hover:bg-gray-100 disabled:opacity-50"
               title="Export CSV"
@@ -478,7 +539,7 @@ export default function Dashboard({ onLogout }) {
               SVG
             </button>
             <button
-              onClick={() => exportPng().catch?.(() => { })}
+              onClick={() => exportPng().catch?.(() => {})}
               disabled={!data}
               className="px-3 py-2 bg-white text-sm hover:bg-gray-100 disabled:opacity-50"
               title="Export PNG (snapshot)"
@@ -486,7 +547,7 @@ export default function Dashboard({ onLogout }) {
               PNG
             </button>
             <button
-              onClick={() => exportPdf().catch?.(() => { })}
+              onClick={() => exportPdf().catch?.(() => {})}
               disabled={!data}
               className="px-3 py-2 bg-white text-sm hover:bg-gray-100 disabled:opacity-50"
               title="Export PDF (snapshot)"
@@ -495,8 +556,10 @@ export default function Dashboard({ onLogout }) {
             </button>
           </div>
 
-          <RecurrenceLab locationId={locationId} onLocationChange={setLocationId} />
-
+          <RecurrenceLab
+            locationId={locationId}
+            onLocationChange={setLocationId}
+          />
         </div>
       }
     >
@@ -547,12 +610,19 @@ export default function Dashboard({ onLogout }) {
 
           <div className="md:col-span-3 text-xs text-gray-500 flex items-center justify-between flex-wrap gap-2">
             <div>
-              Range: <span className="font-medium text-gray-700">{daysLabel || "-"}</span>
+              Range:{" "}
+              <span className="font-medium text-gray-700">
+                {daysLabel || "-"}
+              </span>
             </div>
             <div>
               Last updated:{" "}
-              <span className="font-medium text-gray-700">{prettyWhenMs(lastUpdatedAt)}</span>
-              {refreshing ? <span className="ml-2 text-gray-500">· refreshing…</span> : null}
+              <span className="font-medium text-gray-700">
+                {prettyWhenMs(lastUpdatedAt)}
+              </span>
+              {refreshing ? (
+                <span className="ml-2 text-gray-500">· refreshing…</span>
+              ) : null}
             </div>
           </div>
         </div>
@@ -562,22 +632,50 @@ export default function Dashboard({ onLogout }) {
         ) : null}
 
         {error ? (
-          <div className="text-sm text-red-700">{error?.message || error?.code || "Failed to load"}</div>
+          <div className="text-sm text-red-700">
+            {error?.message || error?.code || "Failed to load"}
+          </div>
         ) : null}
       </div>
 
-      {!locationId ? <div className="text-gray-600">Pick a location to load performance metrics.</div> : null}
+      {!locationId ? (
+        <div className="text-gray-600">
+          Pick a location to load performance metrics.
+        </div>
+      ) : null}
 
-      {locationId && loading && !data ? <div className="text-gray-600">Loading performance…</div> : null}
+      {locationId && loading && !data ? (
+        <div className="text-gray-600">Loading performance…</div>
+      ) : null}
 
-      {data ? (
+      {locationId && data ? (
         <div ref={exportRef} className="space-y-4">
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <Kpi title="Website Clicks" value={getTotal("WEBSITE_CLICKS")} points={getPoints("WEBSITE_CLICKS")} />
-            <Kpi title="Call Clicks" value={getTotal("CALL_CLICKS")} points={getPoints("CALL_CLICKS")} />
-            <Kpi title="Direction Requests" value={getTotal("DIRECTIONS_REQUESTS")} points={getPoints("DIRECTIONS_REQUESTS")} />
-            <Kpi title="Search Impressions" value={getTotal("BUSINESS_IMPRESSIONS_SEARCH")} points={getPoints("BUSINESS_IMPRESSIONS_SEARCH")} />
-            <Kpi title="Maps Impressions" value={getTotal("BUSINESS_IMPRESSIONS_MAPS")} points={getPoints("BUSINESS_IMPRESSIONS_MAPS")} />
+            <Kpi
+              title="Website Clicks"
+              value={getTotal("WEBSITE_CLICKS")}
+              points={getPoints("WEBSITE_CLICKS")}
+            />
+            <Kpi
+              title="Call Clicks"
+              value={getTotal("CALL_CLICKS")}
+              points={getPoints("CALL_CLICKS")}
+            />
+            <Kpi
+              title="Direction Requests"
+              value={getTotal("DIRECTIONS_REQUESTS")}
+              points={getPoints("DIRECTIONS_REQUESTS")}
+            />
+            <Kpi
+              title="Search Impressions"
+              value={getTotal("BUSINESS_IMPRESSIONS_SEARCH")}
+              points={getPoints("BUSINESS_IMPRESSIONS_SEARCH")}
+            />
+            <Kpi
+              title="Maps Impressions"
+              value={getTotal("BUSINESS_IMPRESSIONS_MAPS")}
+              points={getPoints("BUSINESS_IMPRESSIONS_MAPS")}
+            />
           </div>
 
           <div className="bg-white border rounded-xl p-5 overflow-auto">
@@ -610,7 +708,11 @@ function Kpi({ title, value, points }) {
     <div className="bg-white border rounded-xl p-5 space-y-2">
       <div className="text-sm text-gray-600">{title}</div>
       <div className="text-2xl font-bold">{value}</div>
-      {points?.length ? <Sparkline points={points} /> : <div className="text-xs text-gray-400">No trend data</div>}
+      {points?.length ? (
+        <Sparkline points={points} />
+      ) : (
+        <div className="text-xs text-gray-400">No trend data</div>
+      )}
     </div>
   );
 }
@@ -636,7 +738,12 @@ function Sparkline({ points }) {
 
   return (
     <svg viewBox={`0 0 ${w} ${h}`} className="w-full h-8 text-gray-700">
-      <polyline fill="none" stroke="currentColor" strokeWidth="2" points={pts} />
+      <polyline
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        points={pts}
+      />
     </svg>
   );
 }
