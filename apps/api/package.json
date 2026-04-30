@@ -8,8 +8,12 @@
     "dev:workers": "node src/workers/index.js",
     "dev:scheduler": "node src/jobs/scheduler.js",
     "dev": "npm-run-all -p dev:api dev:workers dev:scheduler",
+
     "migrate": "node src/scripts/migrate.js",
-    "seed": "node src/scripts/seed.js"
+    "seed": "node src/scripts/seed.js",
+
+    "migrate:tenancy:s1-02": "node src/scripts/migrate.tenancy.s1-02.js",
+    "seed:mongo": "node src/scripts/seed.mongo.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",

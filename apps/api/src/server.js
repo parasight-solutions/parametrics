@@ -19,6 +19,7 @@ import * as reviewsMod from "./routes/reviews.js"
 import orgsRouter from "./routes/orgs.js";
 import locationOrgRouter from "./routes/locationOrg.js";
 import recurrenceRouter from "./routes/recurrence.js";
+import googleAuthRouter from "./routes/auth.google.js";
 
 
 const locationsRoutes = locationsMod.default || locationsMod.locations
@@ -50,6 +51,7 @@ app.get("/api/v1/health", (_req, res) =>
 )
 
 app.use("/api/v1/auth", auth)
+app.use("/api/v1/auth/google", googleAuthRouter)
 
 // Google routes (same base path; both routers mounted)
 app.use("/api/v1/integrations/google", googleIntegration)

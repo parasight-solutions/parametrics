@@ -3,6 +3,7 @@ import { Router } from "express";
 import crypto from "crypto";
 import { col } from "../lib/mongo.js";
 import { authenticate } from "../middleware/auth.js";
+import { getOrCreateDefaultClientForOrganization } from "../services/clients.js";
 
 const router = Router();
 
@@ -18,6 +19,21 @@ function arrOfStrings(v, maxItems = 50, maxLen = 80) {
     .map((x) => cleanStr(x, maxLen))
     .filter(Boolean)
     .slice(0, maxItems);
+}
+
+function makeSlug(value) {
+  const base = cleanStr(value, 200).toLowerCase();
+  if (!base) return "";
+  return base
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 120);
+}
+
+function normalizeStatus(value) {
+  const v = cleanStr(value, 40).toLowerCase();
+  if (v === "archived") return "archived";
+  return "active";
 }
 
 // list orgs
@@ -41,27 +57,35 @@ router.post("/", authenticate, async (req, res) => {
 
   const id = cleanStr(body.id) || crypto.randomUUID();
   const name = cleanStr(body.name, 200);
-  if (!name) return res.status(400).json({ error: { code: "bad_request", message: "name required" } });
+  if (!name) {
+    return res.status(400).json({
+      error: { code: "bad_request", message: "name required" },
+    });
+  }
 
   const website = cleanStr(body.website, 300);
   const industry = cleanStr(body.industry, 120);
   const description = cleanStr(body.description, 2000);
+  const slug = cleanStr(body.slug, 120) || makeSlug(name);
+  const status = normalizeStatus(body.status);
 
   const onboarding = body.onboarding || {};
   const doc = {
     id,
     user_id: userId,
+    owner_user_id: userId,
     name,
+    slug,
+    status,
     website,
     industry,
     description,
 
-    // onboarding drives AI behavior
     onboarding: {
       targetAudience: cleanStr(onboarding.targetAudience, 300),
       services: arrOfStrings(onboarding.services, 30, 60),
       keywords: arrOfStrings(onboarding.keywords, 50, 40),
-      tone: cleanStr(onboarding.tone, 80), // e.g. professional, friendly, luxury
+      tone: cleanStr(onboarding.tone, 80),
       offers: cleanStr(onboarding.offers, 300),
       doNotMention: cleanStr(onboarding.doNotMention, 300),
       language: cleanStr(onboarding.language, 20) || "en",
@@ -78,7 +102,10 @@ router.post("/", authenticate, async (req, res) => {
   };
 
   const orgs = await col("orgs");
-  const existing = await orgs.findOne({ user_id: userId, id }, { projection: { _id: 0, created_at: 1 } });
+  const existing = await orgs.findOne(
+    { user_id: userId, id },
+    { projection: { _id: 0, created_at: 1 } }
+  );
 
   await orgs.updateOne(
     { user_id: userId, id },
@@ -91,33 +118,104 @@ router.post("/", authenticate, async (req, res) => {
     { upsert: true }
   );
 
-  const saved = await orgs.findOne({ user_id: userId, id }, { projection: { _id: 0 } });
+  const saved = await orgs.findOne(
+    { user_id: userId, id },
+    { projection: { _id: 0 } }
+  );
+
   return res.json({ org: saved });
 });
 
-// bind location -> org (stores org_id inside locations doc)
+// bind location -> org
+// dual-writes:
+// - locations.org_id           (legacy compatibility)
+// - locations.organization_id  (canonical)
+// - locations.client_id        (canonical)
+// - location_org_map           (legacy bridge, still kept for now)
 router.post("/bind-location", authenticate, async (req, res) => {
   const userId = req.user.user_id;
   const { locationId, orgId } = req.body || {};
 
   const locId = cleanStr(locationId, 200);
   const oId = cleanStr(orgId, 200);
+
   if (!locId || !oId) {
-    return res.status(400).json({ error: { code: "bad_request", message: "locationId and orgId required" } });
+    return res.status(400).json({
+      error: {
+        code: "bad_request",
+        message: "locationId and orgId required",
+      },
+    });
   }
 
   const orgs = await col("orgs");
-  const org = await orgs.findOne({ user_id: userId, id: oId }, { projection: { _id: 0, id: 1 } });
-  if (!org) return res.status(404).json({ error: { code: "not_found", message: "org not found" } });
+  const org = await orgs.findOne(
+    { user_id: userId, id: oId },
+    { projection: { _id: 0, id: 1, name: 1 } }
+  );
+  if (!org) {
+    return res.status(404).json({
+      error: { code: "not_found", message: "org not found" },
+    });
+  }
 
   const locations = await col("locations");
-  const r = await locations.updateOne(
+  const existingLocation = await locations.findOne(
     { user_id: userId, id: locId },
-    { $set: { org_id: oId, updated_at: new Date() } }
+    { projection: { _id: 0, id: 1 } }
+  );
+  if (!existingLocation) {
+    return res.status(404).json({
+      error: { code: "not_found", message: "location not found" },
+    });
+  }
+
+  const defaultClient = await getOrCreateDefaultClientForOrganization({
+    organizationId: org.id,
+    organizationName: org.name,
+  });
+
+  const now = new Date();
+
+  await locations.updateOne(
+    { user_id: userId, id: locId },
+    {
+      $set: {
+        org_id: org.id,
+        organization_id: org.id,
+        client_id: defaultClient.id,
+        updated_at: now,
+      },
+    }
   );
 
-  if (!r.matchedCount) return res.status(404).json({ error: { code: "not_found", message: "location not found" } });
-  return res.json({ ok: true });
+  const mapCol = await col("location_org_map");
+  await mapCol.updateOne(
+    { user_id: userId, location_id: locId },
+    {
+      $set: {
+        user_id: userId,
+        location_id: locId,
+        org_id: org.id,
+        organization_id: org.id,
+        updated_at: now,
+      },
+      $setOnInsert: {
+        created_at: now,
+      },
+    },
+    { upsert: true }
+  );
+
+  return res.json({
+    ok: true,
+    binding: {
+      location_id: locId,
+      org_id: org.id,
+      organization_id: org.id,
+      client_id: defaultClient.id,
+    },
+  });
 });
 
 export default router;

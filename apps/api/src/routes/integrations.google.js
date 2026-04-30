@@ -322,16 +322,17 @@ router.get('/callback', async (req, res) => {
     try {
       const existing = await getGoogleIntegrationBySubject(uid, sub);
       if (existing?.secrets_json) prev = decJson(existing.secrets_json || "{}") || {};
-    } catch {}
+    } catch { }
 
     const expiresInSec = Number(tok.expires_in || 3600);
+    const expiryDateSec = Math.floor(Date.now() / 1000) + expiresInSec;
 
     const secrets = {
       access_token: tok.access_token,
       refresh_token: tok.refresh_token || prev.refresh_token || null,
 
-      // IMPORTANT: store in MS (most refresh logic compares with Date.now())
-      expiry_date: Date.now() + (expiresInSec * 1000),
+      // Store in SECONDS to match ensureAccessToken()
+      expiry_date: expiryDateSec,
 
       scope: tok.scope,
       token_type: tok.token_type || 'Bearer',

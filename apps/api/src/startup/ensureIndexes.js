@@ -11,21 +11,21 @@ const pickIndexSignature = (ix) => ({
 
 const sigEq = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 
-async function listIdx(c) {
-  return c.listIndexes().toArray();
+async function listIdx(collection) {
+  return collection.listIndexes().toArray();
 }
 
-async function dropIndexIfExists(c, name) {
+async function dropIndexIfExists(collection, name) {
   try {
-    await c.dropIndex(name);
-    console.log("[indexes] dropped", c.collectionName, name);
-  } catch (_e) {
-    // ignore
+    await collection.dropIndex(name);
+    console.log("[indexes] dropped", collection.collectionName, name);
+  } catch {
+    // ignore missing index
   }
 }
 
-async function ensureIndex(c, key, opts = {}) {
-  const existing = await listIdx(c);
+async function ensureIndex(collection, key, opts = {}) {
+  const existing = await listIdx(collection);
 
   const want = {
     key,
@@ -33,56 +33,125 @@ async function ensureIndex(c, key, opts = {}) {
     partialFilterExpression: opts.partialFilterExpression || null,
   };
 
-  // same signature exists -> ok
   const sameSig = existing.find((ix) => sigEq(pickIndexSignature(ix), want));
   if (sameSig) return;
 
-  // same key exists but signature differs -> drop it
   const sameKey = existing.find((ix) => keyEq(ix.key, key));
   if (sameKey) {
-    console.warn("[indexes] index signature mismatch; recreating", c.collectionName, sameKey.name);
-    await dropIndexIfExists(c, sameKey.name);
+    console.warn(
+      "[indexes] index signature mismatch; recreating",
+      collection.collectionName,
+      sameKey.name
+    );
+    await dropIndexIfExists(collection, sameKey.name);
   }
 
-  // desired name exists but wrong signature -> drop it
   if (opts.name) {
     const named = existing.find((ix) => ix.name === opts.name);
     if (named && !sigEq(pickIndexSignature(named), want)) {
-      console.warn("[indexes] name exists with different signature; recreating", c.collectionName, opts.name);
-      await dropIndexIfExists(c, opts.name);
+      console.warn(
+        "[indexes] name exists with different signature; recreating",
+        collection.collectionName,
+        opts.name
+      );
+      await dropIndexIfExists(collection, opts.name);
     }
   }
 
-  await c.createIndex(key, opts);
+  await collection.createIndex(key, opts);
 }
 
 export async function ensureIndexes() {
+  // ---------------------------------------------------------------------------
   // users
-  await ensureIndex(await col("users"), { email: 1 }, { unique: true, name: "uniq_users_email" });
+  // ---------------------------------------------------------------------------
+  const users = await col("users");
 
+  await ensureIndex(users, { email: 1 }, {
+    unique: true,
+    name: "uniq_users_email",
+    partialFilterExpression: { email: { $type: "string" } },
+  });
+
+  await ensureIndex(users, { normalized_email: 1 }, {
+    unique: true,
+    name: "uniq_users_normalized_email",
+    partialFilterExpression: { normalized_email: { $type: "string" } },
+  });
+
+  await ensureIndex(users, { oauth_provider: 1, oauth_sub: 1 }, {
+    unique: true,
+    name: "uniq_users_oauth_provider_sub",
+    partialFilterExpression: {
+      oauth_provider: { $type: "string" },
+      oauth_sub: { $type: "string" },
+    },
+  });
+
+  // ---------------------------------------------------------------------------
+  // orgs
+  // ---------------------------------------------------------------------------
+  const orgs = await col("orgs");
+  await ensureIndex(orgs, { user_id: 1, id: 1 }, {
+    unique: true,
+    name: "uniq_orgs_user_id_id",
+  });
+  await ensureIndex(orgs, { user_id: 1, updated_at: -1 }, {
+    name: "idx_orgs_user_updated_at",
+  });
+  await ensureIndex(orgs, { owner_user_id: 1, updated_at: -1 }, {
+    name: "idx_orgs_owner_updated_at",
+  });
+  await ensureIndex(orgs, { id: 1 }, {
+    name: "idx_orgs_id",
+  });
+
+  // ---------------------------------------------------------------------------
+  // clients (new for tenancy)
+  // ---------------------------------------------------------------------------
+  const clients = await col("clients");
+  await ensureIndex(clients, { id: 1 }, {
+    unique: true,
+    name: "uniq_clients_id",
+  });
+  await ensureIndex(clients, { organization_id: 1, is_default: 1 }, {
+    unique: true,
+    name: "uniq_clients_org_default",
+    partialFilterExpression: { is_default: true },
+  });
+  await ensureIndex(clients, { organization_id: 1, updated_at: -1 }, {
+    name: "idx_clients_org_updated_at",
+  });
+
+  // ---------------------------------------------------------------------------
   // integrations
+  // ---------------------------------------------------------------------------
   const integrations = await col("integrations");
 
-  // Drop legacy unique(user_id, provider)
+  // Drop legacy unique(user_id, provider) if present
   const integIdx = await listIdx(integrations);
-  const legacyKey = { user_id: 1, provider: 1 };
-  const legacy = integIdx.find((ix) => ix.unique && keyEq(ix.key, legacyKey));
-  if (legacy) {
-    console.warn("[indexes] dropping legacy unique index on integrations:", legacy.name);
-    await dropIndexIfExists(integrations, legacy.name);
+  const legacyIntegKey = { user_id: 1, provider: 1 };
+  const legacyInteg = integIdx.find(
+    (ix) => ix.unique && keyEq(ix.key, legacyIntegKey)
+  );
+  if (legacyInteg) {
+    console.warn(
+      "[indexes] dropping legacy unique index on integrations:",
+      legacyInteg.name
+    );
+    await dropIndexIfExists(integrations, legacyInteg.name);
   }
 
-  // Unique integration per Google identity (sub) per user/provider
   await ensureIndex(
     integrations,
     { user_id: 1, provider: 1, provider_subject: 1 },
     {
       unique: true,
+      name: "uniq_integrations_user_provider_subject",
       partialFilterExpression: { provider_subject: { $type: "string" } },
     }
   );
 
-  // Only ONE default integration per user/provider (partial unique)
   await ensureIndex(
     integrations,
     { user_id: 1, provider: 1, is_active: 1 },
@@ -93,59 +162,169 @@ export async function ensureIndexes() {
     }
   );
 
-  // stable id unique
-  await ensureIndex(integrations, { id: 1 }, { unique: true, name: "uniq_integrations_id" });
+  await ensureIndex(integrations, { id: 1 }, {
+    unique: true,
+    name: "uniq_integrations_id",
+  });
 
+  // Safe pre-tenancy read-path indexes
+  await ensureIndex(integrations, { organization_id: 1, updated_at: -1 }, {
+    name: "idx_integrations_org_updated_at",
+  });
+  await ensureIndex(integrations, { organization_id: 1, client_id: 1, updated_at: -1 }, {
+    name: "idx_integrations_org_client_updated_at",
+  });
+
+  // ---------------------------------------------------------------------------
   // locations
+  // ---------------------------------------------------------------------------
   const locations = await col("locations");
 
-  // Drop legacy global index if present
   const desiredLocKey = { user_id: 1, provider: 1, provider_location_name: 1 };
-  const legacyGlobalKey = { provider: 1, provider_account_name: 1, provider_location_name: 1 };
+  const legacyGlobalKey = {
+    provider: 1,
+    provider_account_name: 1,
+    provider_location_name: 1,
+  };
+
   const locIdx = await listIdx(locations);
   const legacyGlobal = locIdx.find((ix) => keyEq(ix.key, legacyGlobalKey));
   if (legacyGlobal) {
-    console.warn("[indexes] dropping legacy global unique index on locations:", legacyGlobal.name);
+    console.warn(
+      "[indexes] dropping legacy global unique index on locations:",
+      legacyGlobal.name
+    );
     await dropIndexIfExists(locations, legacyGlobal.name);
   }
 
-  await ensureIndex(locations, desiredLocKey, { unique: true, name: "uniq_location_per_user_provider_location" });
-  await ensureIndex(locations, { user_id: 1, updated_at: -1 }, { name: "idx_locations_user_updated_at" });
+  await ensureIndex(locations, desiredLocKey, {
+    unique: true,
+    name: "uniq_location_per_user_provider_location",
+  });
 
+  await ensureIndex(locations, { user_id: 1, updated_at: -1 }, {
+    name: "idx_locations_user_updated_at",
+  });
+
+  await ensureIndex(locations, { organization_id: 1, client_id: 1, updated_at: -1 }, {
+    name: "idx_locations_org_client_updated_at",
+  });
+
+  await ensureIndex(locations, { organization_id: 1, provider: 1, provider_location_name: 1 }, {
+    name: "idx_locations_org_provider_location_name",
+  });
+
+  // ---------------------------------------------------------------------------
   // posts
+  // ---------------------------------------------------------------------------
   const posts = await col("posts");
-  await ensureIndex(posts, { created_at: -1 }, { name: "idx_posts_created_at_desc" });
-  await ensureIndex(posts, { status: 1, scheduled_at: 1 }, { name: "idx_posts_status_scheduled" });
 
+  await ensureIndex(posts, { created_at: -1 }, {
+    name: "idx_posts_created_at_desc",
+  });
+
+  await ensureIndex(posts, { status: 1, scheduled_at: 1 }, {
+    name: "idx_posts_status_scheduled",
+  });
+
+  await ensureIndex(posts, { organization_id: 1, client_id: 1, location_id: 1, created_at: -1 }, {
+    name: "idx_posts_org_client_location_created_at",
+  });
+
+  await ensureIndex(posts, { organization_id: 1, status: 1, scheduled_at: 1 }, {
+    name: "idx_posts_org_status_scheduled",
+  });
+
+  // ---------------------------------------------------------------------------
   // reviews
+  // ---------------------------------------------------------------------------
   const reviews = await col("reviews");
 
-  // Drop legacy unique index (no user_id) if it exists
   const revIdx = await listIdx(reviews);
   const legacyReviewsKey = { location_id: 1, provider_review_name: 1 };
-  const legacyReviews = revIdx.find((ix) => ix.unique && keyEq(ix.key, legacyReviewsKey));
+  const legacyReviews = revIdx.find(
+    (ix) => ix.unique && keyEq(ix.key, legacyReviewsKey)
+  );
   if (legacyReviews) {
-    console.warn("[indexes] dropping legacy unique index on reviews:", legacyReviews.name);
+    console.warn(
+      "[indexes] dropping legacy unique index on reviews:",
+      legacyReviews.name
+    );
     await dropIndexIfExists(reviews, legacyReviews.name);
   }
 
-  // Correct uniqueness for multi-user
   await ensureIndex(
     reviews,
     { user_id: 1, location_id: 1, provider_review_name: 1 },
-    { unique: true, name: "uniq_reviews_user_location_provider_review" }
+    {
+      unique: true,
+      name: "uniq_reviews_user_location_provider_review",
+    }
   );
 
-  // Fast list endpoint: filter + sort
   await ensureIndex(
     reviews,
     { user_id: 1, location_id: 1, provider: 1, updateTime: -1, createTime: -1 },
-    { name: "idx_reviews_user_location_provider_updateTime" }
+    {
+      name: "idx_reviews_user_location_provider_updateTime",
+    }
   );
 
-  // sync-state
+  await ensureIndex(
+    reviews,
+    { organization_id: 1, client_id: 1, location_id: 1, updateTime: -1, createTime: -1 },
+    {
+      name: "idx_reviews_org_client_location_updateTime",
+    }
+  );
+
+  // ---------------------------------------------------------------------------
+  // review_sync_state
+  // ---------------------------------------------------------------------------
   const sync = await col("review_sync_state");
-  await ensureIndex(sync, { user_id: 1, location_id: 1 }, { unique: true, name: "uniq_review_sync_state_user_location" });
-  await ensureIndex(sync, { user_id: 1, updated_at: -1 }, { name: "idx_review_sync_state_user_updated_at" });
-  await ensureIndex(sync, { id: 1 }, { unique: true, name: "uniq_review_sync_state_id" });
+
+  await ensureIndex(sync, { user_id: 1, location_id: 1 }, {
+    unique: true,
+    name: "uniq_review_sync_state_user_location",
+  });
+
+  await ensureIndex(sync, { user_id: 1, updated_at: -1 }, {
+    name: "idx_review_sync_state_user_updated_at",
+  });
+
+  await ensureIndex(sync, { id: 1 }, {
+    unique: true,
+    name: "uniq_review_sync_state_id",
+  });
+
+  await ensureIndex(sync, { organization_id: 1, client_id: 1, location_id: 1 }, {
+    name: "idx_review_sync_state_org_client_location",
+  });
+
+  // ---------------------------------------------------------------------------
+  // recurrence_rules
+  // ---------------------------------------------------------------------------
+  const recurrenceRules = await col("recurrence_rules");
+
+  await ensureIndex(recurrenceRules, { user_id: 1, updated_at: -1 }, {
+    name: "idx_recurrence_rules_user_updated_at",
+  });
+
+  await ensureIndex(recurrenceRules, { organization_id: 1, client_id: 1, location_id: 1, updated_at: -1 }, {
+    name: "idx_recurrence_rules_org_client_location_updated_at",
+  });
+
+  // ---------------------------------------------------------------------------
+  // location_org_map (legacy, keep readable for now)
+  // ---------------------------------------------------------------------------
+  const locationOrgMap = await col("location_org_map");
+
+  await ensureIndex(locationOrgMap, { user_id: 1, location_id: 1 }, {
+    unique: true,
+    name: "uniq_location_org_map_user_location",
+  });
+
+  await ensureIndex(locationOrgMap, { org_id: 1, updated_at: -1 }, {
+    name: "idx_location_org_map_org_updated_at",
+  });
 }

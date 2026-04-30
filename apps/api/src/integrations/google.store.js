@@ -12,8 +12,8 @@ async function fetchJson(url, opts = {}) {
   const text = await r.text();
   const body = text
     ? (() => {
-        try { return JSON.parse(text); } catch { return { raw: text }; }
-      })()
+      try { return JSON.parse(text); } catch { return { raw: text }; }
+    })()
     : {};
   if (!r.ok) {
     const err = new Error("http_error");
@@ -232,7 +232,19 @@ export async function ensureAccessToken(integOrUserId) {
     });
   };
 
-  const exp = Number(secrets.expiry_date || 0);
+  let exp = Number(secrets.expiry_date || 0);
+
+  // Back-compat: older callback code stored expiry_date in milliseconds.
+  // Normalize to seconds before comparison.
+  if (exp > 10_000_000_000) {
+    exp = Math.floor(exp / 1000);
+
+    const normalized = { ...secrets, expiry_date: exp };
+    await updateGoogleIntegration(integ.id, {
+      secrets_json: encJson(normalized),
+    });
+  }
+
   if (secrets.access_token && exp > nowSec() + 60) {
     return { access_token: secrets.access_token };
   }
