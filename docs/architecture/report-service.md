@@ -50,7 +50,7 @@ S2-02 intentionally keeps PDF layout simple. It does not add images, chart rende
 
 ## S2-03 XLSX Output Generation
 
-S2-03 adds backend XLSX output generation in `apps/api/src/services/reportXlsx.js`.
+S2-03 is complete. It added backend XLSX output generation in `apps/api/src/services/reportXlsx.js`.
 
 The XLSX service accepts a report run produced by `buildDashboardSnapshotReportRun(...)` and produces a minimal workbook buffer for the `xlsx` output format. It also returns output metadata compatible with the S2-01 contract.
 
@@ -66,12 +66,110 @@ The XLSX renderer uses the sanitized S2-01 `input_snapshot` and does not read ra
 
 S2-03 intentionally keeps workbook output simple. It does not add styling, formulas, charts, images, templates, a report API route, Mongo persistence, queues, workers, scheduling, emails, frontend wiring, or PDF changes.
 
+## S2-04 Report Persistence
+
+S2-04 adds Mongo persistence for report definitions and report run lifecycle metadata in `apps/api/src/services/reportStore.js`.
+
+The persistence service is repository-style and accepts injected Mongo collections or a database adapter for tests. Runtime callers can use the default Mongo collections through the existing backend Mongo helper. No public report route is added in S2-04.
+
+S2-04 persists metadata only. Generated PDF/XLSX buffers are not stored in MongoDB. Report run persistence intentionally stores `input_snapshot_summary`, `filters`, output metadata, and compact errors, but does not store the full sanitized dashboard snapshot by default.
+
+### `reports` Collection Contract
+
+`reports` stores report definitions/templates, not generated files.
+
+Minimum fields:
+
+- `id`
+- `report_key`
+- `name`
+- `type`
+- `scope`
+- `organization_id`
+- `client_id`
+- `location_id`
+- `default_formats`
+- `status`: `active` or `archived`
+- `created_by_user_id`
+- `metadata`
+- `created_at`
+- `updated_at`
+
+Report definition persistence requires explicit `organization_id`. `client_id` is optional for organization-level definitions. `location_id` is optional, but when it is set, `client_id` must also be set.
+
+### `report_runs` Collection Contract
+
+`report_runs` stores each generation attempt and lifecycle state.
+
+Minimum fields:
+
+- `id`
+- `report_id`
+- `report_key`
+- `report_type`
+- `report_name`
+- `status`: `pending`, `running`, `succeeded`, or `failed`
+- `requested_formats`
+- `outputs`
+- `input_snapshot_summary`
+- `filters`
+- `organization_id`
+- `client_id`
+- `location_id`
+- `requested_by_user_id`
+- `created_at`
+- `updated_at`
+- `started_at`
+- `completed_at`
+- `error`
+
+Run persistence requires explicit `organization_id` and does not infer org/client/location scope from request state or active user state.
+
+### Persistence Lifecycle Helpers
+
+`reportStore.js` provides:
+
+- `buildReportDefinitionDoc(...)`
+- `createReportDefinition(...)`
+- `buildReportRunDoc(...)`
+- `savePendingReportRun(...)`
+- `markReportRunRunning(...)`
+- `markReportRunSucceeded(...)`
+- `markReportRunFailed(...)`
+
+The run transition helpers update lifecycle metadata only. They store output metadata such as format, status, path, size, compact error, and timestamps, but they do not store generated PDF/XLSX buffers.
+
+### Index Strategy
+
+S2-04 adds indexes in `apps/api/src/startup/ensureIndexes.js`.
+
+`reports` indexes:
+
+- unique `id`
+- unique `report_key` at location scope: `organization_id + client_id + location_id + report_key`
+- unique `report_key` at client scope: `organization_id + client_id + report_key` when `location_id` is null
+- unique `report_key` at organization scope: `organization_id + report_key` when `client_id` and `location_id` are null
+- `organization_id + updated_at`
+- `client_id + updated_at`
+- `location_id + updated_at`
+- `status + updated_at`
+
+The unique report-key indexes are split by scope level instead of using one nullable compound unique index. This avoids MongoDB treating nullable scope fields as a single shared unique value and accidentally blocking valid definitions at a different scope level.
+
+`report_runs` indexes:
+
+- unique `id`
+- `report_id + created_at`
+- `report_key + created_at`
+- `organization_id + created_at`
+- `client_id + created_at`
+- `location_id + created_at`
+- `status + created_at`
+
 ## Intentionally Not Implemented
 
-S2-01/S2-02/S2-03 do not:
+S2-01/S2-02/S2-03/S2-04 do not:
 
-- Persist `reports` or `report_runs` collections.
-- Add Mongo indexes for reports.
 - Add a public reports API route.
 - Add report queues or workers.
 - Send emails.
@@ -82,6 +180,8 @@ S2-01/S2-02/S2-03 do not:
 - Add billing or entitlement checks.
 
 S2-02 generates an in-memory PDF buffer only. S2-03 generates an in-memory XLSX buffer only. Neither service writes files unless a future caller chooses to do so.
+
+S2-04 persists report/report run metadata only. It does not wire persistence into routes, queues, schedulers, workers, emails, or frontend UI.
 
 ## Dashboard Snapshot Input Contract
 
@@ -241,6 +341,6 @@ S2-02 PDF export consumes this report run metadata and fills PDF output metadata
 
 S2-03 XLSX export consumes the same report run metadata and fills XLSX output metadata in memory.
 
-S2-04 report/report_runs persistence should decide the Mongo collection shapes and indexes for durable report definitions and report run history.
+S2-04 report/report_runs persistence defines the Mongo collection shapes and indexes for durable report definitions and report run history.
 
-Future queue direction may include a `report-generate` queue and dedicated report worker, but S2-01/S2-02/S2-03 only document that direction. They do not create a queue or worker.
+Future queue direction may include a `report-generate` queue and dedicated report worker, but S2-01/S2-02/S2-03/S2-04 only document that direction. They do not create a queue or worker.

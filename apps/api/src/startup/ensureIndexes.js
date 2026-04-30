@@ -329,6 +329,99 @@ export async function ensureIndexes() {
   });
 
   // ---------------------------------------------------------------------------
+  // reports
+  // ---------------------------------------------------------------------------
+  const reports = await col("reports");
+
+  await ensureIndex(reports, { id: 1 }, {
+    unique: true,
+    name: "uniq_reports_id",
+  });
+
+  await ensureIndex(reports, { organization_id: 1, client_id: 1, location_id: 1, report_key: 1 }, {
+    unique: true,
+    name: "uniq_reports_org_client_location_key",
+    partialFilterExpression: {
+      organization_id: { $type: "string" },
+      client_id: { $type: "string" },
+      location_id: { $type: "string" },
+      report_key: { $type: "string" },
+    },
+  });
+
+  await ensureIndex(reports, { organization_id: 1, client_id: 1, report_key: 1 }, {
+    unique: true,
+    name: "uniq_reports_org_client_key",
+    partialFilterExpression: {
+      organization_id: { $type: "string" },
+      client_id: { $type: "string" },
+      location_id: null,
+      report_key: { $type: "string" },
+    },
+  });
+
+  await ensureIndex(reports, { organization_id: 1, report_key: 1 }, {
+    unique: true,
+    name: "uniq_reports_org_key",
+    partialFilterExpression: {
+      organization_id: { $type: "string" },
+      client_id: null,
+      location_id: null,
+      report_key: { $type: "string" },
+    },
+  });
+
+  await ensureIndex(reports, { organization_id: 1, updated_at: -1 }, {
+    name: "idx_reports_org_updated_at",
+  });
+
+  await ensureIndex(reports, { client_id: 1, updated_at: -1 }, {
+    name: "idx_reports_client_updated_at",
+  });
+
+  await ensureIndex(reports, { location_id: 1, updated_at: -1 }, {
+    name: "idx_reports_location_updated_at",
+  });
+
+  await ensureIndex(reports, { status: 1, updated_at: -1 }, {
+    name: "idx_reports_status_updated_at",
+  });
+
+  // ---------------------------------------------------------------------------
+  // report_runs
+  // ---------------------------------------------------------------------------
+  const reportRuns = await col("report_runs");
+
+  await ensureIndex(reportRuns, { id: 1 }, {
+    unique: true,
+    name: "uniq_report_runs_id",
+  });
+
+  await ensureIndex(reportRuns, { report_id: 1, created_at: -1 }, {
+    name: "idx_report_runs_report_id_created_at",
+  });
+
+  await ensureIndex(reportRuns, { report_key: 1, created_at: -1 }, {
+    name: "idx_report_runs_report_key_created_at",
+  });
+
+  await ensureIndex(reportRuns, { organization_id: 1, created_at: -1 }, {
+    name: "idx_report_runs_org_created_at",
+  });
+
+  await ensureIndex(reportRuns, { client_id: 1, created_at: -1 }, {
+    name: "idx_report_runs_client_created_at",
+  });
+
+  await ensureIndex(reportRuns, { location_id: 1, created_at: -1 }, {
+    name: "idx_report_runs_location_created_at",
+  });
+
+  await ensureIndex(reportRuns, { status: 1, created_at: -1 }, {
+    name: "idx_report_runs_status_created_at",
+  });
+
+  // ---------------------------------------------------------------------------
   // audit_logs
   // ---------------------------------------------------------------------------
   const auditLogs = await col("audit_logs");
