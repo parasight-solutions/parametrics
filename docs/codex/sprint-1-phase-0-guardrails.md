@@ -20,7 +20,8 @@ That target state is not implemented by assumption. It should guide safe naming 
 - S1-02 tenancy fields/migration: Added tenancy-related fields and migration work.
 - S1-03 ownership guards: Added backend ownership checks so stale or unauthorized location access is rejected.
 - S1-04 Google app auth keep/fix: Preserved and stabilized app auth while keeping Google provider auth separate.
-- S1-04.2 frontend stale state reset in progress: Frontend reset behavior for auth identity switch, logout, stale location, and dashboard cache is being implemented and verified.
+- S1-04.2 frontend stale state reset: Frontend reset behavior for auth identity switch, logout, stale location, and dashboard cache is committed.
+- S1-05 auth shortcut hardening in progress: Backend auth must fail closed outside explicit local development, and app JWT auth must rely on signature verification only.
 
 ## Explicit Forbidden Work
 
@@ -43,6 +44,8 @@ ParaMetrics app auth and Google provider auth are separate.
 Provider reauth problems, such as missing Google refresh tokens or invalid Google grants, should drive reconnect UI. They must not logout the ParaMetrics app user.
 
 Only real app auth failures, such as invalid or unauthorized app JWTs, should clear app auth and redirect to login.
+
+App JWT shortcuts are not allowed outside explicit local development. Production, staging, and other non-local environments must require a strong `JWT_SECRET` and must not accept unsigned, decoded-only, mock, or bypass tokens.
 
 ## Storage And Cache Discipline
 

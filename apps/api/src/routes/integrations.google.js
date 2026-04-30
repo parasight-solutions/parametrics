@@ -23,7 +23,6 @@ import { authenticate } from '../middleware/auth.js'
 import { ensureGoogleIntegrationIndexes } from "../integrations/google.indexes.js";
 
 const router = Router()
-const IS_PROD = (process.env.NODE_ENV || 'development') === 'production'
 
 // --- Google OAuth constants ---
 const AUTH_BASE = 'https://accounts.google.com/o/oauth2/v2/auth'
@@ -132,17 +131,6 @@ function normalizeAccountResourceName(v) {
   throw e;
 }
 
-// ---------- JWT helpers ----------
-// function unsafeParseJwt(t) {
-//   try {
-//     const parts = String(t).split('.')
-//     if (parts.length < 2) return null
-//     const p = parts[1].replace(/-/g, '+').replace(/_/g, '/')
-//     const pad = '='.repeat((4 - (p.length % 4)) % 4)
-//     return JSON.parse(Buffer.from(p + pad, 'base64').toString('utf8'))
-//   } catch { return null }
-// }
-
 // Accept JWT from Authorization: Bearer ... OR ?t=...
 function userFromReq(req) {
   const header = req.headers.authorization || ''
@@ -154,13 +142,6 @@ function userFromReq(req) {
       const tok = verifyJwt(m[1])
       return { user_id: tok.user_id, role: tok.role }
     } catch (e) {
-      // if (!IS_PROD) {
-      //   const dec = unsafeParseJwt(m[1])
-      //   if (dec?.user_id) {
-      //     console.warn('[integrations.google/start] DEV accept unsigned header jwt for user_id=', dec.user_id)
-      //     return { user_id: dec.user_id, role: dec.role || 'user' }
-      //   }
-      // }
       console.warn('[integrations.google/start] header token verify failed:', e?.message || e)
     }
   }
@@ -170,13 +151,6 @@ function userFromReq(req) {
       const tok = verifyJwt(q)
       return { user_id: tok.user_id, role: tok.role }
     } catch (e) {
-      // if (!IS_PROD) {
-      //   const dec = unsafeParseJwt(q)
-      //   if (dec?.user_id) {
-      //     console.warn('[integrations.google/start] DEV accept unsigned query jwt for user_id=', dec.user_id)
-      //     return { user_id: dec.user_id, role: dec.role || 'user' }
-      //   }
-      // }
       console.warn('[integrations.google/start] query token verify failed:', e?.message || e)
     }
   }

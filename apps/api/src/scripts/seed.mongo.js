@@ -2,6 +2,9 @@ import "dotenv/config"
 import { col } from '../lib/mongo.js'
 import bcrypt from 'bcryptjs'
 import crypto from 'crypto'
+import { assertLocalDevOnly } from '../lib/authConfig.js'
+
+assertLocalDevOnly('seed.mongo.js')
 
 async function main(){
   const users = await col('users')

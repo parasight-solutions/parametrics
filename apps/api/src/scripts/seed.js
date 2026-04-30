@@ -1,6 +1,10 @@
 import bcrypt from 'bcryptjs'
 import crypto from 'crypto'
-import { query } from '../lib/db.js'
+import { assertLocalDevOnly } from '../lib/authConfig.js'
+
+assertLocalDevOnly('seed.js')
+
+const { query } = await import('../lib/db.js')
 
 const adminEmail = 'admin@example.com'
 const adminPass = 'Admin@123456'

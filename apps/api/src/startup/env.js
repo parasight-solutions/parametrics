@@ -3,6 +3,7 @@ import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import dotenv from "dotenv";
+import { assertSafeJwtConfig } from "../lib/authConfig.js";
 
 const FLAG = "__PARAMETRICS_ENV_LOADED__";
 
@@ -61,4 +62,6 @@ if (!globalThis[FLAG]) {
     "MONGODB_URI set =", ok("MONGODB_URI"),
     "OPENAI_API_KEY set =", ok("OPENAI_API_KEY")
   );
+
+  assertSafeJwtConfig();
 }

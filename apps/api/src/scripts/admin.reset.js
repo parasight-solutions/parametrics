@@ -2,6 +2,9 @@ import "dotenv/config";
 import bcrypt from "bcryptjs";
 import crypto from "crypto";
 import { col } from "../lib/mongo.js";
+import { assertLocalDevOnly } from "../lib/authConfig.js";
+
+assertLocalDevOnly("admin.reset.js");
 
 async function main() {
   const email = "admin@example.com";
