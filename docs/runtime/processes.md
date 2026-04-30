@@ -43,6 +43,12 @@ The API command does not start workers or the scheduler.
 Package command:
 
 ```bash
+npm run -w @parametrics/api start:workers
+```
+
+Existing local alias:
+
+```bash
 npm run -w @parametrics/api dev:workers
 ```
 
@@ -52,7 +58,23 @@ Entrypoint:
 apps/api/src/workers/index.js
 ```
 
-Current status: existing/partial. The entrypoint imports worker modules for post generation, post publishing, and review sync. This task documents the boundary only; it does not verify worker job behavior end to end.
+The worker process imports `apps/api/src/startup/env.js`, then explicitly imports worker modules for their BullMQ registration side effects.
+
+Currently registered workers:
+
+- `post-generate`: registered by `apps/api/src/workers/postGenerate.worker.js`; consumes the `post-generate` queue, uses Redis, MongoDB, and OpenAI configuration.
+- `post-publish`: registered by `apps/api/src/workers/postPublish.worker.js`; consumes the `post-publish` queue, uses Redis, MongoDB, encrypted Google integration secrets, and Google provider configuration.
+- `review-sync`: registered by `apps/api/src/workers/reviewSync.worker.js`; consumes the `review-sync` queue, uses Redis, MongoDB, encrypted Google integration secrets, and Google provider configuration.
+
+Worker files that exist but are not registered by `apps/api/src/workers/index.js` today:
+
+- `apps/api/src/workers/contentGen.worker.js`
+- `apps/api/src/workers/imageGen.worker.js`
+- `apps/api/src/workers/notify.worker.js`
+
+Do not assume those legacy/placeholder workers run in production unless they are explicitly imported by the worker entrypoint in a future task.
+
+The worker command does not start the Express API server and does not import `apps/api/src/jobs/scheduler.js`.
 
 ## Scheduler Process
 
@@ -96,6 +118,30 @@ Worker and scheduler processes also need the same Redis configuration:
 - `REDIS_PORT`
 - `REDIS_TLS`
 
+## Required Worker Environment
+
+Worker startup currently expects:
+
+- `NODE_ENV`: use `development` locally; use a non-local value such as `staging` or `production` in deployed environments.
+- `JWT_SECRET`: required and strong outside `NODE_ENV=development` or `NODE_ENV=test` because the shared startup environment guard runs in the worker process.
+- `MONGODB_URI` or `MONGO_URI`: MongoDB connection string. Defaults exist for local development only.
+- `MONGO_DB`, `MONGO_DB_NAME`, or `MONGODB_DB`: database name. Defaults to `parametrics`.
+- `REDIS_HOST`, `REDIS_PORT`, and `REDIS_TLS`: Redis connection settings used by BullMQ workers and queues.
+- `APP_ENC_KEY` or `ENCRYPTION_KEY`: required before workers that import Google integration secret handling can start.
+- `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET`: required when publish or review-sync jobs need to refresh Google provider access tokens.
+- `OPENAI_API_KEY`: required when `post-generate` jobs call OpenAI.
+- Optional worker tuning variables currently read by `post-generate`:
+  - `POST_GEN_CONCURRENCY`
+  - `POST_GEN_ATTEMPTS`
+  - `POST_GEN_REQUEUE_MS`
+  - `POST_GEN_STALE_WORKING_MS`
+  - `POST_GEN_WINDOW_HOURS`
+  - `OPENAI_POST_MODEL`
+
+Redis is required for worker startup because BullMQ `Worker` instances connect to Redis immediately. MongoDB is used by all currently registered worker modules during job handling, and `post-generate` also uses MongoDB on boot for stale/pending post healing.
+
+Current worker shutdown behavior: no explicit `SIGTERM`/`SIGINT` handlers are registered in `apps/api/src/workers/index.js` or the registered worker modules. Production process managers should send normal termination signals and apply a grace period; future hardening should close BullMQ workers and Redis/Mongo connections explicitly.
+
 ## Local Development
 
 Run only the API:
@@ -126,6 +172,12 @@ Recommended API command for a process manager:
 npm run -w @parametrics/api start
 ```
 
+Recommended worker command for a process manager:
+
+```bash
+npm run -w @parametrics/api start:workers
+```
+
 Run workers and scheduler as separate process-manager services using their package commands. Do not rely on one combined command for production/staging.
 
 ## Verified In S1-06
@@ -138,12 +190,23 @@ This task verifies:
 - Worker and scheduler entrypoints exist and are documented as separate runtimes.
 - Runtime documentation captures the current startup contract.
 
+## Verified In S1-07
+
+This task verifies:
+
+- The worker has a dedicated production-style package command: `npm run -w @parametrics/api start:workers`.
+- The package keeps `dev:workers` as the local alias for `src/workers/index.js`.
+- The worker command does not start the API server.
+- The worker command does not start scheduler loops.
+- The worker entrypoint explicitly imports the currently registered worker modules.
+- Runtime documentation captures the worker startup contract, dependencies, registered queues, shutdown behavior, and hardening gaps.
+
 ## Remaining Work
 
-S1-07/S1-08 should cover deeper runtime hardening, such as:
+S1-08 should cover scheduler runtime hardening next. Remaining runtime work includes:
 
-- Worker startup contract and failure behavior.
 - Scheduler startup contract and failure behavior.
 - Production process-manager examples.
 - Health/readiness checks that do not mutate data.
 - CI or smoke checks for runtime startup without long-running commands.
+- Explicit graceful shutdown for BullMQ workers, Redis connections, and MongoDB connections.

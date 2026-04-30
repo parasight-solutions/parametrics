@@ -22,7 +22,8 @@ That target state is not implemented by assumption. It should guide safe naming 
 - S1-04 Google app auth keep/fix: Preserved and stabilized app auth while keeping Google provider auth separate.
 - S1-04.2 frontend stale state reset: Frontend reset behavior for auth identity switch, logout, stale location, and dashboard cache is committed.
 - S1-05 auth shortcut hardening: Backend auth fails closed outside explicit local development, and app JWT auth relies on signature verification only.
-- S1-06 API process entrypoint in progress: API, worker, and scheduler runtimes remain separate, with an explicit API startup command and documented runtime contract.
+- S1-06 API process entrypoint: API, worker, and scheduler runtimes remain separate, with an explicit API startup command and documented runtime contract.
+- S1-07 worker process entrypoint in progress: worker startup gets a dedicated production-style command and documented runtime contract without starting API or scheduler runtimes.
 
 ## Explicit Forbidden Work
 
