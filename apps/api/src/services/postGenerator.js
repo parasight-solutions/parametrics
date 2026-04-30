@@ -5,6 +5,7 @@ import fs from "node:fs";
 import path from "node:path";
 import OpenAI from "openai";
 import { col } from "../lib/mongo.js";
+import { resolveCanonicalLocationScope } from "./locationBinding.js";
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
@@ -106,11 +107,24 @@ export async function generateForPost(postId) {
 
   const loc = await locations.findOne(
     { id: post.location_id, user_id: post.user_id },
-    { projection: { _id: 0, id: 1, title: 1, name: 1, provider_location_name: 1, org_id: 1 } }
+    {
+      projection: {
+        _id: 0,
+        id: 1,
+        title: 1,
+        name: 1,
+        provider_location_name: 1,
+        organization_id: 1,
+        client_id: 1,
+        org_id: 1,
+      },
+    }
   );
 
-  const org = loc?.org_id
-    ? await orgs.findOne({ id: loc.org_id, user_id: post.user_id }, { projection: { _id: 0 } })
+  const locationScope = resolveCanonicalLocationScope(loc);
+  const orgId = locationScope.effective.organization_id;
+  const org = orgId
+    ? await orgs.findOne({ id: orgId, user_id: post.user_id }, { projection: { _id: 0 } })
     : null;
 
   const locationTitle = loc?.title || loc?.name || loc?.provider_location_name || post.location_id;

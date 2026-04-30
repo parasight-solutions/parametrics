@@ -4,6 +4,7 @@ import crypto from "crypto";
 import { DateTime } from "luxon";
 import { col } from "../lib/mongo.js";
 import { makeQueue } from "../lib/queues.js";
+import { resolveCanonicalLocationScope } from "./locationBinding.js";
 
 const genQ = makeQueue("post-generate");
 
@@ -110,20 +111,6 @@ export async function planForRule(rule) {
   const rules = await col("recurrence_rules");
   const mapCol = await col("location_org_map");
 
-  // Must have org mapping
-  const map = await mapCol.findOne(
-    { user_id: rule.user_id, location_id: rule.location_id },
-    { projection: { _id: 0, org_id: 1 } }
-  );
-
-  if (!map?.org_id) {
-    await rules.updateOne(
-      { id: rule.id, user_id: rule.user_id },
-      { $set: { last_error: "org_not_set_for_location", updated_at: new Date() } }
-    );
-    return { planned: 0, error: "org_not_set_for_location" };
-  }
-
   const tz = rule.timezone || "Asia/Kolkata";
   const nowLocal = DateTime.utc().setZone(tz);
 
@@ -138,8 +125,35 @@ export async function planForRule(rule) {
 
   const loc = await locations.findOne(
     { id: rule.location_id, user_id: rule.user_id, provider: "google" },
-    { projection: { _id: 0, id: 1, title: 1, name: 1, provider_location_name: 1, provider_account_name: 1, integration_id: 1 } }
+    {
+      projection: {
+        _id: 0,
+        id: 1,
+        title: 1,
+        name: 1,
+        provider_location_name: 1,
+        provider_account_name: 1,
+        integration_id: 1,
+        organization_id: 1,
+        client_id: 1,
+        org_id: 1,
+      },
+    }
   );
+
+  const map = await mapCol.findOne(
+    { user_id: rule.user_id, location_id: rule.location_id },
+    { projection: { _id: 0, location_id: 1, org_id: 1, organization_id: 1 } }
+  );
+
+  const scope = resolveCanonicalLocationScope(loc, map);
+  if (!scope.effective.organization_id) {
+    await rules.updateOne(
+      { id: rule.id, user_id: rule.user_id },
+      { $set: { last_error: "org_not_set_for_location", updated_at: new Date() } }
+    );
+    return { planned: 0, error: "org_not_set_for_location" };
+  }
 
   if (!loc?.integration_id || !loc?.provider_account_name || !loc?.provider_location_name) {
     await rules.updateOne(
@@ -256,7 +270,7 @@ export async function planForRule(rule) {
       recurrence_key: recurrenceKey,
 
       ai_status: "pending",
-      ai_org_id: map.org_id,
+      ai_org_id: scope.effective.organization_id,
       ai_error: null,
 
       provider_post_name: null,

@@ -24,7 +24,8 @@ That target state is not implemented by assumption. It should guide safe naming 
 - S1-05 auth shortcut hardening: Backend auth fails closed outside explicit local development, and app JWT auth relies on signature verification only.
 - S1-06 API process entrypoint: API, worker, and scheduler runtimes remain separate, with an explicit API startup command and documented runtime contract.
 - S1-07 worker process entrypoint: worker startup has a dedicated production-style command and documented runtime contract without starting API or scheduler runtimes.
-- S1-08 scheduler process entrypoint in progress: scheduler startup gets a dedicated production-style command and documented runtime contract without starting API or worker runtimes.
+- S1-08 scheduler process entrypoint: scheduler startup has a dedicated production-style command and documented runtime contract without starting API or worker runtimes.
+- S1-09 location-org mapping direction in progress: `locations.organization_id` and `locations.client_id` are the canonical binding source, while `locations.org_id` and `location_org_map` remain legacy compatibility only.
 
 ## Explicit Forbidden Work
 
@@ -33,6 +34,8 @@ Do not add Phase 2 integrations. No new channels, provider platforms, or expande
 Do not fake tenant support. UI or backend code must not pretend tenant switching exists unless the supporting model and verified flows are part of the task.
 
 Do not auto-bind imported Google locations. Imported Google locations must not be silently attached to an org/client just to make UI state look complete.
+
+For location-org binding, explicit bind writes canonical `locations.organization_id` and `locations.client_id` first. Legacy `locations.org_id` and `location_org_map` may be dual-written for compatibility, but reads should prefer canonical location fields and must not require the legacy bridge when canonical fields exist.
 
 Do not loosen backend ownership guards. If a stale Beetle or other location id returns 404 for another user, that is correct backend behavior.
 

@@ -3,6 +3,10 @@ import { Router } from "express";
 import { col } from "../lib/mongo.js";
 import { authenticate } from "../middleware/auth.js";
 import { getOrCreateDefaultClientForOrganization } from "../services/clients.js";
+import {
+  normalizeLocationBinding,
+  resolveCanonicalLocationScope,
+} from "../services/locationBinding.js";
 
 const router = Router();
 
@@ -15,9 +19,13 @@ function cleanStr(value, max = 500) {
 /**
  * Legacy compatibility route.
  *
- * Canonical write path after this change:
- * - location_org_map.org_id / organization_id
- * - locations.org_id / organization_id / client_id
+ * Canonical source of truth:
+ * - locations.organization_id
+ * - locations.client_id
+ *
+ * Legacy compatibility:
+ * - locations.org_id
+ * - location_org_map
  */
 
 router.get("/", authenticate, async (req, res) => {
@@ -30,15 +38,30 @@ router.get("/", authenticate, async (req, res) => {
     });
   }
 
+  const locations = await col("locations");
+  const loc = await locations.findOne(
+    { user_id: userId, id: locationId },
+    {
+      projection: {
+        _id: 0,
+        id: 1,
+        org_id: 1,
+        organization_id: 1,
+        client_id: 1,
+      },
+    }
+  );
+
   const mapCol = await col("location_org_map");
   const map = await mapCol.findOne(
     { user_id: userId, location_id: locationId },
     { projection: { _id: 0 } }
   );
 
-  if (!map) return res.json({ map: null, org: null });
+  if (!loc && !map) return res.json({ map: null, org: null, binding: null });
 
-  const orgId = cleanStr(map.organization_id || map.org_id, 200);
+  const binding = resolveCanonicalLocationScope(loc, map);
+  const orgId = cleanStr(binding.effective.organization_id, 200);
 
   const orgs = await col("orgs");
   const org = orgId
@@ -48,7 +71,7 @@ router.get("/", authenticate, async (req, res) => {
     )
     : null;
 
-  return res.json({ map, org: org || null });
+  return res.json({ map: map || null, org: org || null, binding });
 });
 
 router.put("/", authenticate, async (req, res) => {
@@ -132,15 +155,16 @@ router.put("/", authenticate, async (req, res) => {
     { projection: { _id: 0 } }
   );
 
+  const binding = normalizeLocationBinding({
+    locationId,
+    organizationId: org.id,
+    clientId: defaultClient.id,
+  });
+
   return res.json({
     map,
     org,
-    binding: {
-      location_id: locationId,
-      org_id: org.id,
-      organization_id: org.id,
-      client_id: defaultClient.id,
-    },
+    binding,
   });
 });
 

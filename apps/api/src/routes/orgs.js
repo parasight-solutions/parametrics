@@ -4,6 +4,7 @@ import crypto from "crypto";
 import { col } from "../lib/mongo.js";
 import { authenticate } from "../middleware/auth.js";
 import { getOrCreateDefaultClientForOrganization } from "../services/clients.js";
+import { normalizeLocationBinding } from "../services/locationBinding.js";
 
 const router = Router();
 
@@ -126,11 +127,11 @@ router.post("/", authenticate, async (req, res) => {
   return res.json({ org: saved });
 });
 
-// bind location -> org
+// bind location -> organization
 // dual-writes:
-// - locations.org_id           (legacy compatibility)
 // - locations.organization_id  (canonical)
 // - locations.client_id        (canonical)
+// - locations.org_id           (legacy compatibility)
 // - location_org_map           (legacy bridge, still kept for now)
 router.post("/bind-location", authenticate, async (req, res) => {
   const userId = req.user.user_id;
@@ -207,14 +208,15 @@ router.post("/bind-location", authenticate, async (req, res) => {
     { upsert: true }
   );
 
+  const binding = normalizeLocationBinding({
+    locationId: locId,
+    organizationId: org.id,
+    clientId: defaultClient.id,
+  });
+
   return res.json({
     ok: true,
-    binding: {
-      location_id: locId,
-      org_id: org.id,
-      organization_id: org.id,
-      client_id: defaultClient.id,
-    },
+    binding,
   });
 });
 
