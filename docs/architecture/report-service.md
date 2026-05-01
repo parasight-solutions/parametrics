@@ -6,7 +6,7 @@ ParaMetrics Phase 1 / Sprint 2 starts the reports foundation while the product r
 
 The frontend dashboard currently supports client-side exports from the GBP dashboard, including CSV, SVG, PNG, and PDF snapshot behavior in `apps/web/src/pages/Dashboard.jsx`.
 
-The backend has no report generation route, no report queue, and no report/report run persistence yet. Phase 0 backend stabilization is complete: API/worker/scheduler runtime separation, auth hardening, CORS, rate limiting, audit logging, and canonical location binding are in place.
+The backend now has report metadata, PDF, XLSX, persistence, and synchronous authenticated dashboard snapshot route foundations. It still has no report queue, worker, scheduler, durable file storage, email delivery, report history UI, or frontend report wiring. Phase 0 backend stabilization is complete: API/worker/scheduler runtime separation, auth hardening, CORS, rate limiting, audit logging, and canonical location binding are in place.
 
 ## S2-01 Scope
 
@@ -68,7 +68,7 @@ S2-03 intentionally keeps workbook output simple. It does not add styling, formu
 
 ## S2-04 Report Persistence
 
-S2-04 adds Mongo persistence for report definitions and report run lifecycle metadata in `apps/api/src/services/reportStore.js`.
+S2-04 is complete. It added Mongo persistence for report definitions and report run lifecycle metadata in `apps/api/src/services/reportStore.js`.
 
 The persistence service is repository-style and accepts injected Mongo collections or a database adapter for tests. Runtime callers can use the default Mongo collections through the existing backend Mongo helper. No public report route is added in S2-04.
 
@@ -166,11 +166,87 @@ The unique report-key indexes are split by scope level instead of using one null
 - `location_id + created_at`
 - `status + created_at`
 
+## S2-04.1 Index Verification
+
+S2-04.1 is complete. It verified configured MongoDB index creation for `reports` and `report_runs` before report routes were added.
+
+The proof pack is recorded in `docs/proof/s2-04-1-report-index-verification.md`.
+
+## S2-05 Dashboard Snapshot Route
+
+S2-05 adds an authenticated synchronous backend MVP route:
+
+```text
+POST /api/v1/reports/dashboard-snapshot
+```
+
+Request shape:
+
+```js
+{
+  organization_id: "org_123",
+  client_id: "client_123",
+  location_id: "loc_123",
+  report_name: "Monthly GBP dashboard",
+  report_key: "gbp_dashboard_monthly",
+  requested_formats: ["pdf", "xlsx"],
+  date_range: { start: "2026-04-01", end: "2026-04-30" },
+  dashboard_snapshot: {}
+}
+```
+
+The route:
+
+- requires app authentication
+- applies generation rate limiting
+- requires explicit `organization_id`
+- does not infer scope from active user or session state
+- verifies owned Google location scope when `location_id` is provided
+- requires request `organization_id`, `client_id`, and `location_id` to match the owned location canonical scope
+- builds S2-01 report run metadata
+- saves a pending `report_runs` record
+- marks the run running
+- generates requested PDF/XLSX outputs synchronously
+- stores output metadata only in `report_runs`
+- marks the run succeeded only when all requested outputs succeed
+- marks the run failed if any output fails
+- writes audit records for queued/success/failure outcomes
+
+S2-05 does not auto-bind Google locations and does not change GBP dashboard behavior.
+
+Response shape on success:
+
+```js
+{
+  report_run: {},
+  outputs: [
+    {
+      format: "pdf",
+      status: "succeeded",
+      path: null,
+      size: 12345,
+      error: null,
+      completed_at: Date
+    }
+  ],
+  files: [
+    {
+      format: "pdf",
+      filename: "gbp-dashboard-monthly-run_id.pdf",
+      content_type: "application/pdf",
+      base64: "...",
+      size: 12345
+    }
+  ]
+}
+```
+
+Generated files are returned as base64 only for this MVP because no durable file storage exists yet. The route caps total raw generated file bytes before returning the response. Generated PDF/XLSX buffers are never stored in MongoDB.
+
 ## Intentionally Not Implemented
 
-S2-01/S2-02/S2-03/S2-04 do not:
+S2-01/S2-02/S2-03/S2-04/S2-05 do not:
 
-- Add a public reports API route.
 - Add report queues or workers.
 - Send emails.
 - Schedule recurring reports.
@@ -182,6 +258,8 @@ S2-01/S2-02/S2-03/S2-04 do not:
 S2-02 generates an in-memory PDF buffer only. S2-03 generates an in-memory XLSX buffer only. Neither service writes files unless a future caller chooses to do so.
 
 S2-04 persists report/report run metadata only. It does not wire persistence into routes, queues, schedulers, workers, emails, or frontend UI.
+
+S2-05 wires a synchronous authenticated route only. It does not add file storage, queues, workers, scheduler behavior, emails, report history UI, frontend wiring, or unauthenticated/public report access.
 
 ## Dashboard Snapshot Input Contract
 
@@ -343,4 +421,6 @@ S2-03 XLSX export consumes the same report run metadata and fills XLSX output me
 
 S2-04 report/report_runs persistence defines the Mongo collection shapes and indexes for durable report definitions and report run history.
 
-Future queue direction may include a `report-generate` queue and dedicated report worker, but S2-01/S2-02/S2-03/S2-04 only document that direction. They do not create a queue or worker.
+S2-05 uses the report metadata, PDF, XLSX, and persistence services from S2-01 through S2-04 to provide a synchronous authenticated dashboard snapshot generation endpoint.
+
+Future queue direction may include a `report-generate` queue and dedicated report worker, but S2-01/S2-02/S2-03/S2-04/S2-05 only document that direction. They do not create a queue or worker.

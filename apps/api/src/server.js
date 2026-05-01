@@ -21,6 +21,7 @@ import orgsRouter from "./routes/orgs.js";
 import locationOrgRouter from "./routes/locationOrg.js";
 import recurrenceRouter from "./routes/recurrence.js";
 import googleAuthRouter from "./routes/auth.google.js";
+import reportsRouter from "./routes/reports.js";
 
 
 const locationsRoutes = locationsMod.default || locationsMod.locations
@@ -56,6 +57,7 @@ app.use("/api/v1/locations", locationsRoutes)
 app.use("/api/v1/posts", postsRoutes)
 app.use("/api/v1/reviews", reviewsRoutes)
 app.use("/api/v1/uploads", uploads)
+app.use("/api/v1/reports", reportsRouter)
 
 // Debug
 app.use("/api/v1", debugRoutes)

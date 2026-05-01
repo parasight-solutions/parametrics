@@ -19,6 +19,7 @@ Current Sprint 2 task:
 - S2-03 XLSX output generation complete: minimal backend XLSX buffers from S2-01 report run metadata are in place without routes, persistence, queues, or frontend changes.
 - S2-04 report/report_runs persistence complete: report definitions and report run lifecycle metadata persistence are in place without routes, queues, scheduler changes, or frontend wiring.
 - S2-04.1 report index verification complete: configured MongoDB index creation for `reports` and `report_runs` was verified before adding report routes.
+- S2-05 authenticated dashboard snapshot report route in progress: wire the existing report metadata, PDF/XLSX output, persistence, auth, rate-limit, and audit services without queues, scheduler changes, frontend wiring, or file storage.
 
 Near follow-up tasks:
 
@@ -36,6 +37,8 @@ S2-03 may generate in-memory XLSX buffers only. It must not write files by defau
 
 S2-04 may add Mongo `reports` and `report_runs` persistence for definitions and lifecycle metadata only. It must not store generated PDF/XLSX buffers, add report queues/workers, send emails, schedule recurring reports, expose a public reports API, modify PDF/XLSX generation behavior, or modify frontend export behavior.
 
+S2-05 may add an authenticated synchronous dashboard snapshot generation route. It must not add report queues/workers, send emails, schedule recurring reports, add file/cloud storage, expose unauthenticated report access, modify frontend export behavior, or start Phase 2 provider/channel work.
+
 Report services should stay testable so later route, queue, worker, scheduler, and frontend tasks can build on a stable metadata contract.
 
-Existing GBP dashboard behavior must not change during S2-01, S2-02, S2-03, or S2-04.
+Existing GBP dashboard behavior must not change during S2-01, S2-02, S2-03, S2-04, or S2-05.

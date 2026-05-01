@@ -238,19 +238,24 @@ export async function markReportRunSucceeded(runId, { outputs = [], completedAt 
   });
 }
 
-export async function markReportRunFailed(runId, { error = null, completedAt = null, ...options } = {}) {
+export async function markReportRunFailed(runId, { error = null, outputs = null, completedAt = null, ...options } = {}) {
   const id = cleanStr(runId, 200);
   if (!id) throw makeError("missing_report_run_id", "report run id is required");
 
   const doneAt = completedAt || options.now || new Date();
   const { reportRuns } = await resolveCollections(options);
+  const set = {
+    status: "failed",
+    completed_at: doneAt,
+    updated_at: doneAt,
+    error: compactError(error),
+  };
+
+  if (Array.isArray(outputs)) {
+    set.outputs = normalizeOutputs(outputs);
+  }
 
   return findOneAndUpdate(reportRuns, { id }, {
-    $set: {
-      status: "failed",
-      completed_at: doneAt,
-      updated_at: doneAt,
-      error: compactError(error),
-    },
+    $set: set,
   });
 }
