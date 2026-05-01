@@ -17,7 +17,8 @@ Current Sprint 2 task:
 - S2-01 report service abstraction complete: pure backend report run metadata helpers for dashboard snapshot inputs are in place.
 - S2-02 PDF output generation complete: minimal backend PDF buffers from S2-01 report run metadata are in place without routes, persistence, queues, or frontend changes.
 - S2-03 XLSX output generation complete: minimal backend XLSX buffers from S2-01 report run metadata are in place without routes, persistence, queues, or frontend changes.
-- S2-04 report/report_runs persistence in progress: persist report definitions and report run lifecycle metadata without routes, queues, scheduler changes, or frontend wiring.
+- S2-04 report/report_runs persistence complete: report definitions and report run lifecycle metadata persistence are in place without routes, queues, scheduler changes, or frontend wiring.
+- S2-04.1 report index verification complete: configured MongoDB index creation for `reports` and `report_runs` was verified before adding report routes.
 
 Near follow-up tasks:
 

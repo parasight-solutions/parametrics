@@ -12,7 +12,14 @@ const pickIndexSignature = (ix) => ({
 const sigEq = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 
 async function listIdx(collection) {
-  return collection.listIndexes().toArray();
+  try {
+    return await collection.listIndexes().toArray();
+  } catch (err) {
+    if (err?.codeName === "NamespaceNotFound" || /ns does not exist/i.test(err?.message || "")) {
+      return [];
+    }
+    throw err;
+  }
 }
 
 async function dropIndexIfExists(collection, name) {
