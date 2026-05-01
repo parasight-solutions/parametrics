@@ -291,7 +291,7 @@ router.post("/dashboard-snapshot", authenticate, generationRateLimit, async (req
       file_count: result.files.length,
     }));
 
-    return res.status(201).json(result);
+    return res.json(result);
   } catch (error) {
     await auditFailure(req, "report.dashboard_snapshot.generate", {
       ...auditDetailsFromRun(error.reportRun || req.body, {
