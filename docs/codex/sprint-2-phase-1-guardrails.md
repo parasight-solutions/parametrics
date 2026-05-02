@@ -25,7 +25,8 @@ Current Sprint 2 task:
 - S2-06.1 frontend report browser smoke complete: browser verification passed against the running API, including downloads, metadata-only `report_runs` persistence, and audit success logging.
 - S2-07 workspace/member foundation audit and design complete: existing org/user/client/location ownership is documented before any workspace/member implementation.
 - S2-07.1 local dev port coordination and app-shell cleanup complete: deterministic local API/web port preparation and a cleaner global header/page-action split are in place without workspace/member runtime changes or Phase 2 integrations.
-- S2-08 organization_members indexes and owner seed migration in progress: membership collection indexes and a dry-run-first owner membership seed migration are being added without route authorization changes.
+- S2-08 organization_members indexes and owner seed migration complete: membership collection indexes and a dry-run-first owner membership seed migration were added without route authorization changes.
+- S2-08.1 organization_members owner seed migration apply complete: safe owner memberships were applied and verified against live Mongo with summarized counts only.
 
 Near follow-up tasks:
 
