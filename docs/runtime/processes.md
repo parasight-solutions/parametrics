@@ -36,6 +36,8 @@ npm run -w @parametrics/api dev:api
 
 The API process imports `apps/api/src/startup/env.js`, mounts Express routes, runs `ensureIndexes()`, and then starts listening on `PORT` or `5050`.
 
+For local development, `npm run dev:prepare` writes `apps/api/.env.local` with the resolved `PORT`, `APP_PUBLIC_API_BASE`, `APP_URL`, and `CORS_ORIGINS`. The API startup env loader reads this generated local file before the checked-in app env candidates so the prepared local API/web mapping stays aligned.
+
 The API command does not start workers or the scheduler.
 
 API CORS behavior:
@@ -213,15 +215,50 @@ Current scheduler shutdown behavior: no explicit `SIGTERM`/`SIGINT` handlers are
 
 ## Local Development
 
+Prepare deterministic local API and web ports before starting local HTTP processes:
+
+```bash
+npm run dev:prepare
+```
+
+Preferred local ports:
+
+- API: `5050`
+- Web: `5173`
+
+If a preferred port is unavailable, the helper chooses the next available port at or above the preferred value. It writes ignored project-local files:
+
+- `apps/api/.env.local`
+- `apps/web/.env.local`
+
+For unusual local setups, `PARAMETRICS_API_PORT` and `PARAMETRICS_WEB_PORT` can be set before running the helper to use different preferred starting points. The helper still checks availability and picks the next available port from each starting point.
+
+The generated mapping includes:
+
+- API actual port and URL.
+- Web actual port and origin.
+- `VITE_API_BASE_URL` for the web app.
+- `CORS_ORIGINS` containing the chosen local web origin.
+
+The helper prints the final API URL, web URL, `VITE_API_BASE_URL`, and `CORS_ORIGINS`. Vite reads `apps/web/.env.local`, uses the prepared web port, proxies `/api` to the prepared API URL, and uses `strictPort` so it does not silently move to a different port after preparation.
+
 Run only the API:
 
 ```bash
+npm run dev:prepare
 npm run -w @parametrics/api dev:api
+```
+
+Run only API and web locally, without workers or scheduler:
+
+```bash
+npm run dev:http
 ```
 
 Run all local backend roles together:
 
 ```bash
+npm run dev:prepare
 npm run -w @parametrics/api dev
 ```
 
@@ -230,6 +267,8 @@ From the repo root, the existing convenience command starts API, workers, schedu
 ```bash
 npm run dev
 ```
+
+The root `npm run dev` command runs `npm run dev:prepare` first, then starts the existing API, worker, scheduler, and web dev processes. Use `npm run dev:http` when debugging HTTP route or frontend behavior and you do not want worker/scheduler side effects.
 
 Use the single-process API command when debugging HTTP route behavior or auth behavior so worker/scheduler side effects do not confuse the run.
 

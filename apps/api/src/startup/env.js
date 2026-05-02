@@ -43,6 +43,7 @@ if (!globalThis[FLAG]) {
 
   const repoRoot = resolveRepoRoot();
   const candidates = [
+    path.join(repoRoot, "apps/api/.env.local"),
     path.join(repoRoot, ".env"),
     path.join(repoRoot, "apps/api/.env"),
   ];

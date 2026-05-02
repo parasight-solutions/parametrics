@@ -71,12 +71,18 @@ function parseCsv(s) {
     .filter(Boolean);
 }
 
-export default function RecurrenceLab({ locationId: locationIdProp, onLocationChange }) {
+export default function RecurrenceLab({
+  locationId: locationIdProp,
+  onLocationChange,
+  defaultOpen = false,
+  triggerClassName = "px-3 py-2 rounded-lg border bg-white text-sm hover:bg-gray-100",
+  triggerLabel = "Recurrence Lab",
+}) {
   const [localLocationId, setLocalLocationId] = useState(getActiveLocationId());
   const locationId = locationIdProp ?? localLocationId;
   const setLocationId = onLocationChange ?? setLocalLocationId;
 
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(defaultOpen);
   const canUse = useMemo(() => !!locationId, [locationId]);
 
   const [busy, setBusy] = useState(false);
@@ -331,10 +337,10 @@ export default function RecurrenceLab({ locationId: locationIdProp, onLocationCh
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="px-3 py-2 rounded-lg border bg-white text-sm hover:bg-gray-100"
+        className={triggerClassName}
         title="Open Recurrence + AI Content Lab"
       >
-        Recurrence Lab
+        {triggerLabel}
       </button>
 
       {open ? (

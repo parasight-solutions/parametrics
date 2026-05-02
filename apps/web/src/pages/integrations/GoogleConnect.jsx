@@ -1,7 +1,10 @@
 // apps/web/src/pages/integrations/GoogleConnect.jsx
 import { useEffect, useRef, useState } from "react";
 import { useAuth } from "@/lib/auth";
-const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:5050";
+const API_BASE =
+  import.meta.env.VITE_API_BASE_URL ||
+  import.meta.env.VITE_API_BASE ||
+  "http://localhost:5050";
 
 export default function GoogleConnectPage() {
   const { token } = useAuth();

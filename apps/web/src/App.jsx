@@ -6,6 +6,7 @@ import Dashboard from "./pages/Dashboard";
 import Posts from "./pages/Posts";
 import NewPost from "./pages/NewPost";
 import Reviews from "./pages/Reviews";
+import Recurrence from "./pages/Recurrence";
 import "./index.css";
 import Integrations from "./pages/Integrations";
 import GoogleConnected from "./pages/GoogleConnected";
@@ -27,6 +28,7 @@ export default function App() {
         <Route path="/posts" element={authed ? <Posts onLogout={onLogout} /> : <Navigate to="/login" />} />
         <Route path="/posts/new" element={authed ? <NewPost onLogout={onLogout} /> : <Navigate to="/login" />} />
         <Route path="/reviews" element={authed ? <Reviews onLogout={onLogout} /> : <Navigate to="/login" />} />
+        <Route path="/recurrence" element={authed ? <Recurrence onLogout={onLogout} /> : <Navigate to="/login" />} />
         <Route path="/integrations" element={authed ? <Integrations onLogout={onLogout} /> : <Navigate to="/login" />} />
         <Route path="/locations" element={authed ? <Locations onLogout={onLogout} /> : <Navigate to="/login" />} />
 

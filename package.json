@@ -6,7 +6,9 @@
     "packages/*"
   ],
   "scripts": {
-    "dev": "npm-run-all -p api:dev web:dev",
+    "dev": "npm run dev:prepare && npm-run-all -p api:dev web:dev",
+    "dev:prepare": "node scripts/prepare-local-dev.mjs",
+    "dev:http": "npm run dev:prepare && npm-run-all -p api:serve web:dev",
     "api:dev": "npm-run-all -p api:serve api:workers api:scheduler",
     "api:migrate": "npm run -w @parametrics/api migrate",
     "api:seed": "node apps/api/src/scripts/seed.mongo.js",

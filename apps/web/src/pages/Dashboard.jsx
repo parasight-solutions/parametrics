@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import AppShell from "../components/AppShell";
 import ActiveLocationPicker from "../components/ActiveLocationPicker";
 import { useCachedApi } from "../hooks/useCachedApi";
-import RecurrenceLab from "../components/RecurrenceLab";
 import { api, getToken } from "../apiClient";
 import { getActiveLocationId } from "../session";
 import {
@@ -568,72 +567,6 @@ export default function Dashboard({ onLogout }) {
       title="Dashboard"
       subtitle="Google Business Profile performance"
       onLogout={onLogout}
-      actions={
-        <div className="flex items-center gap-2">
-          <button
-            onClick={() => refresh().catch(() => {})}
-            disabled={!locationId || loading || refreshing || !!rangeError}
-            className="px-3 py-2 rounded-lg border bg-white text-sm hover:bg-gray-100 disabled:opacity-50"
-            title="Force refresh"
-          >
-            {refreshing ? "Refreshing…" : "Refresh"}
-          </button>
-
-          <button
-            type="button"
-            onClick={() => generateBackendReport().catch(() => {})}
-            disabled={!canGenerateBackendReport}
-            className="px-3 py-2 rounded-lg border bg-white text-sm hover:bg-gray-100 disabled:opacity-50"
-            title={
-              reportGenerating
-                ? "Generating backend PDF/XLSX report files"
-                : reportDisabledReason || "Generate backend PDF/XLSX report files"
-            }
-          >
-            {reportGenerating ? "Generating…" : "Report PDF/XLSX"}
-          </button>
-
-          <div className="inline-flex rounded-lg border overflow-hidden">
-            <button
-              onClick={() => exportCsv().catch?.(() => {})}
-              disabled={!data}
-              className="px-3 py-2 bg-white text-sm hover:bg-gray-100 disabled:opacity-50"
-              title="Export CSV"
-            >
-              CSV
-            </button>
-            <button
-              onClick={() => exportSvg()}
-              disabled={!data}
-              className="px-3 py-2 bg-white text-sm hover:bg-gray-100 disabled:opacity-50"
-              title="Export SVG (vector chart pack)"
-            >
-              SVG
-            </button>
-            <button
-              onClick={() => exportPng().catch?.(() => {})}
-              disabled={!data}
-              className="px-3 py-2 bg-white text-sm hover:bg-gray-100 disabled:opacity-50"
-              title="Export PNG (snapshot)"
-            >
-              PNG
-            </button>
-            <button
-              onClick={() => exportPdf().catch?.(() => {})}
-              disabled={!data}
-              className="px-3 py-2 bg-white text-sm hover:bg-gray-100 disabled:opacity-50"
-              title="Export PDF (snapshot)"
-            >
-              PDF
-            </button>
-          </div>
-
-          <RecurrenceLab
-            locationId={locationId}
-            onLocationChange={(nextLocationId) => handleLocationChange(nextLocationId)}
-          />
-        </div>
-      }
     >
       <div className="bg-white border rounded-xl p-5 space-y-4">
         <div>
@@ -697,6 +630,39 @@ export default function Dashboard({ onLogout }) {
               ) : null}
             </div>
           </div>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2 border-t pt-4">
+          <button
+            onClick={() => refresh().catch(() => {})}
+            disabled={!locationId || loading || refreshing || !!rangeError}
+            className="px-3 py-2 rounded-lg border bg-white text-sm hover:bg-gray-100 disabled:opacity-50"
+            title="Force refresh"
+          >
+            {refreshing ? "Refreshing..." : "Refresh"}
+          </button>
+
+          <button
+            type="button"
+            onClick={() => generateBackendReport().catch(() => {})}
+            disabled={!canGenerateBackendReport}
+            className="px-3 py-2 rounded-lg border bg-white text-sm hover:bg-gray-100 disabled:opacity-50"
+            title={
+              reportGenerating
+                ? "Generating backend PDF/XLSX report files"
+                : reportDisabledReason || "Generate backend PDF/XLSX report files"
+            }
+          >
+            {reportGenerating ? "Generating..." : "Report PDF/XLSX"}
+          </button>
+
+          <DashboardExportMenu
+            disabled={!data}
+            onCsv={() => exportCsv().catch(() => {})}
+            onSvg={() => exportSvg()}
+            onPng={() => exportPng().catch(() => {})}
+            onPdf={() => exportPdf().catch(() => {})}
+          />
         </div>
 
         {rangeError ? (
@@ -786,6 +752,72 @@ export default function Dashboard({ onLogout }) {
         </div>
       ) : null}
     </AppShell>
+  );
+}
+
+function DashboardExportMenu({ disabled, onCsv, onSvg, onPng, onPdf }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+
+  useEffect(() => {
+    if (!open) return;
+
+    function onPointerDown(event) {
+      if (!ref.current?.contains(event.target)) setOpen(false);
+    }
+
+    function onKeyDown(event) {
+      if (event.key === "Escape") setOpen(false);
+    }
+
+    window.addEventListener("pointerdown", onPointerDown);
+    window.addEventListener("keydown", onKeyDown);
+
+    return () => {
+      window.removeEventListener("pointerdown", onPointerDown);
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [open]);
+
+  function run(fn) {
+    setOpen(false);
+    fn();
+  }
+
+  return (
+    <div className="relative" ref={ref}>
+      <button
+        type="button"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        onClick={() => setOpen((value) => !value)}
+        disabled={disabled}
+        className="px-3 py-2 rounded-lg border bg-white text-sm hover:bg-gray-100 disabled:opacity-50"
+        title="Export dashboard data"
+      >
+        Export
+      </button>
+
+      {open ? (
+        <div
+          role="menu"
+          className="absolute left-0 top-full z-20 mt-2 w-40 rounded-lg border bg-white py-1 shadow-lg"
+        >
+          <button type="button" onClick={() => run(onCsv)} className="block w-full px-3 py-2 text-left text-sm hover:bg-gray-100">
+            CSV
+          </button>
+          <button type="button" onClick={() => run(onSvg)} className="block w-full px-3 py-2 text-left text-sm hover:bg-gray-100">
+            SVG
+          </button>
+          <button type="button" onClick={() => run(onPng)} className="block w-full px-3 py-2 text-left text-sm hover:bg-gray-100">
+            PNG
+          </button>
+          <button type="button" onClick={() => run(onPdf)} className="block w-full px-3 py-2 text-left text-sm hover:bg-gray-100">
+            PDF
+          </button>
+        </div>
+      ) : null}
+    </div>
   );
 }
 
