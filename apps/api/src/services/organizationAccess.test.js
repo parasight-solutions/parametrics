@@ -5,11 +5,15 @@ import {
   ORGANIZATION_MEMBER_ROLES,
   ORGANIZATION_MEMBER_STATUSES,
   getOrganizationMembership,
+  getOrganizationMembershipScope,
   hasActiveOrganizationMembership,
+  isMembershipAssignedToLocation,
   isOrganizationRoleAllowed,
   normalizeOrganizationMemberStatus,
   normalizeOrganizationRole,
   requireOrganizationMembership,
+  requireOrganizationLocationAccess,
+  requireOwnedOrganizationLocationAccess,
   requireOrganizationRole,
 } from "./organizationAccess.js";
 
@@ -42,6 +46,56 @@ test("isOrganizationRoleAllowed checks normalized required roles", () => {
   assert.equal(isOrganizationRoleAllowed("Owner", ["admin", "owner"]), true);
   assert.equal(isOrganizationRoleAllowed("viewer", ["owner", "admin"]), false);
   assert.equal(isOrganizationRoleAllowed("owner", []), false);
+});
+
+test("getOrganizationMembershipScope returns sanitized assignment arrays", () => {
+  assert.deepEqual(getOrganizationMembershipScope(null), {
+    role: "",
+    status: "",
+    assigned_client_ids: [],
+    assigned_location_ids: [],
+  });
+
+  assert.deepEqual(getOrganizationMembershipScope({
+    role: " Manager ",
+    status: " Active ",
+    assigned_client_ids: ["client_1", "", null],
+    assigned_location_ids: ["loc_1", "  loc_2  "],
+    email: "member@example.com",
+  }), {
+    role: "manager",
+    status: "active",
+    assigned_client_ids: ["client_1"],
+    assigned_location_ids: ["loc_1", "loc_2"],
+  });
+});
+
+test("isMembershipAssignedToLocation lets owner and admin ignore assignment arrays", () => {
+  for (const role of ["owner", "admin"]) {
+    assert.equal(isMembershipAssignedToLocation(
+      { role, status: "active", assigned_client_ids: [], assigned_location_ids: [] },
+      { clientId: "client_1", locationId: "loc_1" },
+    ), true);
+  }
+});
+
+test("isMembershipAssignedToLocation allows manager and viewer only for explicit assignments", () => {
+  assert.equal(isMembershipAssignedToLocation(
+    { role: "manager", status: "active", assigned_location_ids: ["loc_1"] },
+    { clientId: "client_other", locationId: "loc_1" },
+  ), true);
+  assert.equal(isMembershipAssignedToLocation(
+    { role: "manager", status: "active", assigned_client_ids: ["client_1"] },
+    { clientId: "client_1", locationId: "loc_other" },
+  ), true);
+  assert.equal(isMembershipAssignedToLocation(
+    { role: "viewer", status: "active", assigned_client_ids: [], assigned_location_ids: [] },
+    { clientId: "client_1", locationId: "loc_1" },
+  ), false);
+  assert.equal(isMembershipAssignedToLocation(
+    { role: "member", status: "active", assigned_client_ids: ["client_1"], assigned_location_ids: ["loc_1"] },
+    { clientId: "client_1", locationId: "loc_1" },
+  ), false);
 });
 
 test("getOrganizationMembership requires explicit organization and user ids", async () => {
@@ -179,4 +233,244 @@ test("requireOrganizationRole throws safe 403 when role is not allowed", async (
       err.message === "required organization role is missing" &&
       !JSON.stringify(err).includes("viewer@example.com"),
   );
+});
+
+test("requireOrganizationLocationAccess allows owner and admin on scoped location", async () => {
+  for (const role of ["owner", "admin"]) {
+    const membership = await requireOrganizationLocationAccess(
+      {
+        organizationId: "org_1",
+        clientId: "client_1",
+        locationId: "loc_1",
+        userId: "user_1",
+        allowedRoles: ["owner", "admin", "manager"],
+      },
+      {
+        collection: makeCollection([
+          {
+            organization_id: "org_1",
+            user_id: "user_1",
+            role,
+            status: "active",
+          },
+        ]),
+      },
+    );
+
+    assert.equal(membership.role, role);
+  }
+});
+
+test("requireOrganizationLocationAccess allows manager assigned to location", async () => {
+  const membership = await requireOrganizationLocationAccess(
+    {
+      organizationId: "org_1",
+      clientId: "client_1",
+      locationId: "loc_1",
+      userId: "user_1",
+      allowedRoles: ["owner", "admin", "manager"],
+    },
+    {
+      collection: makeCollection([
+        {
+          organization_id: "org_1",
+          user_id: "user_1",
+          role: "manager",
+          status: "active",
+          assigned_location_ids: ["loc_1"],
+        },
+      ]),
+    },
+  );
+
+  assert.equal(membership.role, "manager");
+});
+
+test("requireOrganizationLocationAccess allows manager assigned to client", async () => {
+  const membership = await requireOrganizationLocationAccess(
+    {
+      organizationId: "org_1",
+      clientId: "client_1",
+      locationId: "loc_1",
+      userId: "user_1",
+      allowedRoles: ["owner", "admin", "manager"],
+    },
+    {
+      collection: makeCollection([
+        {
+          organization_id: "org_1",
+          user_id: "user_1",
+          role: "manager",
+          status: "active",
+          assigned_client_ids: ["client_1"],
+        },
+      ]),
+    },
+  );
+
+  assert.equal(membership.role, "manager");
+});
+
+test("requireOrganizationLocationAccess denies manager when not assigned", async () => {
+  await assert.rejects(
+    () => requireOrganizationLocationAccess(
+      {
+        organizationId: "org_1",
+        clientId: "client_1",
+        locationId: "loc_1",
+        userId: "user_1",
+        allowedRoles: ["owner", "admin", "manager"],
+      },
+      {
+        collection: makeCollection([
+          {
+            organization_id: "org_1",
+            user_id: "user_1",
+            role: "manager",
+            status: "active",
+            assigned_client_ids: ["client_other"],
+            assigned_location_ids: ["loc_other"],
+          },
+        ]),
+      },
+    ),
+    (err) => err.status === 403 &&
+      err.statusCode === 403 &&
+      err.code === "organization_scope_required" &&
+      err.message === "required organization assignment is missing",
+  );
+});
+
+test("requireOrganizationLocationAccess denies viewer and member for mutation role set", async () => {
+  for (const role of ["viewer", "member"]) {
+    await assert.rejects(
+      () => requireOrganizationLocationAccess(
+        {
+          organizationId: "org_1",
+          clientId: "client_1",
+          locationId: "loc_1",
+          userId: "user_1",
+          allowedRoles: ["owner", "admin", "manager"],
+        },
+        {
+          collection: makeCollection([
+            {
+              organization_id: "org_1",
+              user_id: "user_1",
+              role,
+              status: "active",
+              assigned_client_ids: ["client_1"],
+              assigned_location_ids: ["loc_1"],
+            },
+          ]),
+        },
+      ),
+      (err) => err.status === 403 && err.code === "organization_role_required",
+    );
+  }
+});
+
+test("requireOrganizationLocationAccess denies missing disabled and invited memberships", async () => {
+  const cases = [
+    { name: "missing", rows: [] },
+    { name: "disabled", rows: [{ organization_id: "org_1", user_id: "user_1", role: "owner", status: "disabled" }] },
+    { name: "invited", rows: [{ organization_id: "org_1", user_id: "user_1", role: "owner", status: "invited" }] },
+  ];
+
+  for (const item of cases) {
+    await assert.rejects(
+      () => requireOrganizationLocationAccess(
+        {
+          organizationId: "org_1",
+          clientId: "client_1",
+          locationId: "loc_1",
+          userId: "user_1",
+          allowedRoles: ["owner", "admin"],
+        },
+        { collection: makeCollection(item.rows) },
+      ),
+      (err) => err.status === 403 && err.code === "organization_membership_required",
+      item.name,
+    );
+  }
+});
+
+test("requireOwnedOrganizationLocationAccess returns not_found before membership lookup for stale location", async () => {
+  const collection = makeCollection([
+    {
+      organization_id: "org_1",
+      user_id: "user_1",
+      role: "owner",
+      status: "active",
+    },
+  ]);
+  let loadCount = 0;
+
+  await assert.rejects(
+    () => requireOwnedOrganizationLocationAccess(
+      {
+        userId: "user_1",
+        locationId: "stale_loc",
+        provider: "google",
+        allowedRoles: ["owner", "admin"],
+      },
+      {
+        collection,
+        requireOwnedLocation: async () => {
+          loadCount += 1;
+          const err = new Error("location not found");
+          err.status = 404;
+          err.statusCode = 404;
+          err.code = "not_found";
+          throw err;
+        },
+      },
+    ),
+    (err) => err.status === 404 && err.code === "not_found",
+  );
+
+  assert.equal(loadCount, 1);
+  assert.equal(collection.queries.length, 0);
+});
+
+test("requireOwnedOrganizationLocationAccess uses canonical location scope without location_org_map", async () => {
+  const collection = makeCollection([
+    {
+      organization_id: "org_canonical",
+      user_id: "user_1",
+      role: "manager",
+      status: "active",
+      assigned_location_ids: ["loc_1"],
+    },
+    {
+      organization_id: "org_legacy_map",
+      user_id: "user_1",
+      role: "owner",
+      status: "active",
+    },
+  ]);
+
+  const result = await requireOwnedOrganizationLocationAccess(
+    {
+      userId: "user_1",
+      locationId: "loc_1",
+      provider: "google",
+      allowedRoles: ["owner", "admin", "manager"],
+    },
+    {
+      collection,
+      requireOwnedLocation: async () => ({
+        id: "loc_1",
+        user_id: "user_1",
+        provider: "google",
+        organization_id: "org_canonical",
+        client_id: "client_1",
+        org_id: "org_legacy_map",
+      }),
+    },
+  );
+
+  assert.equal(result.location.organization_id, "org_canonical");
+  assert.equal(result.membership.role, "manager");
+  assert.deepEqual(collection.queries.map((query) => query.filter.organization_id), ["org_canonical"]);
 });

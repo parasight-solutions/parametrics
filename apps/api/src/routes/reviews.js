@@ -11,13 +11,15 @@ import { updateReviewReply } from "../integrations/google.js";
 import {
   assertDocMatchesLocationScope,
   buildLocationScopeFilter,
-  requireOwnedLocation,
   toApiError,
 } from "../services/ownership.js";
+import { requireOwnedOrganizationLocationAccess } from "../services/organizationAccess.js";
 import { auditFailure, auditQueued, auditSuccess } from "../services/auditLog.js";
 
 const router = Router();
 const reviewSyncQueue = makeQueue("review-sync");
+const LOCATION_READ_ROLES = Object.freeze(["owner", "admin", "manager", "viewer"]);
+const LOCATION_OPERATION_ROLES = Object.freeze(["owner", "admin", "manager"]);
 
 async function getSyncStateForLocation(loc) {
   const c = await col("review_sync_state");
@@ -59,7 +61,12 @@ router.get("/", authenticate, async (req, res) => {
       return res.status(400).json({ error: { code: "bad_request", message: "locationId required" } });
     }
 
-    const loc = await requireOwnedLocation(userId, locationId, { provider: "google" });
+    const { location: loc } = await requireOwnedOrganizationLocationAccess({
+      userId,
+      locationId,
+      provider: "google",
+      allowedRoles: LOCATION_READ_ROLES,
+    });
 
     const c = await col("reviews");
     const rows = await c
@@ -91,7 +98,12 @@ router.post("/sync", authenticate, syncRateLimit, async (req, res) => {
       return res.status(400).json({ error: { code: "bad_request", message: "locationId required" } });
     }
 
-    const loc = await requireOwnedLocation(userId, locationId, { provider: "google" });
+    const { location: loc, membership } = await requireOwnedOrganizationLocationAccess({
+      userId,
+      locationId,
+      provider: "google",
+      allowedRoles: LOCATION_OPERATION_ROLES,
+    });
     auditTarget = {
       target_type: "location",
       target_id: loc.id,
@@ -99,6 +111,7 @@ router.post("/sync", authenticate, syncRateLimit, async (req, res) => {
       client_id: loc.client_id,
       location_id: loc.id,
       provider: "google",
+      metadata: { membership_role: membership.role },
     };
 
     if (!loc.integration_id) {
@@ -114,7 +127,12 @@ router.post("/sync", authenticate, syncRateLimit, async (req, res) => {
     if (!force && !isStale && (syncState?.status === "running" || syncState?.status === "queued")) {
       await auditQueued(req, "review.sync.queue", {
         ...auditTarget,
-        metadata: { alreadyRunning: true, force, since: syncState?.since || null },
+        metadata: {
+          ...(auditTarget.metadata || {}),
+          alreadyRunning: true,
+          force,
+          since: syncState?.since || null,
+        },
       });
       return res.json({
         queued: true,
@@ -156,14 +174,14 @@ router.post("/sync", authenticate, syncRateLimit, async (req, res) => {
 
     await auditQueued(req, "review.sync.queue", {
       ...auditTarget,
-      metadata: { jobId: String(job.id), force, since },
+      metadata: { ...(auditTarget.metadata || {}), jobId: String(job.id), force, since },
     });
 
     return res.json({ queued: true, jobId: String(job.id), since });
   } catch (e) {
     await auditFailure(req, "review.sync.queue", {
       ...auditTarget,
-      metadata: { reason: e?.message || e?.code || "server_error" },
+      metadata: { ...(auditTarget.metadata || {}), reason: e?.message || e?.code || "server_error" },
     });
     return toApiError(res, e);
   }
@@ -188,7 +206,12 @@ router.put("/:id/reply", authenticate, mutationRateLimit, async (req, res) => {
       return res.status(404).json({ error: { code: "not_found", message: "review not found" } });
     }
 
-    const loc = await requireOwnedLocation(userId, review.location_id, { provider: "google" });
+    const { location: loc, membership } = await requireOwnedOrganizationLocationAccess({
+      userId,
+      locationId: review.location_id,
+      provider: "google",
+      allowedRoles: LOCATION_OPERATION_ROLES,
+    });
     assertDocMatchesLocationScope(review, loc, "review");
     auditTarget = {
       target_type: "review",
@@ -197,6 +220,7 @@ router.put("/:id/reply", authenticate, mutationRateLimit, async (req, res) => {
       client_id: loc.client_id,
       location_id: loc.id,
       provider: "google",
+      metadata: { membership_role: membership.role },
     };
 
     if (!loc.integration_id) {
@@ -212,7 +236,10 @@ router.put("/:id/reply", authenticate, mutationRateLimit, async (req, res) => {
 
     await auditSuccess(req, "review.reply.attempt", {
       ...auditTarget,
-      metadata: { provider_review_name: review.provider_review_name },
+      metadata: {
+        ...(auditTarget.metadata || {}),
+        provider_review_name: review.provider_review_name,
+      },
     });
 
     await updateReviewReply(review.provider_review_name, comment, access_token);
@@ -235,14 +262,17 @@ router.put("/:id/reply", authenticate, mutationRateLimit, async (req, res) => {
 
     await auditSuccess(req, "review.reply", {
       ...auditTarget,
-      metadata: { provider_review_name: review.provider_review_name },
+      metadata: {
+        ...(auditTarget.metadata || {}),
+        provider_review_name: review.provider_review_name,
+      },
     });
 
     return res.json({ ok: true });
   } catch (e) {
     await auditFailure(req, "review.reply", {
       ...auditTarget,
-      metadata: { reason: e?.message || e?.code || "server_error" },
+      metadata: { ...(auditTarget.metadata || {}), reason: e?.message || e?.code || "server_error" },
     });
     return toApiError(res, e);
   }

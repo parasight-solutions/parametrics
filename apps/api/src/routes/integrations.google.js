@@ -23,8 +23,19 @@ import { authenticate } from '../middleware/auth.js'
 import { mutationRateLimit, oauthRateLimit, syncRateLimit } from '../middleware/rateLimit.js'
 import { ensureGoogleIntegrationIndexes } from "../integrations/google.indexes.js";
 import { auditFailure, auditSuccess } from "../services/auditLog.js";
+import { requireOwnedOrganizationLocationAccess } from "../services/organizationAccess.js";
 
 const router = Router()
+const LOCATION_READ_ROLES = Object.freeze(["owner", "admin", "manager", "viewer"]);
+const LOCAL_ACCESS_CODES = new Set([
+  "bad_request",
+  "not_found",
+  "location_not_scoped",
+  "organization_membership_required",
+  "organization_role_required",
+  "organization_scope_required",
+  "scope_mismatch",
+]);
 
 // --- Google OAuth constants ---
 const AUTH_BASE = 'https://accounts.google.com/o/oauth2/v2/auth'
@@ -39,6 +50,19 @@ function reqOrigin(req) {
   const host = req.get('x-forwarded-host') || req.get('host');
   const proto = req.get('x-forwarded-proto') || req.protocol || 'http';
   return `${proto}://${host}`;
+}
+
+function sendAccessFailure(res, err) {
+  const status = Number(err?.status || err?.statusCode || 0);
+  const code = String(err?.code || "").trim();
+  if (!status || status >= 500 || !LOCAL_ACCESS_CODES.has(code)) return false;
+
+  return res.status(status).json({
+    error: {
+      code,
+      message: err?.message || err?.code || "forbidden",
+    },
+  });
 }
 
 // Prefer env for prod, but in dev compute from actual request host+port (prevents 5000 vs 5050 mismatch)
@@ -1128,11 +1152,12 @@ router.get('/performance', authenticate, async (req, res) => {
       return res.status(400).json({ error: { code: 'bad_request', message: 'locationId required' } })
     }
 
-    const locations = await col('locations')
-    const loc = await locations.findOne({ id: locationId, user_id: req.user.user_id, provider: 'google' })
-    if (!loc) {
-      return res.status(404).json({ error: { code: 'not_found', message: 'location not found' } })
-    }
+    const { location: loc } = await requireOwnedOrganizationLocationAccess({
+      userId: req.user.user_id,
+      locationId,
+      provider: 'google',
+      allowedRoles: LOCATION_READ_ROLES,
+    });
 
     let integ = null;
 
@@ -1184,6 +1209,8 @@ router.get('/performance', authenticate, async (req, res) => {
       expanded_metrics_used: expanded,
     })
   } catch (err) {
+    if (sendAccessFailure(res, err)) return;
+
     if (err?.code === 'invalid_metric') {
       return res.status(400).json({
         error: {

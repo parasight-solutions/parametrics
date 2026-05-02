@@ -28,7 +28,8 @@ Current Sprint 2 task:
 - S2-08 organization_members indexes and owner seed migration complete: membership collection indexes and a dry-run-first owner membership seed migration were added without route authorization changes.
 - S2-08.1 organization_members owner seed migration apply complete: safe owner memberships were applied and verified against live Mongo with summarized counts only.
 - S2-09 organization access helpers complete: membership-aware helper functions were added without route authorization changes, RBAC middleware, auth/JWT changes, frontend UI, or Phase 2 integrations.
-- S2-10 org/report membership authorization in progress: low-blast-radius org/report route checks are being added while locations/posts/reviews/recurrence, Google integration routes, auth/JWT behavior, frontend UI, member APIs, and Phase 2 integrations remain unchanged.
+- S2-10 org/report membership authorization complete: low-blast-radius org/report route checks are in place while auth/JWT behavior, frontend UI, member APIs, and Phase 2 integrations remain unchanged.
+- S2-10.1 location-bound GBP membership authorization in progress: current GBP location-bound operations are being protected after existing owned-location and canonical scope checks, without changing Google provider auth, app JWT middleware, frontend workspace/member UI, member APIs, billing, or Phase 2 integrations.
 
 Near follow-up tasks:
 
@@ -59,7 +60,9 @@ S2-08 may create `organization_members` indexes and a safe migration that seeds 
 
 S2-09 may add membership-aware organization access helpers and pure tests only. It must not wire those helpers into existing routes, change route authorization behavior, replace current user-owned guards, add RBAC middleware, change JWT/auth behavior, add workspace/member APIs or frontend UI, change Google location binding behavior, make `location_org_map` canonical, or start Phase 2 integrations.
 
-S2-10 may apply membership-aware checks to low-blast-radius organization and report routes only. It must not modify locations, posts, reviews, recurrence, Google integration routes, provider auth behavior, JWT/auth middleware behavior, frontend workspace/member UI, member-management APIs, invite APIs, billing/entitlements, Phase 2 providers, report PDF/XLSX generation behavior, Google location binding behavior, or `location_org_map` canonicality.
+S2-10 is complete. It applied membership-aware checks to low-blast-radius organization and report routes only. It did not modify locations, posts, reviews, recurrence, Google integration routes, provider auth behavior, JWT/auth middleware behavior, frontend workspace/member UI, member-management APIs, invite APIs, billing/entitlements, Phase 2 providers, report PDF/XLSX generation behavior, Google location binding behavior, or `location_org_map` canonicality.
+
+S2-10.1 may apply membership-aware checks to current GBP location-bound operations after existing owned-location and canonical location scope resolution. It must preserve stale/unowned location 404 behavior, provider reauth behavior, app JWT/auth middleware behavior, unbound imported-location fail-closed behavior, report PDF/XLSX generation behavior, Google OAuth/import behavior, and `location_org_map` legacy-only status. It must not add frontend workspace/member UI, member-management APIs, invite APIs, billing/entitlements, queues/workers/scheduler changes, Phase 2 providers, multi-channel metrics, automatic Google location binding, or destructive scripts.
 
 Report services should stay testable so later route, queue, worker, scheduler, and frontend tasks can build on a stable metadata contract.
 

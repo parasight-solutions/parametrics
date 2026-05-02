@@ -12,11 +12,15 @@ import {
   markReportRunSucceeded,
   savePendingReportRun,
 } from "../services/reportStore.js";
-import { requireOrganizationRole } from "../services/organizationAccess.js";
+import {
+  requireOrganizationLocationAccess,
+  requireOrganizationRole,
+} from "../services/organizationAccess.js";
 
 const router = Router();
 const MAX_TOTAL_FILE_BYTES = 5 * 1024 * 1024;
 const DASHBOARD_REPORT_GENERATION_ROLES = Object.freeze(["owner", "admin", "manager"]);
+const DASHBOARD_REPORT_ORGANIZATION_ROLES = Object.freeze(["owner", "admin"]);
 
 const FILE_INFO = Object.freeze({
   pdf: { extension: "pdf", content_type: "application/pdf" },
@@ -207,20 +211,30 @@ export async function generateDashboardSnapshotReport({
     throw makeError(400, "bad_request", "client_id is required when location_id is provided");
   }
 
-  const requireReportRole = deps.requireOrganizationRole || requireOrganizationRole;
-  const membership = await requireReportRole({
-    organizationId,
-    userId,
-    allowedRoles: DASHBOARD_REPORT_GENERATION_ROLES,
-  }, deps.organizationAccessOptions || {});
-  if (onMembership) await onMembership(membership);
-
   let locationDoc = null;
+  let membership = null;
 
   if (locationId) {
     const ownedLocation = deps.requireOwnedLocation || requireOwnedLocation;
     locationDoc = await ownedLocation(userId, locationId, { provider: "google" });
+    const requireLocationAccess = deps.requireOrganizationLocationAccess || requireOrganizationLocationAccess;
+    membership = await requireLocationAccess({
+      organizationId: locationDoc.organization_id,
+      clientId: locationDoc.client_id,
+      locationId: locationDoc.id,
+      userId,
+      allowedRoles: DASHBOARD_REPORT_GENERATION_ROLES,
+    }, deps.organizationAccessOptions || {});
+  } else {
+    const requireReportRole = deps.requireOrganizationRole || requireOrganizationRole;
+    membership = await requireReportRole({
+      organizationId,
+      userId,
+      allowedRoles: DASHBOARD_REPORT_ORGANIZATION_ROLES,
+    }, deps.organizationAccessOptions || {});
   }
+
+  if (onMembership) await onMembership(membership);
 
   const reportInput = buildReportInput({ body, user, locationDoc });
   let run = null;

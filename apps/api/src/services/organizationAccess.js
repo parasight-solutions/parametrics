@@ -1,4 +1,5 @@
 import { col } from "../lib/mongo.js";
+import { requireOwnedLocation } from "./ownership.js";
 
 export const ORGANIZATION_MEMBER_STATUSES = Object.freeze([
   "active",
@@ -103,6 +104,39 @@ export function isOrganizationRoleAllowed(role, allowedRoles = []) {
   return normalizedAllowed.includes(normalizedRole);
 }
 
+export function getOrganizationMembershipScope(membership) {
+  const sanitized = sanitizeMembership(membership);
+  if (!sanitized) {
+    return {
+      role: "",
+      status: "",
+      assigned_client_ids: [],
+      assigned_location_ids: [],
+    };
+  }
+
+  return {
+    role: sanitized.role,
+    status: sanitized.status,
+    assigned_client_ids: sanitized.assigned_client_ids,
+    assigned_location_ids: sanitized.assigned_location_ids,
+  };
+}
+
+export function isMembershipAssignedToLocation(membership, { clientId, locationId } = {}) {
+  const scope = getOrganizationMembershipScope(membership);
+  const client_id = cleanStr(clientId, 200);
+  const location_id = cleanStr(locationId, 200);
+
+  if (scope.role === "owner" || scope.role === "admin") return true;
+  if (scope.role !== "manager" && scope.role !== "viewer") return false;
+
+  if (location_id && scope.assigned_location_ids.includes(location_id)) return true;
+  if (client_id && scope.assigned_client_ids.includes(client_id)) return true;
+
+  return false;
+}
+
 export async function getOrganizationMembership(
   { organizationId, userId, status = "active" } = {},
   options = {},
@@ -149,6 +183,56 @@ export async function requireOrganizationMembership(params = {}, options = {}) {
   }
 
   return membership;
+}
+
+export async function requireOrganizationLocationAccess(
+  { organizationId, clientId, locationId, userId, allowedRoles = [] } = {},
+  options = {},
+) {
+  const organization_id = requireIdentifier(organizationId, "organizationId");
+  const client_id = requireIdentifier(clientId, "clientId");
+  const location_id = requireIdentifier(locationId, "locationId");
+  const user_id = requireIdentifier(userId, "userId");
+
+  const membership = await requireOrganizationMembership(
+    { organizationId: organization_id, userId: user_id },
+    options,
+  );
+
+  if (!isOrganizationRoleAllowed(membership.role, allowedRoles)) {
+    throw makeAccessError(
+      403,
+      "organization_role_required",
+      "required organization role is missing",
+    );
+  }
+
+  if (!isMembershipAssignedToLocation(membership, { clientId: client_id, locationId: location_id })) {
+    throw makeAccessError(
+      403,
+      "organization_scope_required",
+      "required organization assignment is missing",
+    );
+  }
+
+  return membership;
+}
+
+export async function requireOwnedOrganizationLocationAccess(
+  { userId, locationId, provider = "google", allowedRoles = [] } = {},
+  options = {},
+) {
+  const loadOwnedLocation = options.requireOwnedLocation || requireOwnedLocation;
+  const location = await loadOwnedLocation(userId, locationId, { provider });
+  const membership = await requireOrganizationLocationAccess({
+    organizationId: location.organization_id,
+    clientId: location.client_id,
+    locationId: location.id,
+    userId,
+    allowedRoles,
+  }, options.organizationAccessOptions || options);
+
+  return { location, membership };
 }
 
 export async function requireOrganizationRole(

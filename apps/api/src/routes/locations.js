@@ -10,8 +10,10 @@ import {
   requireOwnedLocation,
   toApiError,
 } from "../services/ownership.js";
+import { requireOrganizationLocationAccess } from "../services/organizationAccess.js";
 
 const router = Router();
+const LOCATION_MUTATION_ROLES = Object.freeze(["owner", "admin"]);
 
 router.get("/", authenticate, async (req, res) => {
   try {
@@ -63,6 +65,13 @@ router.delete("/:id", authenticate, async (req, res) => {
     const id = String(req.params.id || "").trim();
 
     const loc = await requireOwnedLocation(userId, id);
+    await requireOrganizationLocationAccess({
+      organizationId: loc.organization_id,
+      clientId: loc.client_id,
+      locationId: loc.id,
+      userId,
+      allowedRoles: LOCATION_MUTATION_ROLES,
+    });
 
     const c = await col("locations");
     await c.deleteOne({

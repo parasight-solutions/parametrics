@@ -16,11 +16,14 @@ import {
   requireOwnedLocation,
   toApiError,
 } from "../services/ownership.js";
+import { requireOwnedOrganizationLocationAccess } from "../services/organizationAccess.js";
 import { auditQueued, auditSuccess } from "../services/auditLog.js";
 
 const router = Router();
 const publishQueue = makeQueue("post-publish");
 const PUBLISH_JOB_ID = (postId) => `publish_${postId}`;
+const LOCATION_READ_ROLES = Object.freeze(["owner", "admin", "manager", "viewer"]);
+const LOCATION_OPERATION_ROLES = Object.freeze(["owner", "admin", "manager"]);
 
 async function removePublishJob(postId) {
   const jobId = PUBLISH_JOB_ID(postId);
@@ -232,7 +235,12 @@ router.get("/", authenticate, async (req, res) => {
     let q = { user_id: userId };
 
     if (locationId) {
-      const loc = await requireOwnedLocation(userId, locationId, { provider: "google" });
+      const { location: loc } = await requireOwnedOrganizationLocationAccess({
+        userId,
+        locationId,
+        provider: "google",
+        allowedRoles: LOCATION_READ_ROLES,
+      });
       q = {
         user_id: userId,
         organization_id: loc.organization_id,
@@ -282,7 +290,12 @@ router.get("/provider", authenticate, syncRateLimit, async (req, res) => {
       return res.status(400).json({ error: { code: "bad_request", message: "locationId required" } });
     }
 
-    const loc = await requireOwnedLocation(userId, locationId, { provider: "google" });
+    const { location: loc } = await requireOwnedOrganizationLocationAccess({
+      userId,
+      locationId,
+      provider: "google",
+      allowedRoles: LOCATION_READ_ROLES,
+    });
 
     const integrationId = loc.integration_id;
     if (!integrationId) {
@@ -323,7 +336,12 @@ router.post("/", authenticate, generationRateLimit, async (req, res) => {
       return res.status(400).json({ error: { code: "bad_request", message: "summary required" } });
     }
 
-    const loc = await requireOwnedLocation(userId, b.locationId, { provider: "google" });
+    const { location: loc, membership } = await requireOwnedOrganizationLocationAccess({
+      userId,
+      locationId: b.locationId,
+      provider: "google",
+      allowedRoles: LOCATION_OPERATION_ROLES,
+    });
     if (!loc.integration_id) {
       return res.status(409).json({
         error: {
@@ -400,7 +418,7 @@ router.post("/", authenticate, generationRateLimit, async (req, res) => {
         client_id: loc.client_id,
         location_id: loc.id,
         provider: "google",
-        metadata: { reason: "manual-publish" },
+        metadata: { reason: "manual-publish", membership_role: membership.role },
       });
     } else {
       await removePublishJob(id);
@@ -413,7 +431,7 @@ router.post("/", authenticate, generationRateLimit, async (req, res) => {
       client_id: loc.client_id,
       location_id: loc.id,
       provider: "google",
-      metadata: { status: doc.status, publishNow: b.publishNow },
+      metadata: { status: doc.status, publishNow: b.publishNow, membership_role: membership.role },
     });
 
     return res.json({
@@ -438,7 +456,12 @@ router.patch("/:id", authenticate, generationRateLimit, async (req, res) => {
       return res.status(404).json({ error: { code: "not_found", message: "post not found" } });
     }
 
-    const loc = await requireOwnedLocation(userId, post.location_id, { provider: "google" });
+    const { location: loc, membership } = await requireOwnedOrganizationLocationAccess({
+      userId,
+      locationId: post.location_id,
+      provider: "google",
+      allowedRoles: LOCATION_OPERATION_ROLES,
+    });
     assertDocMatchesLocationScope(post, loc, "post");
 
     if (post.status === "publishing") {
@@ -502,7 +525,7 @@ router.patch("/:id", authenticate, generationRateLimit, async (req, res) => {
         client_id: loc.client_id,
         location_id: loc.id,
         provider: "google",
-        metadata: { reason: "edit-publish" },
+        metadata: { reason: "edit-publish", membership_role: membership.role },
       });
     } else {
       await removePublishJob(id);
@@ -515,7 +538,7 @@ router.patch("/:id", authenticate, generationRateLimit, async (req, res) => {
       client_id: loc.client_id,
       location_id: loc.id,
       provider: "google",
-      metadata: { status: updated.status, queued: updated.status === "queued" },
+      metadata: { status: updated.status, queued: updated.status === "queued", membership_role: membership.role },
     });
 
     return res.json({ post: updated });
@@ -535,7 +558,12 @@ router.post("/:id/retry", authenticate, generationRateLimit, async (req, res) =>
       return res.status(404).json({ error: { code: "not_found", message: "post not found" } });
     }
 
-    const loc = await requireOwnedLocation(userId, post.location_id, { provider: "google" });
+    const { location: loc, membership } = await requireOwnedOrganizationLocationAccess({
+      userId,
+      locationId: post.location_id,
+      provider: "google",
+      allowedRoles: LOCATION_OPERATION_ROLES,
+    });
     assertDocMatchesLocationScope(post, loc, "post");
 
     if (post.status !== "failed") {
@@ -581,7 +609,7 @@ router.post("/:id/retry", authenticate, generationRateLimit, async (req, res) =>
       client_id: loc.client_id,
       location_id: loc.id,
       provider: "google",
-      metadata: { reason: "manual-retry" },
+      metadata: { reason: "manual-retry", membership_role: membership.role },
     });
 
     return res.json({ ok: true });
@@ -601,7 +629,12 @@ router.delete("/:id", authenticate, mutationRateLimit, async (req, res) => {
       return res.status(404).json({ error: { code: "not_found", message: "post not found" } });
     }
 
-    const loc = await requireOwnedLocation(userId, post.location_id, { provider: "google" });
+    const { location: loc, membership } = await requireOwnedOrganizationLocationAccess({
+      userId,
+      locationId: post.location_id,
+      provider: "google",
+      allowedRoles: LOCATION_OPERATION_ROLES,
+    });
     assertDocMatchesLocationScope(post, loc, "post");
 
     await removePublishJob(id);
@@ -620,6 +653,7 @@ router.delete("/:id", authenticate, mutationRateLimit, async (req, res) => {
       client_id: loc.client_id,
       location_id: loc.id,
       provider: "google",
+      metadata: { membership_role: membership.role },
     });
 
     return res.json({ ok: true });

@@ -2,7 +2,6 @@
 import express from 'express';
 import { authenticate } from '../middleware/auth.js';
 import { mutationRateLimit, syncRateLimit } from '../middleware/rateLimit.js';
-import { col } from '../lib/mongo.js';
 import { getActiveGoogleIntegration, getGoogleIntegrationById, ensureAccessToken } from '../integrations/google.store.js';
 import {
   fetchMultiDailyMetricsTimeSeries,
@@ -11,8 +10,20 @@ import {
   listLocationMedia,
 } from '../integrations/google.js';
 import { auditFailure, auditSuccess } from '../services/auditLog.js';
+import { requireOwnedOrganizationLocationAccess } from '../services/organizationAccess.js';
 
 const router = express.Router();
+const LOCATION_READ_ROLES = Object.freeze(['owner', 'admin', 'manager', 'viewer']);
+const LOCATION_OPERATION_ROLES = Object.freeze(['owner', 'admin', 'manager']);
+const LOCAL_ACCESS_CODES = new Set([
+  'bad_request',
+  'not_found',
+  'location_not_scoped',
+  'organization_membership_required',
+  'organization_role_required',
+  'organization_scope_required',
+  'scope_mismatch',
+]);
 
 function isGoogleAuthFailure(e) {
   const status = Number(e?.status || 0);
@@ -64,6 +75,19 @@ function sendGoogleFailure(res, e, fallbackCode = 'google_error') {
   });
 }
 
+function sendAccessFailure(res, e) {
+  const status = Number(e?.status || e?.statusCode || 0);
+  const code = String(e?.code || '').trim();
+  if (!status || status >= 500 || !LOCAL_ACCESS_CODES.has(code)) return false;
+
+  return res.status(status).json({
+    error: {
+      code,
+      message: e?.message || e?.code || 'forbidden',
+    },
+  });
+}
+
 function toDateParts(d) {
   return { year: d.getUTCFullYear(), month: d.getUTCMonth() + 1, day: d.getUTCDate() };
 }
@@ -72,12 +96,23 @@ function ymd(d) {
   return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`;
 }
 
-async function getOwnedLocation(userId, locationId) {
-  const locations = await col('locations');
-  const doc = await locations.findOne({ id: locationId, user_id: userId });
-  if (!doc) return null;
-  if (!doc.provider_account_name || !doc.provider_location_name) return null;
-  return doc;
+async function getOwnedLocationAccess(userId, locationId, allowedRoles) {
+  const result = await requireOwnedOrganizationLocationAccess({
+    userId,
+    locationId,
+    provider: 'google',
+    allowedRoles,
+  });
+
+  if (!result.location?.provider_account_name || !result.location?.provider_location_name) {
+    const e = new Error('location not found');
+    e.status = 404;
+    e.statusCode = 404;
+    e.code = 'not_found';
+    throw e;
+  }
+
+  return result;
 }
 
 async function getAccessTokenForLocation(userId, loc) {
@@ -191,10 +226,7 @@ router.get('/performance-series', authenticate, async (req, res) => {
       return res.status(400).json({ error: { code: 'bad_request', message: 'locationId required' } });
     }
 
-    const loc = await getOwnedLocation(userId, locationId);
-    if (!loc) {
-      return res.status(404).json({ error: { code: 'not_found', message: 'location not found' } });
-    }
+    const { location: loc } = await getOwnedLocationAccess(userId, locationId, LOCATION_READ_ROLES);
 
     const accessToken = await getAccessTokenForLocation(userId, loc);
 
@@ -300,6 +332,8 @@ router.get('/performance-series', authenticate, async (req, res) => {
       expanded_metrics_used: expanded,
     });
   } catch (e) {
+    if (sendAccessFailure(res, e)) return;
+
     if (e?.code === 'reauth_required') {
       return res.status(409).json({
         error: {
@@ -343,10 +377,7 @@ router.get('/reviews', authenticate, syncRateLimit, async (req, res) => {
       return res.status(400).json({ error: { code: 'bad_request', message: 'locationId required' } });
     }
 
-    const loc = await getOwnedLocation(userId, locationId);
-    if (!loc) {
-      return res.status(404).json({ error: { code: 'not_found', message: 'location not found' } });
-    }
+    const { location: loc } = await getOwnedLocationAccess(userId, locationId, LOCATION_READ_ROLES);
 
     const accessToken = await getAccessTokenForLocation(userId, loc);
 
@@ -362,6 +393,8 @@ router.get('/reviews', authenticate, syncRateLimit, async (req, res) => {
       nextPageToken: data.nextPageToken || null,
     });
   } catch (e) {
+    if (sendAccessFailure(res, e)) return;
+
     if (e?.code === 'reauth_required') {
       return res.status(409).json({
         error: {
@@ -401,10 +434,7 @@ router.put('/reviews/reply', authenticate, mutationRateLimit, async (req, res) =
       });
     }
 
-    const loc = await getOwnedLocation(userId, locationId);
-    if (!loc) {
-      return res.status(404).json({ error: { code: 'not_found', message: 'location not found' } });
-    }
+    const { location: loc, membership } = await getOwnedLocationAccess(userId, locationId, LOCATION_OPERATION_ROLES);
     auditTarget = {
       target_type: 'review',
       target_id: reviewName,
@@ -412,6 +442,7 @@ router.put('/reviews/reply', authenticate, mutationRateLimit, async (req, res) =
       client_id: loc.client_id || null,
       location_id: loc.id,
       provider: 'google',
+      metadata: { membership_role: membership.role },
     };
 
     const accessToken = await getAccessTokenForLocation(userId, loc);
@@ -422,8 +453,10 @@ router.put('/reviews/reply', authenticate, mutationRateLimit, async (req, res) =
   } catch (e) {
     await auditFailure(req, 'review.reply', {
       ...auditTarget,
-      metadata: { reason: e?.message || e?.code || 'server_error' },
+      metadata: { ...(auditTarget.metadata || {}), reason: e?.message || e?.code || 'server_error' },
     });
+    if (sendAccessFailure(res, e)) return;
+
     if (e?.code === 'reauth_required') {
       return res.status(409).json({
         error: {
@@ -457,10 +490,7 @@ router.get('/media', authenticate, syncRateLimit, async (req, res) => {
       return res.status(400).json({ error: { code: 'bad_request', message: 'locationId required' } });
     }
 
-    const loc = await getOwnedLocation(userId, locationId);
-    if (!loc) {
-      return res.status(404).json({ error: { code: 'not_found', message: 'location not found' } });
-    }
+    const { location: loc } = await getOwnedLocationAccess(userId, locationId, LOCATION_READ_ROLES);
 
     const accessToken = await getAccessTokenForLocation(userId, loc);
     const data = await listLocationMedia(
@@ -472,6 +502,8 @@ router.get('/media', authenticate, syncRateLimit, async (req, res) => {
 
     return res.json({ mediaItems: data.mediaItems || [] });
   } catch (e) {
+    if (sendAccessFailure(res, e)) return;
+
     if (e?.code === 'reauth_required') {
       return res.status(409).json({
         error: {
