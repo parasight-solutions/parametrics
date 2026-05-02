@@ -21,7 +21,8 @@ Current Sprint 2 task:
 - S2-04.1 report index verification complete: configured MongoDB index creation for `reports` and `report_runs` was verified before adding report routes.
 - S2-05 authenticated dashboard snapshot report route complete: existing report metadata, PDF/XLSX output, persistence, auth, rate-limit, and audit services are wired without queues, scheduler changes, frontend wiring, or file storage.
 - S2-05.1 authenticated report route smoke complete: live API smoke verified HTTP 200, PDF/XLSX base64 response, metadata-only `report_runs` persistence, and audit success logging.
-- S2-06 frontend dashboard report action in progress: the GBP dashboard may call the authenticated backend dashboard snapshot report route and download returned PDF/XLSX base64 files without storing generated file content.
+- S2-06 frontend dashboard report action complete: the GBP dashboard calls the authenticated backend dashboard snapshot report route and downloads returned PDF/XLSX base64 files without storing generated file content.
+- S2-06.1 frontend report browser smoke complete: browser verification passed against the running API, including downloads, metadata-only `report_runs` persistence, and audit success logging.
 
 Near follow-up tasks:
 
