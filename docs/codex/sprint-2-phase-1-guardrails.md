@@ -23,10 +23,12 @@ Current Sprint 2 task:
 - S2-05.1 authenticated report route smoke complete: live API smoke verified HTTP 200, PDF/XLSX base64 response, metadata-only `report_runs` persistence, and audit success logging.
 - S2-06 frontend dashboard report action complete: the GBP dashboard calls the authenticated backend dashboard snapshot report route and downloads returned PDF/XLSX base64 files without storing generated file content.
 - S2-06.1 frontend report browser smoke complete: browser verification passed against the running API, including downloads, metadata-only `report_runs` persistence, and audit success logging.
+- S2-07 workspace/member foundation audit and design in progress: existing org/user/client/location ownership is being documented before any workspace/member implementation.
 
 Near follow-up tasks:
 
 - Report queue/worker/storage/history UI wiring only after the persistence and runtime boundaries are intentionally designed.
+- Workspace/member implementation only after the S2-07 audit/design is verified.
 
 ## Explicit Boundaries
 
@@ -43,6 +45,8 @@ S2-04 may add Mongo `reports` and `report_runs` persistence for definitions and 
 S2-05 may add an authenticated synchronous dashboard snapshot generation route. It must not add report queues/workers, send emails, schedule recurring reports, add file/cloud storage, expose unauthenticated report access, modify frontend export behavior, or start Phase 2 provider/channel work.
 
 S2-06 may add frontend wiring to the existing authenticated dashboard snapshot report route. It must not add backend routes, alter backend generation behavior, add queues/workers, add scheduler changes, add email, add file/cloud storage, add report history UI, remove existing client-side exports without explicit justification, or start Phase 2 provider/channel work.
+
+S2-07 may audit and design the workspace/member foundation only. It must not implement workspace/member APIs, modify auth behavior, modify tenancy/ownership behavior, add RBAC middleware, add frontend workspace/member UI, add billing/entitlements, add migrations, or start Phase 2 provider/channel work. Do not implement workspace/member runtime changes before the S2-07 audit/design is verified.
 
 Report services should stay testable so later route, queue, worker, scheduler, and frontend tasks can build on a stable metadata contract.
 

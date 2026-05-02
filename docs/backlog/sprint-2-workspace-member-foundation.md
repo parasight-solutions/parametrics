@@ -1,0 +1,34 @@
+# Sprint 2 Workspace Member Foundation Backlog
+
+This backlog follows the S2-07 workspace/member model audit. It is implementation planning only. Do not implement these tasks until the audit/design is verified.
+
+ParaMetrics remains Google Business Profile first. Phase 2 providers, billing, entitlements, advanced RBAC, report queues/workers/storage/history UI, and multi-channel metrics remain out of scope.
+
+| Task ID | Phase | Priority | Title | Description | Files Likely Affected | Dependencies | Acceptance Criteria | Risks/Notes |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| S2-08 | Phase 1 / Sprint 2 | P0 | Membership collection, indexes, and seed migration | Add `organization_members` indexes and a safe dry-run/apply migration that creates owner memberships from existing `orgs.owner_user_id || orgs.user_id`. Preserve existing org fields and single-user behavior. | `apps/api/src/startup/ensureIndexes.js`, new migration script under `apps/api/src/scripts/`, `apps/api/package.json`, docs/proof | S2-07 verified | Dry-run is default; apply requires explicit flag; creates no memberships without a real org id and owner user id; indexes are verified; no imported Google locations are auto-bound; `location_org_map` remains legacy/readable; focused syntax/tests pass. | Must not infer membership from location rows alone. Must not delete or rewrite org ownership fields. |
+| S2-09 | Phase 1 / Sprint 2 | P0 | Membership service/read helpers | Add testable backend helpers for active membership lookup, role normalization, organization-level permission checks, and simple client/location assignment checks. Do not change route behavior yet except through tests. | new `apps/api/src/services/membership.js`, new tests, maybe small shared errors helper | S2-08 | Helpers resolve active membership by `organization_id + user_id`; distinguish owner/admin/manager/viewer; deny disabled/invited members; verify manager/viewer assigned client/location scope; unit tests cover allow/deny cases. | Keep helpers narrow. Avoid adding broad RBAC middleware before route needs are known. |
+| S2-10 | Phase 1 / Sprint 2 | P0 | Protect org/client/report read paths with membership checks | Apply membership checks to low-blast-radius org/client/report paths first, while preserving current single-user owner behavior from seeded memberships. Report generation must verify membership for `organization_id` and assigned location/client scope in addition to current location scope checks. | `apps/api/src/routes/orgs.js`, `apps/api/src/routes/reports.js`, `apps/api/src/services/reportStore.js` if listing is added later, membership tests | S2-09 | Existing owner user behavior still passes; non-member org access fails closed; manager can generate/read reports only for assigned client/location scope; client-sent organization id is not trusted without membership; focused backend route tests pass. | This is where route behavior changes start. Keep scope limited to org/client/report paths before GBP mutation routes. |
+| S2-10.1 | Phase 1 / Sprint 2 | P0 | Protect current GBP location operations with membership checks | Extend membership checks to location-bound GBP routes after S2-10 proves the pattern: locations, posts, reviews, recurrence, and dashboard metrics. Preserve provider reauth behavior and current single-user success path. | `apps/api/src/routes/locations.js`, `apps/api/src/routes/posts.js`, `apps/api/src/routes/reviews.js`, `apps/api/src/routes/recurrence.js`, Google performance routes, `apps/api/src/services/ownership.js` or membership helpers | S2-10 | Owner/admin retain current access; manager can operate assigned scope; viewer can read only where allowed; stale/unassigned location fails closed without app logout; provider reauth does not clear app auth; focused backend and web auth-state tests pass. | Larger blast radius. Must avoid loosening ownership guards or treating `location_org_map` as canonical. |
+| S2-11 | Phase 1 / Sprint 2 | P0 | Workspace/member API | Add authenticated owner/admin APIs to list organization members, invite/create a member record, update role/status, and read the current user's memberships. Keep invite flow minimal and do not add email delivery. | new or existing `apps/api/src/routes/organizationMembers.js`, `apps/api/src/server.js`, membership service/tests, audit logging | S2-09, preferably S2-10 | Owner/admin can manage member records; manager/viewer cannot manage members; no email is sent; audit logs record member management actions; tests cover role/status transitions and denied access. | Invited users without accounts need careful handling. Email delivery remains out of scope. |
+| S2-12 | Phase 1 / Sprint 2 | P1 | Minimal frontend workspace/member UI | Add a restrained frontend view for owner/admin member management and current workspace visibility. Keep UI minimal and GBP-first; no dashboard redesign or full workspace switcher unless needed for current flows. | `apps/web/src/App.jsx`, new workspace/member page/components, API client usage, tests if helper logic is extracted | S2-11 | Owner/admin can view members and update simple role/status fields; manager/viewer see read-only current workspace info if included; no Phase 2 navigation or billing UI; web tests/build pass. | Avoid overbuilding product settings. Keep text and controls simple. |
+| S2-13 | Phase 1 / Sprint 2 | P1 | Workspace membership proof pack and hardening audit | Verify seeded membership data, route access behavior, and frontend behavior across owner/admin/manager/viewer fixtures or controlled test users. Document remaining risks before moving to broader workspace UI. | docs/proof, focused backend/web tests, optional verification scripts | S2-10.1, S2-11, S2-12 if UI included | Proof pack includes commands, access matrix results, denied-access cases, provider reauth/app auth behavior, and no Phase 2 drift. | May expose need for fixture setup. Keep verification non-destructive. |
+
+## Sequencing Notes
+
+S2-08 and S2-09 should happen before route behavior changes. This keeps the membership data shape and helper contract testable before any access-control rewiring.
+
+S2-10 should start with org/client/report paths because report generation already requires explicit organization/client/location scope and has a focused contract. S2-10.1 can then apply the same pattern to broader GBP operations.
+
+S2-11 and S2-12 can be split if API readiness should be verified before frontend work. Email invitation delivery is intentionally not part of Sprint 2.
+
+## Acceptance Gate For The Sequence
+
+Before any implementation task starts:
+
+- S2-07 audit/design must be verified.
+- Phase 2 integrations must remain blocked.
+- The task must state whether it changes behavior or only adds data/helpers.
+- Existing single-user owner behavior must stay green.
+- No task may auto-bind imported Google locations.
+- No task may make `location_org_map` canonical.
