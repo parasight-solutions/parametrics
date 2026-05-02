@@ -24,7 +24,7 @@ The S2-08 owner seed migration remains compatible with this vocabulary because i
 
 ## S2-09 Helper Scope
 
-S2-09 adds backend organization access helpers only.
+S2-09 is complete. It added backend organization access helpers only.
 
 The helper service can:
 
@@ -59,3 +59,26 @@ S2-09 does not:
 S2-10 can begin route-level membership authorization gradually. Future route tasks should treat client-sent `organization_id`, `client_id`, and `location_id` as requested scope only, load the active organization membership server-side, and then verify role plus client/location scope before changing existing GBP or report behavior.
 
 Membership helpers should remain adapter-friendly for tests: callers can use the default MongoDB collection at runtime, while tests should inject fake collections or database adapters.
+
+## S2-10 Route Authorization Scope
+
+S2-10 starts route-level membership authorization only for low-blast-radius organization and report paths.
+
+Dashboard snapshot report generation now requires:
+
+- explicit `organization_id`
+- active `organization_members` membership for the authenticated `req.user.user_id`
+- one of these organization roles: `owner`, `admin`, or `manager`
+
+Report generation continues to enforce the existing owned-location and canonical `organization_id` / `client_id` / `location_id` scope checks when `location_id` is provided. Generated PDF/XLSX files remain response-only base64 for the MVP route, and `report_runs` continues to persist metadata only.
+
+Organization routes now start using membership-aware checks where the blast radius is low:
+
+- org listing can include organizations where the user has active membership
+- legacy owner-created org visibility remains available during the transition
+- existing org mutation and location bind paths fail closed unless the user has active `owner` or `admin` membership
+- new org creation still does not require pre-existing membership
+
+New org creation still writes the current `user_id` and `owner_user_id` fields. Creating owner memberships for newly created orgs remains a follow-up unless handled by a later dedicated task.
+
+S2-10 does not change GBP posts, reviews, locations, recurrence, dashboard metrics, Google integration routes, provider auth, JWT/auth middleware, frontend UI, invite/member-management APIs, billing, entitlements, Phase 2 providers, or `location_org_map` canonicality.

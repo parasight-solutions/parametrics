@@ -6,8 +6,10 @@ import { authenticate } from "../middleware/auth.js";
 import { getOrCreateDefaultClientForOrganization } from "../services/clients.js";
 import { normalizeLocationBinding } from "../services/locationBinding.js";
 import { auditSuccess } from "../services/auditLog.js";
+import { requireOrganizationRole } from "../services/organizationAccess.js";
 
 const router = Router();
+const ORGANIZATION_MUTATION_ROLES = Object.freeze(["owner", "admin"]);
 
 function cleanStr(s, max = 5000) {
   const v = String(s ?? "").trim();
@@ -38,18 +40,128 @@ function normalizeStatus(value) {
   return "active";
 }
 
-// list orgs
-router.get("/", authenticate, async (req, res) => {
-  const userId = req.user.user_id;
-  const orgs = await col("orgs");
+function makeRouteError(status, code, message) {
+  const err = new Error(message || code);
+  err.status = status;
+  err.statusCode = status;
+  err.code = code;
+  return err;
+}
+
+function sendRouteError(res, error) {
+  const status = Number(error?.status || error?.statusCode || 500);
+  const code = cleanStr(error?.code, 120) || "server_error";
+  const message = cleanStr(error?.message, 500) || "server_error";
+  return res.status(status).json({ error: { code, message } });
+}
+
+async function resolveOrgCollections(options = {}) {
+  if (options.collections?.orgs && (options.collections.organizationMembers || options.collections.organization_members)) {
+    return {
+      orgs: options.collections.orgs,
+      organizationMembers: options.collections.organizationMembers || options.collections.organization_members,
+    };
+  }
+
+  if (options.db?.collection) {
+    return {
+      orgs: options.db.collection("orgs"),
+      organizationMembers: options.db.collection("organization_members"),
+    };
+  }
+
+  return {
+    orgs: await col("orgs"),
+    organizationMembers: await col("organization_members"),
+  };
+}
+
+function dedupeById(rows = []) {
+  const seen = new Set();
+  const out = [];
+  for (const row of rows) {
+    const id = cleanStr(row?.id, 200);
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    out.push(row);
+  }
+  return out;
+}
+
+export async function listAccessibleOrganizations({ userId } = {}, options = {}) {
+  const uid = cleanStr(userId, 200);
+  if (!uid) throw makeRouteError(400, "bad_request", "userId is required");
+
+  const { orgs, organizationMembers } = await resolveOrgCollections(options);
+  const memberships = await organizationMembers
+    .find(
+      { user_id: uid, status: "active" },
+      { projection: { _id: 0, organization_id: 1 } },
+    )
+    .toArray();
+
+  const memberOrgIds = [...new Set(
+    memberships
+      .map((membership) => cleanStr(membership.organization_id, 200))
+      .filter(Boolean),
+  )];
+
+  const filter = memberOrgIds.length
+    ? { $or: [{ user_id: uid }, { id: { $in: memberOrgIds } }] }
+    : { user_id: uid };
 
   const rows = await orgs
-    .find({ user_id: userId }, { projection: { _id: 0 } })
+    .find(filter, { projection: { _id: 0 } })
     .sort({ updated_at: -1 })
     .limit(50)
     .toArray();
 
-  return res.json({ orgs: rows });
+  return dedupeById(rows);
+}
+
+export async function requireOrganizationMutationAccess(
+  { userId, organizationId } = {},
+  options = {},
+) {
+  const uid = cleanStr(userId, 200);
+  const orgId = cleanStr(organizationId, 200);
+  if (!uid || !orgId) {
+    throw makeRouteError(400, "bad_request", "userId and organizationId are required");
+  }
+
+  const { orgs } = await resolveOrgCollections(options);
+  const org = await orgs.findOne(
+    { id: orgId },
+    { projection: { _id: 0 } },
+  );
+
+  if (!org) {
+    throw makeRouteError(404, "not_found", "org not found");
+  }
+
+  const requireRole = options.requireOrganizationRole || requireOrganizationRole;
+  const organizationAccessOptions = options.organizationAccessOptions || (
+    options.collections?.organizationMembers || options.collections?.organization_members
+      ? { collection: options.collections.organizationMembers || options.collections.organization_members }
+      : {}
+  );
+  const membership = await requireRole({
+    organizationId: orgId,
+    userId: uid,
+    allowedRoles: ORGANIZATION_MUTATION_ROLES,
+  }, organizationAccessOptions);
+
+  return { org, membership };
+}
+
+// list orgs
+router.get("/", authenticate, async (req, res) => {
+  try {
+    const rows = await listAccessibleOrganizations({ userId: req.user.user_id });
+    return res.json({ orgs: rows });
+  } catch (error) {
+    return sendRouteError(res, error);
+  }
 });
 
 // upsert org
@@ -105,15 +217,36 @@ router.post("/", authenticate, async (req, res) => {
 
   const orgs = await col("orgs");
   const existing = await orgs.findOne(
-    { user_id: userId, id },
-    { projection: { _id: 0, created_at: 1 } }
+    { id },
+    { projection: { _id: 0 } }
   );
 
+  if (existing) {
+    try {
+      await requireOrganizationMutationAccess({ userId, organizationId: id }, {
+        collections: { orgs, organizationMembers: await col("organization_members") },
+      });
+    } catch (error) {
+      return sendRouteError(res, error);
+    }
+  }
+
+  const ownership = existing
+    ? {
+        user_id: existing.user_id,
+        owner_user_id: existing.owner_user_id || existing.user_id || userId,
+      }
+    : {
+        user_id: userId,
+        owner_user_id: userId,
+      };
+
   await orgs.updateOne(
-    { user_id: userId, id },
+    existing ? { id } : { user_id: userId, id },
     {
       $set: {
         ...doc,
+        ...ownership,
         created_at: existing?.created_at || new Date(),
       },
     },
@@ -121,7 +254,7 @@ router.post("/", authenticate, async (req, res) => {
   );
 
   const saved = await orgs.findOne(
-    { user_id: userId, id },
+    existing ? { id } : { user_id: userId, id },
     { projection: { _id: 0 } }
   );
 
@@ -150,15 +283,12 @@ router.post("/bind-location", authenticate, async (req, res) => {
     });
   }
 
-  const orgs = await col("orgs");
-  const org = await orgs.findOne(
-    { user_id: userId, id: oId },
-    { projection: { _id: 0, id: 1, name: 1 } }
-  );
-  if (!org) {
-    return res.status(404).json({
-      error: { code: "not_found", message: "org not found" },
-    });
+  let org;
+  try {
+    const result = await requireOrganizationMutationAccess({ userId, organizationId: oId });
+    org = result.org;
+  } catch (error) {
+    return sendRouteError(res, error);
   }
 
   const locations = await col("locations");

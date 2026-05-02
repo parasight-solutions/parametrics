@@ -12,9 +12,11 @@ import {
   markReportRunSucceeded,
   savePendingReportRun,
 } from "../services/reportStore.js";
+import { requireOrganizationRole } from "../services/organizationAccess.js";
 
 const router = Router();
 const MAX_TOTAL_FILE_BYTES = 5 * 1024 * 1024;
+const DASHBOARD_REPORT_GENERATION_ROLES = Object.freeze(["owner", "admin", "manager"]);
 
 const FILE_INFO = Object.freeze({
   pdf: { extension: "pdf", content_type: "application/pdf" },
@@ -184,6 +186,7 @@ export async function generateDashboardSnapshotReport({
   storeOptions = {},
   buildRunOptions = {},
   onPendingRun = null,
+  onMembership = null,
   deps = {},
   now = new Date(),
   maxTotalFileBytes = MAX_TOTAL_FILE_BYTES,
@@ -203,6 +206,14 @@ export async function generateDashboardSnapshotReport({
   if (locationId && !clientId) {
     throw makeError(400, "bad_request", "client_id is required when location_id is provided");
   }
+
+  const requireReportRole = deps.requireOrganizationRole || requireOrganizationRole;
+  const membership = await requireReportRole({
+    organizationId,
+    userId,
+    allowedRoles: DASHBOARD_REPORT_GENERATION_ROLES,
+  }, deps.organizationAccessOptions || {});
+  if (onMembership) await onMembership(membership);
 
   let locationDoc = null;
 
@@ -277,18 +288,26 @@ function auditDetailsFromRun(run, extra = {}) {
 }
 
 router.post("/dashboard-snapshot", authenticate, generationRateLimit, async (req, res) => {
+  let membershipRole = null;
+
   try {
     const result = await generateDashboardSnapshotReport({
       body: req.body || {},
       user: req.user || {},
+      onMembership: async (membership) => {
+        membershipRole = membership?.role || null;
+      },
       onPendingRun: async (run) => {
-        await auditQueued(req, "report.dashboard_snapshot.generate", auditDetailsFromRun(run));
+        await auditQueued(req, "report.dashboard_snapshot.generate", auditDetailsFromRun(run, {
+          membership_role: membershipRole,
+        }));
       },
     });
 
     await auditSuccess(req, "report.dashboard_snapshot.generate", auditDetailsFromRun(result.report_run, {
       output_count: result.outputs.length,
       file_count: result.files.length,
+      membership_role: membershipRole,
     }));
 
     return res.json(result);
@@ -296,6 +315,7 @@ router.post("/dashboard-snapshot", authenticate, generationRateLimit, async (req
     await auditFailure(req, "report.dashboard_snapshot.generate", {
       ...auditDetailsFromRun(error.reportRun || req.body, {
         reason: compactReason(error),
+        membership_role: membershipRole,
       }),
     });
 

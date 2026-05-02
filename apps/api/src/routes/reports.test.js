@@ -78,6 +78,32 @@ function ownedLocation(overrides = {}) {
   };
 }
 
+function allowMembership(role = "owner") {
+  return async ({ organizationId, userId, allowedRoles }) => {
+    assert.equal(organizationId, "org_1");
+    assert.equal(userId, "user_1");
+    assert.equal(allowedRoles.includes(role), true);
+    return {
+      organization_id: organizationId,
+      user_id: userId,
+      role,
+      status: "active",
+    };
+  };
+}
+
+function denyMembership(code = "organization_membership_required") {
+  return async () => {
+    const err = new Error(code === "organization_role_required"
+      ? "required organization role is missing"
+      : "active organization membership is required");
+    err.status = 403;
+    err.statusCode = 403;
+    err.code = code;
+    throw err;
+  };
+}
+
 test("generateDashboardSnapshotReport rejects missing organization_id", async () => {
   await assert.rejects(
     () => generateDashboardSnapshotReport({
@@ -96,6 +122,7 @@ test("generateDashboardSnapshotReport rejects unsupported formats through report
     () => generateDashboardSnapshotReport({
       body: sampleBody({ location_id: "", client_id: "", requested_formats: ["csv"] }),
       user: { user_id: "user_1" },
+      deps: { requireOrganizationRole: allowMembership("owner") },
       storeOptions: { collections: store() },
       now: fixedNow,
     }),
@@ -118,7 +145,10 @@ test("generateDashboardSnapshotReport succeeds with PDF/XLSX files and persists 
   const result = await generateDashboardSnapshotReport({
     body: sampleBody(),
     user: { user_id: "user_1" },
-    deps: { requireOwnedLocation: async () => ownedLocation() },
+    deps: {
+      requireOrganizationRole: allowMembership("owner"),
+      requireOwnedLocation: async () => ownedLocation(),
+    },
     storeOptions: { collections },
     buildRunOptions: { idFactory: () => "run_route_1" },
     now: fixedNow,
@@ -140,6 +170,83 @@ test("generateDashboardSnapshotReport succeeds with PDF/XLSX files and persists 
   assert.equal(JSON.stringify(storedRun).includes("must not leak"), false);
 });
 
+test("generateDashboardSnapshotReport denies missing organization membership before persistence", async () => {
+  const collections = store();
+
+  await assert.rejects(
+    () => generateDashboardSnapshotReport({
+      body: sampleBody(),
+      user: { user_id: "user_1" },
+      deps: { requireOrganizationRole: denyMembership() },
+      storeOptions: { collections },
+      now: fixedNow,
+    }),
+    (err) => err.status === 403 && err.code === "organization_membership_required"
+  );
+
+  assert.equal(collections.reportRuns.docs.length, 0);
+});
+
+test("generateDashboardSnapshotReport denies viewer and member roles", async () => {
+  for (const role of ["viewer", "member"]) {
+    const collections = store();
+
+    await assert.rejects(
+      () => generateDashboardSnapshotReport({
+        body: sampleBody(),
+        user: { user_id: "user_1" },
+        deps: { requireOrganizationRole: denyMembership("organization_role_required") },
+        storeOptions: { collections },
+        now: fixedNow,
+      }),
+      (err) => err.status === 403 && err.code === "organization_role_required"
+    );
+
+    assert.equal(collections.reportRuns.docs.length, 0, role);
+  }
+});
+
+test("generateDashboardSnapshotReport allows owner admin and manager roles", async () => {
+  for (const role of ["owner", "admin", "manager"]) {
+    const collections = store();
+    const result = await generateDashboardSnapshotReport({
+      body: sampleBody({ requested_formats: ["pdf"] }),
+      user: { user_id: "user_1" },
+      deps: {
+        requireOrganizationRole: allowMembership(role),
+        requireOwnedLocation: async () => ownedLocation(),
+      },
+      storeOptions: { collections },
+      buildRunOptions: { idFactory: () => `run_${role}` },
+      now: fixedNow,
+    });
+
+    assert.equal(result.report_run.status, "succeeded");
+    assert.deepEqual(result.files.map((file) => file.format), ["pdf"]);
+    assert.equal(collections.reportRuns.docs[0].status, "succeeded");
+  }
+});
+
+test("generateDashboardSnapshotReport still rejects canonical location scope mismatch", async () => {
+  await assert.rejects(
+    () => generateDashboardSnapshotReport({
+      body: sampleBody({ organization_id: "org_other" }),
+      user: { user_id: "user_1" },
+      deps: {
+        requireOrganizationRole: async ({ organizationId, allowedRoles }) => {
+          assert.equal(organizationId, "org_other");
+          assert.equal(allowedRoles.includes("owner"), true);
+          return { role: "owner", status: "active" };
+        },
+        requireOwnedLocation: async () => ownedLocation(),
+      },
+      storeOptions: { collections: store() },
+      now: fixedNow,
+    }),
+    (err) => err.status === 409 && err.code === "scope_mismatch"
+  );
+});
+
 test("generateDashboardSnapshotReport marks run failed when an output fails", async () => {
   const collections = store();
 
@@ -148,6 +255,7 @@ test("generateDashboardSnapshotReport marks run failed when an output fails", as
       body: sampleBody({ requested_formats: ["pdf"] }),
       user: { user_id: "user_1" },
       deps: {
+        requireOrganizationRole: allowMembership("owner"),
         requireOwnedLocation: async () => ownedLocation(),
         buildPdfOutputResult: () => ({
           buffer: null,
