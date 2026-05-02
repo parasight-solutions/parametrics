@@ -23,8 +23,9 @@ Current Sprint 2 task:
 - S2-05.1 authenticated report route smoke complete: live API smoke verified HTTP 200, PDF/XLSX base64 response, metadata-only `report_runs` persistence, and audit success logging.
 - S2-06 frontend dashboard report action complete: the GBP dashboard calls the authenticated backend dashboard snapshot report route and downloads returned PDF/XLSX base64 files without storing generated file content.
 - S2-06.1 frontend report browser smoke complete: browser verification passed against the running API, including downloads, metadata-only `report_runs` persistence, and audit success logging.
-- S2-07 workspace/member foundation audit and design in progress: existing org/user/client/location ownership is being documented before any workspace/member implementation.
-- S2-07.1 local dev port coordination and app-shell cleanup in progress: deterministic local API/web port preparation and a cleaner global header/page-action split are being added without workspace/member runtime changes or Phase 2 integrations.
+- S2-07 workspace/member foundation audit and design complete: existing org/user/client/location ownership is documented before any workspace/member implementation.
+- S2-07.1 local dev port coordination and app-shell cleanup complete: deterministic local API/web port preparation and a cleaner global header/page-action split are in place without workspace/member runtime changes or Phase 2 integrations.
+- S2-08 organization_members indexes and owner seed migration in progress: membership collection indexes and a dry-run-first owner membership seed migration are being added without route authorization changes.
 
 Near follow-up tasks:
 
@@ -50,6 +51,8 @@ S2-06 may add frontend wiring to the existing authenticated dashboard snapshot r
 S2-07 may audit and design the workspace/member foundation only. It must not implement workspace/member APIs, modify auth behavior, modify tenancy/ownership behavior, add RBAC middleware, add frontend workspace/member UI, add billing/entitlements, add migrations, or start Phase 2 provider/channel work. Do not implement workspace/member runtime changes before the S2-07 audit/design is verified.
 
 S2-07.1 may add deterministic local API/web port preparation, generated ignored local env files, docs for local runtime commands, and a restrained app-shell/header cleanup. It must not add workspace/member runtime behavior, change backend business logic beyond local dev env loading/port coordination, remove existing GBP dashboard/report/export/post/review/recurrence functionality, add fake routes, or start Phase 2 integrations.
+
+S2-08 may create `organization_members` indexes and a safe migration that seeds owner memberships from existing `orgs.owner_user_id || orgs.user_id`. S2-08 creates membership data only. It must not change auth/JWT behavior, route authorization behavior, frontend workspace/member UI, RBAC middleware, billing/entitlements, Phase 2 providers, imported Google location binding, `location_org_map` canonicality, or org ownership fields.
 
 Report services should stay testable so later route, queue, worker, scheduler, and frontend tasks can build on a stable metadata contract.
 

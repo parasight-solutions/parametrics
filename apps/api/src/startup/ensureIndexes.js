@@ -131,6 +131,37 @@ export async function ensureIndexes() {
   });
 
   // ---------------------------------------------------------------------------
+  // organization_members
+  // ---------------------------------------------------------------------------
+  const organizationMembers = await col("organization_members");
+
+  await ensureIndex(organizationMembers, { id: 1 }, {
+    unique: true,
+    name: "uniq_organization_members_id",
+  });
+
+  await ensureIndex(organizationMembers, { organization_id: 1, user_id: 1 }, {
+    unique: true,
+    name: "uniq_organization_members_org_user",
+  });
+
+  await ensureIndex(organizationMembers, { user_id: 1, status: 1, updated_at: -1 }, {
+    name: "idx_organization_members_user_status_updated_at",
+  });
+
+  await ensureIndex(organizationMembers, { organization_id: 1, status: 1, role: 1, updated_at: -1 }, {
+    name: "idx_organization_members_org_status_role_updated_at",
+  });
+
+  await ensureIndex(organizationMembers, { organization_id: 1, email: 1 }, {
+    name: "idx_organization_members_invited_org_email",
+    partialFilterExpression: {
+      email: { $type: "string" },
+      status: "invited",
+    },
+  });
+
+  // ---------------------------------------------------------------------------
   // integrations
   // ---------------------------------------------------------------------------
   const integrations = await col("integrations");

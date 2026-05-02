@@ -1,8 +1,8 @@
 # Workspace Member Model
 
-ParaMetrics remains a Google Business Profile first operations app. This document audits the current org/user/client/location model and defines the Phase 1 workspace/member foundation before implementation.
+ParaMetrics remains a Google Business Profile first operations app. S2-07 completed the current org/user/client/location audit and defined the Phase 1 workspace/member foundation before implementation.
 
-No workspace/member APIs, auth changes, RBAC middleware, frontend UI, billing, migrations, Phase 2 providers, or multi-channel metrics are implemented by this document.
+No workspace/member APIs, auth changes, RBAC middleware, frontend UI, billing, Phase 2 providers, or multi-channel metrics are implemented by this document.
 
 ## Current State
 
@@ -628,17 +628,56 @@ Safety requirements:
 
 ### `organization_members`
 
-Proposed indexes:
+S2-08 adds the initial conservative index set:
 
 - unique `id`
-- unique active-ish member per organization/user: `organization_id + user_id`
+- unique member per organization/user: `organization_id + user_id`
 - `user_id + status + updated_at`
 - `organization_id + status + role + updated_at`
-- `organization_id + email` partial for invited members with email
-- `organization_id + assigned_client_ids` if manager/viewer assignment queries need direct member lookup by client
-- `organization_id + assigned_location_ids` if manager/viewer assignment queries need direct member lookup by location
+- `organization_id + email` partial for invited members with email, using `status: "invited"` and email string presence
 
-Keep initial indexes conservative. Multikey assignment indexes can be added only if the access helper query shape needs them.
+S2-08 intentionally defers multikey assignment indexes on `assigned_client_ids` and `assigned_location_ids`. They can be added later only if S2-09/S2-10 helper query shapes prove they are needed.
+
+## S2-08 Implementation
+
+S2-08 creates the `organization_members` index foundation and a dry-run-first owner seed migration.
+
+Migration command:
+
+```bash
+npm run -w @parametrics/api migrate:organization-members:s2-08
+```
+
+Apply mode requires an explicit flag and must be run only after dry-run proof review:
+
+```bash
+npm run -w @parametrics/api migrate:organization-members:s2-08 -- --apply
+```
+
+Migration behavior:
+
+- Scans existing `orgs`.
+- Derives the owner user id as `owner_user_id || user_id`.
+- Skips orgs missing both owner fields.
+- Looks up the derived user in `users` for optional email only.
+- Creates one active owner membership per organization/user pair.
+- Uses `role: "owner"`, `status: "active"`, null `invited_by_user_id`, and empty assignment arrays.
+- Is idempotent through the unique `organization_id + user_id` index and apply-mode upsert with `$setOnInsert`.
+- Counts existing memberships separately.
+- Performs no writes during dry-run.
+
+S2-08 non-goals:
+
+- No auth/JWT changes.
+- No route authorization changes.
+- No membership API.
+- No frontend workspace/member UI.
+- No RBAC middleware.
+- No billing or entitlements.
+- No Phase 2 providers.
+- No imported Google location auto-binding.
+- No memberships inferred from locations, posts, reviews, reports, or `location_org_map`.
+- No org record deletion, rewriting, or ownership field mutation.
 
 ### Existing Org/Client/Location Indexes
 

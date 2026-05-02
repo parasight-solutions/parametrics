@@ -70,3 +70,11 @@ export async function col(name) {
   const db = await getDb();
   return db.collection(name);
 }
+
+export async function closeDb() {
+  if (_client) {
+    await _client.close();
+  }
+  _client = null;
+  _db = null;
+}
