@@ -27,15 +27,20 @@ export default function ActiveLocationPicker({ value, onChange }) {
 
   useEffect(() => {
     if (loading || !loaded || !value) return;
-    if (locations.some((l) => String(l.id) === String(value))) return;
+    const selected = locations.find((l) => String(l.id) === String(value));
+    if (selected) {
+      onChange?.(value, selected);
+      return;
+    }
 
     setActiveLocationId("");
-    onChange?.("");
+    onChange?.("", null);
   }, [loaded, loading, locations, onChange, value]);
 
   function set(v) {
+    const selected = locations.find((l) => String(l.id) === String(v)) || null;
     setActiveLocationId(v);
-    onChange?.(v || "");
+    onChange?.(v || "", selected);
   }
 
   return (

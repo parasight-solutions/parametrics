@@ -6,7 +6,7 @@ ParaMetrics Phase 1 / Sprint 2 starts the reports foundation while the product r
 
 The frontend dashboard currently supports client-side exports from the GBP dashboard, including CSV, SVG, PNG, and PDF snapshot behavior in `apps/web/src/pages/Dashboard.jsx`.
 
-The backend now has report metadata, PDF, XLSX, persistence, and synchronous authenticated dashboard snapshot route foundations. It still has no report queue, worker, scheduler, durable file storage, email delivery, report history UI, or frontend report wiring. Phase 0 backend stabilization is complete: API/worker/scheduler runtime separation, auth hardening, CORS, rate limiting, audit logging, and canonical location binding are in place.
+The backend now has report metadata, PDF, XLSX, persistence, and synchronous authenticated dashboard snapshot route foundations. The frontend dashboard has S2-06 wiring in progress for a backend-generated PDF/XLSX action that downloads returned base64 files in the browser without persisting generated file content. ParaMetrics still has no report queue, worker, scheduler, durable file storage, email delivery, or report history UI. Phase 0 backend stabilization is complete: API/worker/scheduler runtime separation, auth hardening, CORS, rate limiting, audit logging, and canonical location binding are in place.
 
 ## S2-01 Scope
 
@@ -174,7 +174,7 @@ The proof pack is recorded in `docs/proof/s2-04-1-report-index-verification.md`.
 
 ## S2-05 Dashboard Snapshot Route
 
-S2-05 adds an authenticated synchronous backend MVP route:
+S2-05 is complete. It added an authenticated synchronous backend MVP route:
 
 ```text
 POST /api/v1/reports/dashboard-snapshot
@@ -243,9 +243,61 @@ Response shape on success:
 
 Generated files are returned as base64 only for this MVP because no durable file storage exists yet. The route caps total raw generated file bytes before returning the response. Generated PDF/XLSX buffers are never stored in MongoDB.
 
+## S2-05.1 Route Smoke Verification
+
+S2-05.1 is complete. It smoke tested the authenticated route against the configured API/Mongo environment and verified:
+
+- HTTP `200` success from `POST /api/v1/reports/dashboard-snapshot`.
+- PDF and XLSX entries in the returned `files` array with base64 payloads.
+- Metadata-only `report_runs` persistence, with no generated buffers or base64 stored in MongoDB.
+- Audit success logging for report generation.
+
+The proof pack is recorded in `docs/proof/s2-05-1-report-route-smoke.md`.
+
+## S2-06 Frontend Dashboard Action
+
+S2-06 is in progress. It adds a visible dashboard action that calls the authenticated report route from the existing GBP dashboard after the user has:
+
+- app authentication
+- an active location
+- loaded dashboard data
+- canonical `organization_id` and `client_id` on the selected location
+
+The frontend request body is built from current dashboard state only:
+
+```js
+{
+  organization_id,
+  client_id,
+  location_id,
+  report_name,
+  report_key: "gbp_dashboard_snapshot",
+  requested_formats: ["pdf", "xlsx"],
+  date_range,
+  dashboard_snapshot: {
+    title,
+    provider,
+    cards,
+    metrics,
+    tables,
+    charts,
+    metadata: {
+      location_label,
+      range_label
+    }
+  }
+}
+```
+
+The dashboard snapshot is intentionally compact. It includes KPI cards, metric totals, the visible raw totals table, sparkline chart points already loaded for the dashboard range, and metadata limited to selected range/location labels. It does not send raw tokens, browser storage contents, provider secrets, or unrelated app state.
+
+On success, the frontend converts each returned `files[]` base64 payload into a `Blob`, preserves backend filenames when present, triggers browser downloads for PDF/XLSX, and revokes object URLs after use. Generated base64 is not written to `localStorage`, `sessionStorage`, or any frontend cache.
+
+The existing client-side CSV/SVG/PNG/PDF dashboard exports remain in place. S2-06 does not add backend routes, queues, workers, scheduler behavior, email delivery, durable file/cloud storage, report history UI, billing/entitlements, Phase 2 providers, or multi-channel metrics.
+
 ## Intentionally Not Implemented
 
-S2-01/S2-02/S2-03/S2-04/S2-05 do not:
+S2-01/S2-02/S2-03/S2-04/S2-05/S2-06 do not:
 
 - Add report queues or workers.
 - Send emails.
@@ -260,6 +312,8 @@ S2-02 generates an in-memory PDF buffer only. S2-03 generates an in-memory XLSX 
 S2-04 persists report/report run metadata only. It does not wire persistence into routes, queues, schedulers, workers, emails, or frontend UI.
 
 S2-05 wires a synchronous authenticated route only. It does not add file storage, queues, workers, scheduler behavior, emails, report history UI, frontend wiring, or unauthenticated/public report access.
+
+S2-06 wires the existing frontend dashboard to the authenticated route only. Queue-backed generation, durable storage, report history UI, scheduled reports, and email delivery remain follow-ups.
 
 ## Dashboard Snapshot Input Contract
 
@@ -423,4 +477,6 @@ S2-04 report/report_runs persistence defines the Mongo collection shapes and ind
 
 S2-05 uses the report metadata, PDF, XLSX, and persistence services from S2-01 through S2-04 to provide a synchronous authenticated dashboard snapshot generation endpoint.
 
-Future queue direction may include a `report-generate` queue and dedicated report worker, but S2-01/S2-02/S2-03/S2-04/S2-05 only document that direction. They do not create a queue or worker.
+S2-06 uses that endpoint from the existing dashboard and downloads returned files in-browser without persisting generated file content.
+
+Future queue direction may include a `report-generate` queue and dedicated report worker, but S2-01/S2-02/S2-03/S2-04/S2-05/S2-06 only document that direction. They do not create a queue or worker.

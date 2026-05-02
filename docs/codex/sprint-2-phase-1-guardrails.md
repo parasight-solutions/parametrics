@@ -21,10 +21,11 @@ Current Sprint 2 task:
 - S2-04.1 report index verification complete: configured MongoDB index creation for `reports` and `report_runs` was verified before adding report routes.
 - S2-05 authenticated dashboard snapshot report route complete: existing report metadata, PDF/XLSX output, persistence, auth, rate-limit, and audit services are wired without queues, scheduler changes, frontend wiring, or file storage.
 - S2-05.1 authenticated report route smoke complete: live API smoke verified HTTP 200, PDF/XLSX base64 response, metadata-only `report_runs` persistence, and audit success logging.
+- S2-06 frontend dashboard report action in progress: the GBP dashboard may call the authenticated backend dashboard snapshot report route and download returned PDF/XLSX base64 files without storing generated file content.
 
 Near follow-up tasks:
 
-- Report route/queue/worker/frontend wiring only after the persistence and runtime boundaries are intentionally designed.
+- Report queue/worker/storage/history UI wiring only after the persistence and runtime boundaries are intentionally designed.
 
 ## Explicit Boundaries
 
@@ -39,6 +40,8 @@ S2-03 may generate in-memory XLSX buffers only. It must not write files by defau
 S2-04 may add Mongo `reports` and `report_runs` persistence for definitions and lifecycle metadata only. It must not store generated PDF/XLSX buffers, add report queues/workers, send emails, schedule recurring reports, expose a public reports API, modify PDF/XLSX generation behavior, or modify frontend export behavior.
 
 S2-05 may add an authenticated synchronous dashboard snapshot generation route. It must not add report queues/workers, send emails, schedule recurring reports, add file/cloud storage, expose unauthenticated report access, modify frontend export behavior, or start Phase 2 provider/channel work.
+
+S2-06 may add frontend wiring to the existing authenticated dashboard snapshot report route. It must not add backend routes, alter backend generation behavior, add queues/workers, add scheduler changes, add email, add file/cloud storage, add report history UI, remove existing client-side exports without explicit justification, or start Phase 2 provider/channel work.
 
 Report services should stay testable so later route, queue, worker, scheduler, and frontend tasks can build on a stable metadata contract.
 

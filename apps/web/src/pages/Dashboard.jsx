@@ -1,9 +1,15 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import AppShell from "../components/AppShell";
 import ActiveLocationPicker from "../components/ActiveLocationPicker";
 import { useCachedApi } from "../hooks/useCachedApi";
 import RecurrenceLab from "../components/RecurrenceLab";
+import { api, getToken } from "../apiClient";
 import { getActiveLocationId } from "../session";
+import {
+  buildDashboardReportPayload,
+  downloadBlob,
+  downloadReportFiles,
+} from "../reportDownloads";
 
 function prettyWhenMs(ms) {
   if (!ms) return "-";
@@ -40,17 +46,6 @@ function diffDaysInclusive(a, b) {
   const A = new Date(a.getFullYear(), a.getMonth(), a.getDate()).getTime();
   const B = new Date(b.getFullYear(), b.getMonth(), b.getDate()).getTime();
   return Math.floor((B - A) / 86400000) + 1;
-}
-
-function downloadBlob(filename, blob) {
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 function toCsv(rows) {
@@ -233,11 +228,25 @@ ${body}
 
 export default function Dashboard({ onLogout }) {
   const [locationId, setLocationId] = useState(getActiveLocationId());
+  const [activeLocation, setActiveLocation] = useState(null);
+  const [reportGenerating, setReportGenerating] = useState(false);
+  const [reportStatus, setReportStatus] = useState("");
+  const [reportError, setReportError] = useState("");
   const exportRef = useRef(null);
+
+  const handleLocationChange = useCallback((nextLocationId, location = null) => {
+    setLocationId(nextLocationId || "");
+    setActiveLocation(
+      location && String(location.id) === String(nextLocationId) ? location : null,
+    );
+    setReportStatus("");
+    setReportError("");
+  }, []);
 
   useEffect(() => {
     function handleActiveLocationCleared(event) {
       const clearedId = event?.detail?.locationId || "";
+      setActiveLocation(null);
       setLocationId((current) => {
         if (!clearedId || !current || String(current) === String(clearedId)) return "";
         return current;
@@ -350,6 +359,19 @@ export default function Dashboard({ onLogout }) {
 
   const getTotal = (name) => byName.get(name)?.total ?? 0;
   const getPoints = (name) => byName.get(name)?.points ?? [];
+
+  const reportDisabledReason = useMemo(() => {
+    if (!getToken()) return "Log in to generate backend report files.";
+    if (!locationId) return "Pick a location before generating a report.";
+    if (!data) return "Load dashboard data before generating a report.";
+    if (!activeLocation?.organization_id || !activeLocation?.client_id) {
+      return "This location needs organization and client bindings before backend reports can run.";
+    }
+    if (rangeError) return rangeError;
+    return "";
+  }, [activeLocation, data, locationId, rangeError]);
+
+  const canGenerateBackendReport = !reportGenerating && !reportDisabledReason;
 
   function applyPreset(days) {
     const today = new Date();
@@ -505,6 +527,42 @@ export default function Dashboard({ onLogout }) {
     );
   }
 
+  async function generateBackendReport() {
+    if (!canGenerateBackendReport) return;
+
+    setReportGenerating(true);
+    setReportStatus("");
+    setReportError("");
+
+    try {
+      const body = buildDashboardReportPayload({
+        data,
+        metrics,
+        location: activeLocation,
+        locationId,
+        startStr,
+        endStr,
+      });
+
+      const result = await api("/reports/dashboard-snapshot", {
+        method: "POST",
+        body,
+      });
+
+      const downloaded = downloadReportFiles(result.files || []);
+      setReportStatus(
+        downloaded.length
+          ? `Generated ${downloaded.length} backend report file${downloaded.length === 1 ? "" : "s"}.`
+          : "Report generated, but no files were returned.",
+      );
+    } catch (e) {
+      console.error("[generateBackendReport] failed", e);
+      setReportError(e?.message || e?.code || "Report generation failed.");
+    } finally {
+      setReportGenerating(false);
+    }
+  }
+
   return (
     <AppShell
       title="Dashboard"
@@ -519,6 +577,20 @@ export default function Dashboard({ onLogout }) {
             title="Force refresh"
           >
             {refreshing ? "Refreshing…" : "Refresh"}
+          </button>
+
+          <button
+            type="button"
+            onClick={() => generateBackendReport().catch(() => {})}
+            disabled={!canGenerateBackendReport}
+            className="px-3 py-2 rounded-lg border bg-white text-sm hover:bg-gray-100 disabled:opacity-50"
+            title={
+              reportGenerating
+                ? "Generating backend PDF/XLSX report files"
+                : reportDisabledReason || "Generate backend PDF/XLSX report files"
+            }
+          >
+            {reportGenerating ? "Generating…" : "Report PDF/XLSX"}
           </button>
 
           <div className="inline-flex rounded-lg border overflow-hidden">
@@ -558,7 +630,7 @@ export default function Dashboard({ onLogout }) {
 
           <RecurrenceLab
             locationId={locationId}
-            onLocationChange={setLocationId}
+            onLocationChange={(nextLocationId) => handleLocationChange(nextLocationId)}
           />
         </div>
       }
@@ -566,7 +638,7 @@ export default function Dashboard({ onLogout }) {
       <div className="bg-white border rounded-xl p-5 space-y-4">
         <div>
           <div className="text-sm text-gray-600 mb-2">Active Location</div>
-          <ActiveLocationPicker value={locationId} onChange={setLocationId} />
+          <ActiveLocationPicker value={locationId} onChange={handleLocationChange} />
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-12 gap-3 items-end">
@@ -636,6 +708,20 @@ export default function Dashboard({ onLogout }) {
             {error?.message || error?.code || "Failed to load"}
           </div>
         ) : null}
+
+        <div className="text-sm" aria-live="polite">
+          {reportGenerating ? (
+            <span className="text-gray-600">Generating backend report files…</span>
+          ) : reportError ? (
+            <span className="text-red-700">{reportError}</span>
+          ) : reportStatus ? (
+            <span className="text-green-700">{reportStatus}</span>
+          ) : (
+            <span className="sr-only">
+              {reportDisabledReason || "Backend report generation is available."}
+            </span>
+          )}
+        </div>
       </div>
 
       {!locationId ? (
