@@ -168,7 +168,7 @@ The smoke confirmed:
 
 ## S2-12 Read-Only Member Listing
 
-S2-12 is in progress. It adds a read-only authenticated endpoint under the existing organization route:
+S2-12 is complete. It added a read-only authenticated endpoint under the existing organization route:
 
 ```text
 GET /api/v1/orgs/:orgId/members
@@ -208,3 +208,23 @@ Pagination and sort behavior:
 - deterministic sort: role priority `owner`, `admin`, `manager`, `member`, `viewer`; then status priority `active`, `invited`, `disabled`; then `created_at` ascending; then `id`
 
 S2-12 does not add member creation APIs, invite APIs, role update APIs, remove/disable APIs, frontend workspace/member UI, RBAC middleware, billing/entitlements, auth/JWT changes, provider auth changes, Phase 2 providers, Google location binding changes, report/location behavior changes, or any behavior that makes `location_org_map` canonical.
+
+## S2-12.1 Read-Only Member Listing Smoke
+
+S2-12.1 is complete. It verified S2-12 against the live local API/Mongo environment and recorded proof in `docs/proof/s2-12-1-read-only-member-listing-smoke.md`.
+
+The smoke confirmed:
+
+- active owner membership can call `GET /api/v1/orgs/:orgId/members`
+- the response includes the expected membership rows
+- the response is bounded and sorted by the documented contract
+- rows omit Mongo `_id`, email, password fields, tokens, secrets, OAuth/provider payloads, and raw user records
+- a harmless non-existent org request fails closed with `403`
+
+Live role-denial fixture coverage was skipped because no safe existing viewer/member/invited/disabled fixture was available; unit tests cover those denial cases.
+
+## S2-13 Foundation Proof Pack
+
+S2-13 is complete. It produced a docs-only proof pack and hardening audit for the Sprint 2 workspace/member foundation in `docs/proof/sprint-2-workspace-member-foundation-proof-pack.md`.
+
+The proof pack summarizes completed tasks, current implementation facts, route/access behavior, security verification, test results, explicit non-goals, remaining risks, and the next recommended task. It did not add member-management APIs, invite APIs, frontend workspace/member UI, RBAC middleware, auth/JWT changes, provider auth changes, billing/entitlements, Phase 2 providers, report/location behavior changes, Google location binding changes, or make `location_org_map` canonical.
