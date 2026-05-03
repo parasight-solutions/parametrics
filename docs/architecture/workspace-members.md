@@ -252,7 +252,7 @@ The handoff requires future implementation to preserve last active owner protect
 
 ## S2-15 Controlled Membership Fixtures
 
-S2-15 is in progress. It adds a local fixture seed/audit workflow for repeatable owner/admin/manager/viewer/member/invited/disabled membership verification without changing runtime routes.
+S2-15 is complete. It adds a local fixture seed/audit workflow for repeatable owner/admin/manager/viewer/member/invited/disabled membership verification without changing runtime routes.
 
 The fixture workflow uses:
 
@@ -276,5 +276,7 @@ The dataset plans one fixture organization and seven memberships:
 The workflow is non-destructive by contract. It performs no deletes, creates no user records, does not touch Beetle/current working organizations, does not use or modify `location_org_map`, and only mutates records with the exact fixture prefixes when apply mode is explicitly requested.
 
 Dry-run reports existing fixture state, planned insert/update counts, role/status counts, planned ids, and conflict counts. If a non-fixture record already exists for a planned `{ organization_id, user_id }`, the workflow fails safely and performs no writes. Post-apply dry-run should report zero remaining backfillable fixture memberships.
+
+S2-15.2 applied the controlled fixture set. The post-apply dry-run reports one existing fixture organization, seven existing fixture memberships, zero backfillable memberships, and zero conflicts. Live aggregate verification found zero fixture references in `location_org_map`.
 
 S2-15 does not add member-management APIs, invite APIs, role update APIs, remove/disable APIs, frontend workspace/member UI, auth/JWT changes, provider auth changes, report/location behavior changes, billing/entitlements, Phase 2 providers, Google location binding changes, or make `location_org_map` canonical.
