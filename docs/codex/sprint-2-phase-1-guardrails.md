@@ -31,7 +31,8 @@ Current Sprint 2 task:
 - S2-10 org/report membership authorization complete: low-blast-radius org/report route checks are in place while auth/JWT behavior, frontend UI, member APIs, and Phase 2 integrations remain unchanged.
 - S2-10.1 location-bound GBP membership authorization complete: current GBP location-bound operations are protected after existing owned-location and canonical scope checks, without changing Google provider auth, app JWT middleware, frontend workspace/member UI, member APIs, billing, or Phase 2 integrations.
 - S2-10.2 GBP membership smoke verification complete: live local API/Mongo smoke proof for S2-10.1 is recorded in `docs/proof/s2-10-2-gbp-membership-smoke.md`.
-- S2-11 new organization owner membership creation in progress: brand-new org creation creates or preserves an idempotent active owner membership for the authenticated creator before returning success.
+- S2-11 new organization owner membership creation complete: brand-new org creation creates or preserves an idempotent active owner membership for the authenticated creator before returning success.
+- S2-11.1 new organization owner membership smoke verification complete: live local API/Mongo smoke proof for S2-11 is recorded in `docs/proof/s2-11-1-new-org-owner-membership-smoke.md`.
 
 Near follow-up tasks:
 
@@ -68,7 +69,9 @@ S2-10.1 is complete. It applied membership-aware checks to current GBP location-
 
 S2-10.2 is complete. It smoke-tested S2-10.1 against the live local API/Mongo environment and produced proof documentation only. It did not change code, provider auth, JWT middleware, frontend behavior, member APIs, invite APIs, billing/entitlements, queues/workers/scheduler behavior, Phase 2 providers, or run destructive scripts.
 
-S2-11 is in progress. It may add a small backend helper and wire new organization creation to create or preserve an `organization_members` owner record for the authenticated creator. It must use idempotent `{ organization_id, user_id }` behavior compatible with `uniq_organization_members_org_user`, preserve an existing membership's role/status, and fail the org creation request if no owner membership can be created. It must not add member-management APIs, invite APIs, frontend workspace/member UI, RBAC middleware, billing/entitlements, auth/JWT changes, provider auth changes, Phase 2 providers, Google location binding behavior changes, or make `location_org_map` canonical.
+S2-11 is complete. It added a small backend helper and wired new organization creation to create or preserve an `organization_members` owner record for the authenticated creator. It uses idempotent `{ organization_id, user_id }` behavior compatible with `uniq_organization_members_org_user`, preserves an existing membership's role/status, and fails the org creation request if no owner membership can be created. It did not add member-management APIs, invite APIs, frontend workspace/member UI, RBAC middleware, billing/entitlements, auth/JWT changes, provider auth changes, Phase 2 providers, Google location binding behavior changes, or make `location_org_map` canonical.
+
+S2-11.1 is complete. It smoke-tested S2-11 against the live local API/Mongo environment and produced proof documentation only. It did not change backend code, frontend code, provider auth, JWT middleware, member APIs, invite APIs, billing/entitlements, queues/workers/scheduler behavior, Phase 2 providers, or run destructive scripts.
 
 Report services should stay testable so later route, queue, worker, scheduler, and frontend tasks can build on a stable metadata contract.
 
