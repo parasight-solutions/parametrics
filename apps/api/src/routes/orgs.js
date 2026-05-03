@@ -7,6 +7,7 @@ import { getOrCreateDefaultClientForOrganization } from "../services/clients.js"
 import { normalizeLocationBinding } from "../services/locationBinding.js";
 import { auditSuccess } from "../services/auditLog.js";
 import { requireOrganizationRole } from "../services/organizationAccess.js";
+import { ensureOwnerMembershipForOrganization } from "../services/organizationMembers.js";
 
 const router = Router();
 const ORGANIZATION_MUTATION_ROLES = Object.freeze(["owner", "admin"]);
@@ -154,27 +155,10 @@ export async function requireOrganizationMutationAccess(
   return { org, membership };
 }
 
-// list orgs
-router.get("/", authenticate, async (req, res) => {
-  try {
-    const rows = await listAccessibleOrganizations({ userId: req.user.user_id });
-    return res.json({ orgs: rows });
-  } catch (error) {
-    return sendRouteError(res, error);
-  }
-});
-
-// upsert org
-router.post("/", authenticate, async (req, res) => {
-  const userId = req.user.user_id;
-  const body = req.body || {};
-
-  const id = cleanStr(body.id) || crypto.randomUUID();
+function buildOrganizationDoc({ userId, body = {}, id, now = new Date() }) {
   const name = cleanStr(body.name, 200);
   if (!name) {
-    return res.status(400).json({
-      error: { code: "bad_request", message: "name required" },
-    });
+    throw makeRouteError(400, "bad_request", "name required");
   }
 
   const website = cleanStr(body.website, 300);
@@ -182,9 +166,9 @@ router.post("/", authenticate, async (req, res) => {
   const description = cleanStr(body.description, 2000);
   const slug = cleanStr(body.slug, 120) || makeSlug(name);
   const status = normalizeStatus(body.status);
-
   const onboarding = body.onboarding || {};
-  const doc = {
+
+  return {
     id,
     user_id: userId,
     owner_user_id: userId,
@@ -212,53 +196,116 @@ router.post("/", authenticate, async (req, res) => {
     },
 
     created_at: body.created_at ? new Date(body.created_at) : undefined,
-    updated_at: new Date(),
+    updated_at: now,
   };
+}
 
-  const orgs = await col("orgs");
+export async function saveOrganizationForUser(
+  { userId, body = {} } = {},
+  options = {},
+) {
+  const uid = cleanStr(userId, 200);
+  if (!uid) throw makeRouteError(400, "bad_request", "userId is required");
+
+  const now = options.now || new Date();
+  const idFactory = options.idFactory || crypto.randomUUID;
+  const id = cleanStr(body.id) || idFactory();
+  const doc = buildOrganizationDoc({ userId: uid, body, id, now });
+  const { orgs, organizationMembers } = await resolveOrgCollections(options);
+
   const existing = await orgs.findOne(
     { id },
-    { projection: { _id: 0 } }
+    { projection: { _id: 0 } },
   );
 
   if (existing) {
-    try {
-      await requireOrganizationMutationAccess({ userId, organizationId: id }, {
-        collections: { orgs, organizationMembers: await col("organization_members") },
-      });
-    } catch (error) {
-      return sendRouteError(res, error);
-    }
+    await requireOrganizationMutationAccess({ userId: uid, organizationId: id }, {
+      collections: { orgs, organizationMembers },
+      requireOrganizationRole: options.requireOrganizationRole,
+      organizationAccessOptions: options.organizationAccessOptions,
+    });
   }
 
   const ownership = existing
     ? {
         user_id: existing.user_id,
-        owner_user_id: existing.owner_user_id || existing.user_id || userId,
+        owner_user_id: existing.owner_user_id || existing.user_id || uid,
       }
     : {
-        user_id: userId,
-        owner_user_id: userId,
+        user_id: uid,
+        owner_user_id: uid,
       };
 
   await orgs.updateOne(
-    existing ? { id } : { user_id: userId, id },
+    existing ? { id } : { user_id: uid, id },
     {
       $set: {
         ...doc,
         ...ownership,
-        created_at: existing?.created_at || new Date(),
+        created_at: existing?.created_at || now,
       },
     },
-    { upsert: true }
+    { upsert: true },
   );
 
   const saved = await orgs.findOne(
-    existing ? { id } : { user_id: userId, id },
-    { projection: { _id: 0 } }
+    existing ? { id } : { user_id: uid, id },
+    { projection: { _id: 0 } },
   );
 
-  return res.json({ org: saved });
+  let ownerMembership = null;
+  let ownerMembershipCreated = false;
+  if (!existing) {
+    try {
+      const ensureOwnerMembership = options.ensureOwnerMembershipForOrganization
+        || ensureOwnerMembershipForOrganization;
+      const result = await ensureOwnerMembership(
+        { organizationId: saved.id, userId: uid },
+        {
+          collection: organizationMembers,
+          idFactory: options.membershipIdFactory,
+          now,
+        },
+      );
+      ownerMembership = result.membership;
+      ownerMembershipCreated = result.created;
+    } catch {
+      throw makeRouteError(
+        500,
+        "organization_membership_create_failed",
+        "owner membership could not be created",
+      );
+    }
+  }
+
+  return {
+    org: saved,
+    ownerMembership,
+    ownerMembershipCreated,
+  };
+}
+
+// list orgs
+router.get("/", authenticate, async (req, res) => {
+  try {
+    const rows = await listAccessibleOrganizations({ userId: req.user.user_id });
+    return res.json({ orgs: rows });
+  } catch (error) {
+    return sendRouteError(res, error);
+  }
+});
+
+// upsert org
+router.post("/", authenticate, async (req, res) => {
+  const userId = req.user.user_id;
+  const body = req.body || {};
+
+  try {
+    const result = await saveOrganizationForUser({ userId, body });
+    return res.json({ org: result.org });
+  } catch (error) {
+    return sendRouteError(res, error);
+  }
 });
 
 // bind location -> organization

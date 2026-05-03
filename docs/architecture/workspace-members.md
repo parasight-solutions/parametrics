@@ -86,7 +86,7 @@ S2-10 does not change GBP posts, reviews, locations, recurrence, dashboard metri
 
 ## S2-10.1 Location-Bound GBP Authorization Scope
 
-S2-10.1 is in progress. It extends membership-aware checks to current GBP location-bound operations after the existing owned-location and canonical scope checks.
+S2-10.1 is complete. It extends membership-aware checks to current GBP location-bound operations after the existing owned-location and canonical scope checks.
 
 The protected runtime pattern is:
 
@@ -121,3 +121,34 @@ Current limitations:
 - `GET /api/v1/posts` without a `locationId` remains the existing user-owned aggregate view. The location-scoped list path is membership-aware.
 - Google OAuth, provider connection, account listing, location import, and reconcile behavior are unchanged.
 - Workspace/member management APIs, invite flows, billing/entitlements, frontend workspace/member UI, and Phase 2 providers remain follow-ups.
+
+## S2-10.2 GBP Membership Smoke
+
+S2-10.2 is complete. It verified S2-10.1 against the live local API/Mongo environment and recorded proof in `docs/proof/s2-10-2-gbp-membership-smoke.md`.
+
+The smoke confirmed:
+
+- existing owner/member GBP location-bound reads and mutations still work
+- stale or mismatched location scope fails closed
+- app auth remains preserved after stale-location denial and provider status checks
+- report snapshot generation remains metadata-only in persistence
+- no frontend workspace/member UI, invite APIs, member-management APIs, billing, entitlements, Phase 2 providers, or destructive scripts were added
+
+## S2-11 New Organization Owner Membership
+
+S2-11 is in progress. New organization creation now creates or preserves an `organization_members` record for the authenticated creator after the brand-new org is written and before the route returns success.
+
+New owner membership documents use:
+
+- `organization_id`: the newly created organization id
+- `user_id`: the authenticated `req.user.user_id`
+- `role`: `owner`
+- `status`: `active`
+- stable generated `id`
+- `created_at` and `updated_at`
+
+The helper is idempotent by `{ organization_id, user_id }`. If a membership already exists, it does not duplicate the record and does not downgrade or overwrite the existing role/status. Existing organization update paths still require active `owner` or `admin` membership from S2-10 before mutation.
+
+If membership creation fails and no membership exists, org creation returns an error instead of silently returning success. This avoids presenting a newly created org as successful while membership-aware routes would make it inaccessible.
+
+S2-11 does not add member-management APIs, invite APIs, frontend workspace/member UI, RBAC middleware, billing/entitlements, auth/JWT changes, provider auth changes, Phase 2 providers, Google location binding changes, or any behavior that makes `location_org_map` canonical.
