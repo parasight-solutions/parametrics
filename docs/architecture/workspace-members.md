@@ -136,7 +136,7 @@ The smoke confirmed:
 
 ## S2-11 New Organization Owner Membership
 
-S2-11 is in progress. New organization creation now creates or preserves an `organization_members` record for the authenticated creator after the brand-new org is written and before the route returns success.
+S2-11 is complete. New organization creation now creates or preserves an `organization_members` record for the authenticated creator after the brand-new org is written and before the route returns success.
 
 New owner membership documents use:
 
@@ -152,3 +152,59 @@ The helper is idempotent by `{ organization_id, user_id }`. If a membership alre
 If membership creation fails and no membership exists, org creation returns an error instead of silently returning success. This avoids presenting a newly created org as successful while membership-aware routes would make it inaccessible.
 
 S2-11 does not add member-management APIs, invite APIs, frontend workspace/member UI, RBAC middleware, billing/entitlements, auth/JWT changes, provider auth changes, Phase 2 providers, Google location binding changes, or any behavior that makes `location_org_map` canonical.
+
+## S2-11.1 New Organization Owner Membership Smoke
+
+S2-11.1 is complete. It verified S2-11 against the live local API/Mongo environment and recorded proof in `docs/proof/s2-11-1-new-org-owner-membership-smoke.md`.
+
+The smoke confirmed:
+
+- authenticated org creation returns success
+- created orgs keep `user_id` and `owner_user_id` on the authenticated creator
+- exactly one owner membership is created for `{ organization_id, user_id }`
+- repeat org upsert does not duplicate or downgrade the membership
+- the created org appears in org listing
+- the existing org update path accepts the creator because owner membership exists
+
+## S2-12 Read-Only Member Listing
+
+S2-12 is in progress. It adds a read-only authenticated endpoint under the existing organization route:
+
+```text
+GET /api/v1/orgs/:orgId/members
+```
+
+Access behavior:
+
+- requires app authentication
+- requires explicit `orgId` from the URL
+- requires an active `organization_members` record for the requested organization and authenticated `req.user.user_id`
+- allows active `owner`, `admin`, and `manager` memberships
+- denies `viewer`, `member`, `invited`, `disabled`, and missing memberships
+- does not rely on JWT role, active frontend state, `location_org_map`, or inferred organization scope
+
+The route checks active membership and role before confirming organization existence. This keeps missing/non-member requests fail-closed with `403`; if an allowed membership exists for a missing organization, the route returns `404`.
+
+Response rows are sanitized and limited to:
+
+- `id`
+- `organization_id`
+- `user_id`
+- `role`
+- `status`
+- `assigned_client_ids`
+- `assigned_location_ids`
+- `invited_by_user_id` when present
+- `created_at`
+- `updated_at`
+
+The response intentionally omits Mongo `_id`, email, password fields, tokens, secrets, OAuth/provider payloads, and raw user records.
+
+Pagination and sort behavior:
+
+- default limit: `50`
+- max limit: `100`
+- no cursor/skip yet
+- deterministic sort: role priority `owner`, `admin`, `manager`, `member`, `viewer`; then status priority `active`, `invited`, `disabled`; then `created_at` ascending; then `id`
+
+S2-12 does not add member creation APIs, invite APIs, role update APIs, remove/disable APIs, frontend workspace/member UI, RBAC middleware, billing/entitlements, auth/JWT changes, provider auth changes, Phase 2 providers, Google location binding changes, report/location behavior changes, or any behavior that makes `location_org_map` canonical.

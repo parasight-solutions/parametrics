@@ -7,10 +7,14 @@ import { getOrCreateDefaultClientForOrganization } from "../services/clients.js"
 import { normalizeLocationBinding } from "../services/locationBinding.js";
 import { auditSuccess } from "../services/auditLog.js";
 import { requireOrganizationRole } from "../services/organizationAccess.js";
-import { ensureOwnerMembershipForOrganization } from "../services/organizationMembers.js";
+import {
+  ensureOwnerMembershipForOrganization,
+  listOrganizationMembers,
+} from "../services/organizationMembers.js";
 
 const router = Router();
 const ORGANIZATION_MUTATION_ROLES = Object.freeze(["owner", "admin"]);
+const ORGANIZATION_MEMBER_LIST_ROLES = Object.freeze(["owner", "admin", "manager"]);
 
 function cleanStr(s, max = 5000) {
   const v = String(s ?? "").trim();
@@ -153,6 +157,45 @@ export async function requireOrganizationMutationAccess(
   }, organizationAccessOptions);
 
   return { org, membership };
+}
+
+export async function listOrganizationMembersForUser(
+  { userId, organizationId, limit } = {},
+  options = {},
+) {
+  const uid = cleanStr(userId, 200);
+  const orgId = cleanStr(organizationId, 200);
+  if (!uid || !orgId) {
+    throw makeRouteError(400, "bad_request", "userId and organizationId are required");
+  }
+
+  const { orgs, organizationMembers } = await resolveOrgCollections(options);
+  const requireRole = options.requireOrganizationRole || requireOrganizationRole;
+  const membership = await requireRole({
+    organizationId: orgId,
+    userId: uid,
+    allowedRoles: ORGANIZATION_MEMBER_LIST_ROLES,
+  }, {
+    collection: organizationMembers,
+    ...(options.organizationAccessOptions || {}),
+  });
+
+  const org = await orgs.findOne(
+    { id: orgId },
+    { projection: { _id: 0, id: 1 } },
+  );
+
+  if (!org) {
+    throw makeRouteError(404, "not_found", "org not found");
+  }
+
+  const listMembers = options.listOrganizationMembers || listOrganizationMembers;
+  const members = await listMembers(
+    { organizationId: orgId, limit },
+    { collection: organizationMembers },
+  );
+
+  return { org, membership, members };
 }
 
 function buildOrganizationDoc({ userId, body = {}, id, now = new Date() }) {
@@ -303,6 +346,19 @@ router.post("/", authenticate, async (req, res) => {
   try {
     const result = await saveOrganizationForUser({ userId, body });
     return res.json({ org: result.org });
+  } catch (error) {
+    return sendRouteError(res, error);
+  }
+});
+
+router.get("/:orgId/members", authenticate, async (req, res) => {
+  try {
+    const result = await listOrganizationMembersForUser({
+      userId: req.user.user_id,
+      organizationId: req.params.orgId,
+      limit: req.query?.limit,
+    });
+    return res.json({ members: result.members });
   } catch (error) {
     return sendRouteError(res, error);
   }

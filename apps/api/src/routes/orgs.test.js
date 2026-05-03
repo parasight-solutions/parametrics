@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 import {
   listAccessibleOrganizations,
+  listOrganizationMembersForUser,
   requireOrganizationMutationAccess,
   saveOrganizationForUser,
 } from "./orgs.js";
@@ -227,4 +228,149 @@ test("saveOrganizationForUser fails brand-new org creation response when owner m
 
   assert.equal(orgs.rows.length, 1);
   assert.equal(organizationMembers.rows.length, 0);
+});
+
+test("listOrganizationMembersForUser allows owner admin and manager to list sanitized members", async () => {
+  for (const role of ["owner", "admin", "manager"]) {
+    const orgs = makeCollection([
+      { id: "org_1", user_id: "owner_1", name: "Org 1" },
+    ]);
+    const organizationMembers = makeCollection([
+      {
+        _id: "mongo_id",
+        id: `requester_${role}`,
+        organization_id: "org_1",
+        user_id: "user_requester",
+        role,
+        status: "active",
+        email: "requester@example.com",
+        token: "secret",
+        created_at: new Date("2026-05-02T10:00:00.000Z"),
+      },
+      {
+        _id: "mongo_id_2",
+        id: "owner_member",
+        organization_id: "org_1",
+        user_id: "user_owner",
+        role: "owner",
+        status: "active",
+        email: "owner@example.com",
+        password: "secret",
+        assigned_client_ids: ["client_1", ""],
+        assigned_location_ids: ["loc_1"],
+        invited_by_user_id: "inviter_1",
+        created_at: new Date("2026-05-01T10:00:00.000Z"),
+      },
+    ]);
+
+    const result = await listOrganizationMembersForUser(
+      { userId: "user_requester", organizationId: "org_1", limit: 50 },
+      { collections: { orgs, organizationMembers } },
+    );
+
+    assert.equal(result.members.length, 2);
+    assert.equal(result.members[0].id, "owner_member");
+    assert.equal(result.members[0].organization_id, "org_1");
+    assert.equal(result.members[0].user_id, "user_owner");
+    assert.equal(result.members[0].role, "owner");
+    assert.equal(result.members[0].status, "active");
+    assert.deepEqual(result.members[0].assigned_client_ids, ["client_1"]);
+    assert.deepEqual(result.members[0].assigned_location_ids, ["loc_1"]);
+    assert.equal(result.members[0].invited_by_user_id, "inviter_1");
+    assert.equal(Object.prototype.hasOwnProperty.call(result.members[0], "_id"), false);
+    assert.equal(Object.prototype.hasOwnProperty.call(result.members[0], "email"), false);
+    assert.equal(Object.prototype.hasOwnProperty.call(result.members[0], "password"), false);
+    assert.equal(Object.prototype.hasOwnProperty.call(result.members[0], "token"), false);
+  }
+});
+
+test("listOrganizationMembersForUser denies viewer and member roles", async () => {
+  for (const role of ["viewer", "member"]) {
+    const orgs = makeCollection([
+      { id: "org_1", user_id: "owner_1", name: "Org 1" },
+    ]);
+    const organizationMembers = makeCollection([
+      {
+        id: `requester_${role}`,
+        organization_id: "org_1",
+        user_id: "user_requester",
+        role,
+        status: "active",
+      },
+    ]);
+
+    await assert.rejects(
+      () => listOrganizationMembersForUser(
+        { userId: "user_requester", organizationId: "org_1", limit: 50 },
+        { collections: { orgs, organizationMembers } },
+      ),
+      (err) => err.status === 403 && err.code === "organization_role_required",
+    );
+  }
+});
+
+test("listOrganizationMembersForUser denies missing invited and disabled memberships", async () => {
+  const cases = [
+    { name: "missing", rows: [] },
+    { name: "invited", rows: [{ id: "member_1", organization_id: "org_1", user_id: "user_requester", role: "owner", status: "invited" }] },
+    { name: "disabled", rows: [{ id: "member_1", organization_id: "org_1", user_id: "user_requester", role: "owner", status: "disabled" }] },
+  ];
+
+  for (const item of cases) {
+    const orgs = makeCollection([
+      { id: "org_1", user_id: "owner_1", name: "Org 1" },
+    ]);
+    const organizationMembers = makeCollection(item.rows);
+
+    await assert.rejects(
+      () => listOrganizationMembersForUser(
+        { userId: "user_requester", organizationId: "org_1", limit: 50 },
+        { collections: { orgs, organizationMembers } },
+      ),
+      (err) => err.status === 403 && err.code === "organization_membership_required",
+      item.name,
+    );
+  }
+});
+
+test("listOrganizationMembersForUser checks org existence after membership passes", async () => {
+  const orgs = makeCollection([]);
+  const organizationMembers = makeCollection([
+    {
+      id: "member_1",
+      organization_id: "org_missing",
+      user_id: "user_requester",
+      role: "owner",
+      status: "active",
+    },
+  ]);
+
+  await assert.rejects(
+    () => listOrganizationMembersForUser(
+      { userId: "user_requester", organizationId: "org_missing", limit: 50 },
+      { collections: { orgs, organizationMembers } },
+    ),
+    (err) => err.status === 404 && err.code === "not_found",
+  );
+});
+
+test("listOrganizationMembersForUser requires explicit identifiers", async () => {
+  const orgs = makeCollection([]);
+  const organizationMembers = makeCollection([]);
+
+  await assert.rejects(
+    () => listOrganizationMembersForUser(
+      { userId: "user_requester", organizationId: "", limit: 50 },
+      { collections: { orgs, organizationMembers } },
+    ),
+    (err) => err.status === 400 && err.code === "bad_request",
+  );
+
+  await assert.rejects(
+    () => listOrganizationMembersForUser(
+      { userId: "", organizationId: "org_1", limit: 50 },
+      { collections: { orgs, organizationMembers } },
+    ),
+    (err) => err.status === 400 && err.code === "bad_request",
+  );
 });
