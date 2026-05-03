@@ -228,3 +228,24 @@ Live role-denial fixture coverage was skipped because no safe existing viewer/me
 S2-13 is complete. It produced a docs-only proof pack and hardening audit for the Sprint 2 workspace/member foundation in `docs/proof/sprint-2-workspace-member-foundation-proof-pack.md`.
 
 The proof pack summarizes completed tasks, current implementation facts, route/access behavior, security verification, test results, explicit non-goals, remaining risks, and the next recommended task. It did not add member-management APIs, invite APIs, frontend workspace/member UI, RBAC middleware, auth/JWT changes, provider auth changes, billing/entitlements, Phase 2 providers, report/location behavior changes, Google location binding changes, or make `location_org_map` canonical.
+
+## S2-14 Member-Management Design Handoff
+
+S2-14 is complete. It produced a docs-only member-management API contract and fixture strategy in `docs/architecture/member-management-api-contract.md`.
+
+Current state remains unchanged:
+
+- `organization_members` is canonical for workspace membership.
+- `GET /api/v1/orgs/:orgId/members` is still read-only.
+- No member creation APIs, invite APIs, role update APIs, remove/disable APIs, frontend workspace/member UI, auth/JWT changes, provider auth changes, billing/entitlements, Phase 2 providers, report/location behavior changes, Google location binding changes, or `location_org_map` canonical behavior have been implemented.
+
+Planned, not implemented, future endpoints:
+
+- `POST /api/v1/orgs/:orgId/members`
+- `PATCH /api/v1/orgs/:orgId/members/:memberId`
+- `POST /api/v1/orgs/:orgId/members/:memberId/disable`
+- future/not Sprint 2: `POST /api/v1/orgs/:orgId/invitations`
+
+The S2-14 contract chooses direct member management by existing `user_id` as the next implementable path. Email invitation delivery is documented as future/not implemented until invite tokens, expiry, acceptance, resend, cancellation, delivery, and safe email display rules are designed.
+
+The handoff requires future implementation to preserve last active owner protection, validate manager/viewer assignment ids against canonical clients and locations in the requested organization, never trust JWT role for workspace authorization, never expose secrets or raw user records, and never use `location_org_map` for membership authorization.
