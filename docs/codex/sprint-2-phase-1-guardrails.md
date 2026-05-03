@@ -38,6 +38,7 @@ Current Sprint 2 task:
 - S2-13 workspace/member foundation proof pack and hardening audit complete: Sprint 2 workspace/member implementation, proof, access matrix, risks, and next task guidance are recorded in `docs/proof/sprint-2-workspace-member-foundation-proof-pack.md`.
 - S2-13.1 proof pack GPT decision correction complete: the Sprint 2 workspace/member foundation proof pack records `GPT decision: Pass`.
 - S2-14 member-management API contract and fixture strategy complete: future member mutation endpoints, role rules, last-owner protection, invite deferral, fixtures, tests, and non-goals are documented without runtime behavior changes; proof is recorded in `docs/proof/s2-14-member-management-api-contract.md`.
+- S2-15 controlled membership fixture seed/audit in progress: dry-run-first local fixture workflow for owner/admin/manager/viewer/member/invited/disabled memberships is being added without route behavior changes or Phase 2 scope.
 
 Near follow-up tasks:
 
@@ -87,6 +88,8 @@ S2-13 is complete. It produced a docs-only Sprint 2 workspace/member foundation 
 S2-13.1 is complete. It corrected only the final GPT verification decision in the Sprint 2 workspace/member foundation proof pack after GPT passed the proof. It did not change implementation summaries, access matrices, backend code, frontend code, routes, auth/JWT behavior, provider auth behavior, member APIs, invite APIs, Phase 2 providers, or run destructive scripts.
 
 S2-14 is complete. It produced documentation-only member-management API contract and fixture strategy handoff docs. It did not add backend routes, modify org/member/access services, add member creation APIs, invite APIs, role update APIs, remove/disable APIs, frontend workspace/member UI, auth/JWT changes, provider auth changes, report/location behavior changes, RBAC middleware, billing/entitlements, Phase 2 providers, multi-channel metrics, Google location binding changes, or make `location_org_map` canonical.
+
+S2-15 is in progress. It may add a dry-run-first fixture seed/audit script, fixture service tests, and proof docs for controlled local `organization_members` fixture records with `s2-15-*` prefixes. Dry-run is default; apply mode must be explicit. It must not add backend API routes, member-management APIs, invite APIs, role update APIs, remove/disable APIs, frontend workspace/member UI, auth/JWT changes, provider auth changes, report/location behavior changes, RBAC middleware, billing/entitlements, Phase 2 providers, multi-channel metrics, Google location binding changes, destructive cleanup, or make `location_org_map` canonical.
 
 Report services should stay testable so later route, queue, worker, scheduler, and frontend tasks can build on a stable metadata contract.
 

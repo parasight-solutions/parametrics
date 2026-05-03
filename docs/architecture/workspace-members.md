@@ -249,3 +249,32 @@ Planned, not implemented, future endpoints:
 The S2-14 contract chooses direct member management by existing `user_id` as the next implementable path. Email invitation delivery is documented as future/not implemented until invite tokens, expiry, acceptance, resend, cancellation, delivery, and safe email display rules are designed.
 
 The handoff requires future implementation to preserve last active owner protection, validate manager/viewer assignment ids against canonical clients and locations in the requested organization, never trust JWT role for workspace authorization, never expose secrets or raw user records, and never use `location_org_map` for membership authorization.
+
+## S2-15 Controlled Membership Fixtures
+
+S2-15 is in progress. It adds a local fixture seed/audit workflow for repeatable owner/admin/manager/viewer/member/invited/disabled membership verification without changing runtime routes.
+
+The fixture workflow uses:
+
+- script: `npm run -w @parametrics/api seed:organization-members:s2-15`
+- default mode: dry-run
+- apply mode: explicit `-- --apply` only
+- organization id/name/slug prefix: `s2-15-fixture-`
+- membership id prefix: `s2-15-member-`
+- user id prefix: `s2-15-user-`
+
+The dataset plans one fixture organization and seven memberships:
+
+- active owner
+- active admin
+- active manager with fixture client/location assignments
+- active viewer with fixture client/location assignments
+- active member
+- invited member
+- disabled viewer
+
+The workflow is non-destructive by contract. It performs no deletes, creates no user records, does not touch Beetle/current working organizations, does not use or modify `location_org_map`, and only mutates records with the exact fixture prefixes when apply mode is explicitly requested.
+
+Dry-run reports existing fixture state, planned insert/update counts, role/status counts, planned ids, and conflict counts. If a non-fixture record already exists for a planned `{ organization_id, user_id }`, the workflow fails safely and performs no writes. Post-apply dry-run should report zero remaining backfillable fixture memberships.
+
+S2-15 does not add member-management APIs, invite APIs, role update APIs, remove/disable APIs, frontend workspace/member UI, auth/JWT changes, provider auth changes, report/location behavior changes, billing/entitlements, Phase 2 providers, Google location binding changes, or make `location_org_map` canonical.

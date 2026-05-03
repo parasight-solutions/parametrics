@@ -17,6 +17,7 @@
 
     "migrate:tenancy:s1-02": "node src/scripts/migrate.tenancy.s1-02.js",
     "migrate:organization-members:s2-08": "node src/scripts/migrate.organization-members.s2-08.js",
+    "seed:organization-members:s2-15": "node src/scripts/seed.organization-members-fixtures.s2-15.js",
     "seed:mongo": "node src/scripts/seed.mongo.js"
   },
   "dependencies": {
