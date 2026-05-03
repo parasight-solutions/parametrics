@@ -33,7 +33,8 @@ Current Sprint 2 task:
 - S2-10.2 GBP membership smoke verification complete: live local API/Mongo smoke proof for S2-10.1 is recorded in `docs/proof/s2-10-2-gbp-membership-smoke.md`.
 - S2-11 new organization owner membership creation complete: brand-new org creation creates or preserves an idempotent active owner membership for the authenticated creator before returning success.
 - S2-11.1 new organization owner membership smoke verification complete: live local API/Mongo smoke proof for S2-11 is recorded in `docs/proof/s2-11-1-new-org-owner-membership-smoke.md`.
-- S2-12 read-only organization member listing in progress: authenticated owner/admin/manager members can list sanitized organization membership rows without member mutations, invites, frontend UI, or Phase 2 scope.
+- S2-12 read-only organization member listing complete: authenticated owner/admin/manager members can list sanitized organization membership rows without member mutations, invites, frontend UI, or Phase 2 scope.
+- S2-12.1 read-only organization member listing smoke verification complete: live local API/Mongo smoke proof for S2-12 is recorded in `docs/proof/s2-12-1-read-only-member-listing-smoke.md`.
 
 Near follow-up tasks:
 
@@ -74,7 +75,9 @@ S2-11 is complete. It added a small backend helper and wired new organization cr
 
 S2-11.1 is complete. It smoke-tested S2-11 against the live local API/Mongo environment and produced proof documentation only. It did not change backend code, frontend code, provider auth, JWT middleware, member APIs, invite APIs, billing/entitlements, queues/workers/scheduler behavior, Phase 2 providers, or run destructive scripts.
 
-S2-12 is in progress. It may add a read-only authenticated organization member listing endpoint under the existing org route. It must require active organization membership and allow only owner/admin/manager members to list sanitized membership rows. It must not add member creation APIs, invite APIs, role update APIs, remove/disable APIs, frontend workspace/member UI, RBAC middleware, billing/entitlements, auth/JWT changes, provider auth changes, report/location behavior changes, Phase 2 providers, Google location binding behavior changes, or make `location_org_map` canonical.
+S2-12 is complete. It added a read-only authenticated organization member listing endpoint under the existing org route. It requires active organization membership and allows only owner/admin/manager members to list sanitized membership rows. It did not add member creation APIs, invite APIs, role update APIs, remove/disable APIs, frontend workspace/member UI, RBAC middleware, billing/entitlements, auth/JWT changes, provider auth changes, report/location behavior changes, Phase 2 providers, Google location binding behavior changes, or make `location_org_map` canonical.
+
+S2-12.1 is complete. It smoke-tested S2-12 against the live local API/Mongo environment and produced proof documentation only. It did not change backend code, frontend code, provider auth, JWT middleware, member mutation APIs, invite APIs, billing/entitlements, queues/workers/scheduler behavior, Phase 2 providers, or run destructive scripts.
 
 Report services should stay testable so later route, queue, worker, scheduler, and frontend tasks can build on a stable metadata contract.
 
