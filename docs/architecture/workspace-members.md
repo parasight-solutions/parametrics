@@ -280,3 +280,64 @@ Dry-run reports existing fixture state, planned insert/update counts, role/statu
 S2-15.2 applied the controlled fixture set. The post-apply dry-run reports one existing fixture organization, seven existing fixture memberships, zero backfillable memberships, and zero conflicts. Live aggregate verification found zero fixture references in `location_org_map`.
 
 S2-15 does not add member-management APIs, invite APIs, role update APIs, remove/disable APIs, frontend workspace/member UI, auth/JWT changes, provider auth changes, report/location behavior changes, billing/entitlements, Phase 2 providers, Google location binding changes, or make `location_org_map` canonical.
+
+## S2-16 Direct Member-Management API
+
+S2-16 is in progress. It implements direct member-management APIs for existing `user_id` based memberships under the authenticated organization router:
+
+```text
+POST /api/v1/orgs/:orgId/members
+PATCH /api/v1/orgs/:orgId/members/:memberId
+POST /api/v1/orgs/:orgId/members/:memberId/disable
+```
+
+This implementation is direct membership management only. It does not add email invitation delivery, invitation acceptance tokens, invite resend/cancel behavior, frontend workspace/member UI, provider auth changes, or auth/JWT middleware changes.
+
+Access behavior:
+
+- all routes require app authentication
+- all workspace authorization loads active `organization_members` membership for the requested `orgId` and authenticated `req.user.user_id`
+- JWT role is not trusted for workspace authorization
+- `location_org_map` is not used for membership authorization
+- `owner` can create/update/disable all supported roles subject to last-owner protection
+- `admin` can create/update/disable `manager`, `member`, and `viewer` only
+- `manager`, `viewer`, `member`, `invited`, `disabled`, and missing memberships cannot manage members
+
+Create behavior:
+
+- direct create accepts `user_id`, optional `role`, optional `status`, and assignment arrays
+- `role` defaults to `viewer`
+- `status` defaults to `active`
+- direct create allows `active` and `disabled`; `invited` remains reserved for future invitation flow design
+- create is idempotent by `{ organization_id, user_id }`; if a membership exists, it returns the existing sanitized member with `created: false` and does not downgrade or overwrite it
+
+Patch/disable behavior:
+
+- patch only accepts `role`, `status`, `assigned_client_ids`, and `assigned_location_ids`
+- identical patch returns the sanitized member with `updated: false`
+- disable never deletes membership documents
+- disabling an already disabled member returns the sanitized member with `disabled: false`
+
+Last-owner protection:
+
+- active owner count is checked before any patch or disable that would make an active owner no longer an active owner
+- if the target is the final active owner, the operation fails with `last_owner_required`
+
+Assignment validation:
+
+- `manager` and `viewer` may have `assigned_client_ids`, `assigned_location_ids`, or both
+- empty assignment arrays are allowed and mean no scoped GBP access
+- non-empty `assigned_client_ids` must match canonical `clients.id` rows with `clients.organization_id === orgId`
+- non-empty `assigned_location_ids` must match canonical `locations.id` rows with `locations.organization_id === orgId`
+- `owner`, `admin`, and `member` persist empty assignment arrays; non-empty assignments for those roles are rejected
+- no assignment validation uses `location_org_map`, and no imported Google locations are auto-bound
+
+Responses return sanitized membership rows only. They omit Mongo `_id`, email, password fields, tokens, secrets, OAuth/provider payloads, and raw user records.
+
+Audit events are written best-effort through the existing audit service:
+
+- `organization.member.create`
+- `organization.member.update`
+- `organization.member.disable`
+
+Audit metadata is compact and contains ids, roles/statuses, assignment counts, operation outcome flags, and optional short disable reason only.

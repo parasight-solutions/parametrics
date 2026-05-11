@@ -40,6 +40,7 @@ Current Sprint 2 task:
 - S2-14 member-management API contract and fixture strategy complete: future member mutation endpoints, role rules, last-owner protection, invite deferral, fixtures, tests, and non-goals are documented without runtime behavior changes; proof is recorded in `docs/proof/s2-14-member-management-api-contract.md`.
 - S2-15 controlled membership fixture seed/audit complete: dry-run-first local fixture workflow for owner/admin/manager/viewer/member/invited/disabled memberships exists without route behavior changes or Phase 2 scope.
 - S2-15.2 organization member fixtures apply complete: controlled fixture organization and seven fixture memberships were applied and post-apply dry-run verified zero remaining backfillable fixture memberships.
+- S2-16 direct member-management API implementation in progress: existing `user_id` based create/update/disable member routes are being added under the authenticated org route without email invitations, frontend UI, auth/JWT changes, provider changes, or Phase 2 scope.
 
 Near follow-up tasks:
 
@@ -93,6 +94,8 @@ S2-14 is complete. It produced documentation-only member-management API contract
 S2-15 is complete. It added a dry-run-first fixture seed/audit script, fixture service tests, and proof docs for controlled local `organization_members` fixture records with `s2-15-*` prefixes. Dry-run is default; apply mode is explicit. It did not add backend API routes, member-management APIs, invite APIs, role update APIs, remove/disable APIs, frontend workspace/member UI, auth/JWT changes, provider auth changes, report/location behavior changes, RBAC middleware, billing/entitlements, Phase 2 providers, multi-channel metrics, Google location binding changes, destructive cleanup, or make `location_org_map` canonical.
 
 S2-15.2 is complete. It applied the controlled fixture organization and seven fixture memberships, verified post-apply dry-run state, and produced proof documentation only. It did not change backend source code, frontend code, package files, API routes, auth/JWT behavior, provider auth behavior, report/location behavior, Phase 2 providers, or run destructive cleanup.
+
+S2-16 is in progress. It may add authenticated direct member-management routes under the existing org router, organization member service helpers, tests, and docs for existing `user_id` based membership creation, patching, and disabling. It must not add email invitation delivery, invitation acceptance/token routes, frontend workspace/member UI, auth/JWT middleware changes, provider auth changes, report/location/GBP behavior changes, RBAC middleware, billing/entitlements, Phase 2 providers, multi-channel metrics, Google location binding changes, destructive cleanup, or make `location_org_map` canonical.
 
 Report services should stay testable so later route, queue, worker, scheduler, and frontend tasks can build on a stable metadata contract.
 

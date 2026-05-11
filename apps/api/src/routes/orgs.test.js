@@ -2,10 +2,13 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  createOrganizationMemberForUser,
+  disableOrganizationMemberForUser,
   listAccessibleOrganizations,
   listOrganizationMembersForUser,
   requireOrganizationMutationAccess,
   saveOrganizationForUser,
+  updateOrganizationMemberForUser,
 } from "./orgs.js";
 
 function matches(filter = {}, row = {}) {
@@ -41,6 +44,9 @@ function makeCollection(rows = []) {
     async findOne(filter) {
       const row = rows.find((item) => matches(filter, item));
       return row ? structuredClone(row) : null;
+    },
+    async countDocuments(filter) {
+      return rows.filter((row) => matches(filter, row)).length;
     },
     async updateOne(filter, update, options = {}) {
       const idx = rows.findIndex((item) => matches(filter, item));
@@ -373,4 +379,107 @@ test("listOrganizationMembersForUser requires explicit identifiers", async () =>
     ),
     (err) => err.status === 400 && err.code === "bad_request",
   );
+});
+
+test("createOrganizationMemberForUser creates direct membership through org wrapper", async () => {
+  const now = new Date("2026-05-03T12:00:00.000Z");
+  const orgs = makeCollection([{ id: "org_1", name: "Org 1" }]);
+  const organizationMembers = makeCollection([
+    { id: "requester", organization_id: "org_1", user_id: "owner_user", role: "owner", status: "active" },
+  ]);
+  const clients = makeCollection([{ id: "client_1", organization_id: "org_1" }]);
+  const locations = makeCollection([{ id: "loc_1", organization_id: "org_1" }]);
+
+  const result = await createOrganizationMemberForUser(
+    {
+      userId: "owner_user",
+      organizationId: "org_1",
+      body: {
+        user_id: "target_user",
+        role: "viewer",
+        assigned_client_ids: ["client_1"],
+        assigned_location_ids: ["loc_1"],
+      },
+    },
+    {
+      collections: { orgs, organizationMembers, clients, locations },
+      memberIdFactory: () => "member_target",
+      now,
+    },
+  );
+
+  assert.equal(result.org.id, "org_1");
+  assert.equal(result.created, true);
+  assert.equal(result.member.id, "member_target");
+  assert.equal(result.member.user_id, "target_user");
+  assert.equal(result.member.role, "viewer");
+  assert.deepEqual(result.member.assigned_client_ids, ["client_1"]);
+  assert.equal(organizationMembers.rows.length, 2);
+});
+
+test("createOrganizationMemberForUser requires existing org before mutation", async () => {
+  const orgs = makeCollection([]);
+  const organizationMembers = makeCollection([
+    { id: "requester", organization_id: "org_missing", user_id: "owner_user", role: "owner", status: "active" },
+  ]);
+
+  await assert.rejects(
+    () => createOrganizationMemberForUser(
+      {
+        userId: "owner_user",
+        organizationId: "org_missing",
+        body: { user_id: "target_user" },
+      },
+      { collections: { orgs, organizationMembers } },
+    ),
+    (err) => err.status === 404 && err.code === "not_found",
+  );
+  assert.equal(organizationMembers.rows.length, 1);
+});
+
+test("updateOrganizationMemberForUser and disableOrganizationMemberForUser return sanitized no-raw members", async () => {
+  const orgs = makeCollection([{ id: "org_1", name: "Org 1" }]);
+  const organizationMembers = makeCollection([
+    { id: "requester", organization_id: "org_1", user_id: "owner_user", role: "owner", status: "active" },
+    {
+      _id: "mongo_id",
+      id: "target",
+      organization_id: "org_1",
+      user_id: "target_user",
+      role: "member",
+      status: "active",
+      email: "hidden@example.com",
+      token: "secret",
+      assigned_client_ids: [],
+      assigned_location_ids: [],
+    },
+  ]);
+
+  const updated = await updateOrganizationMemberForUser(
+    {
+      userId: "owner_user",
+      organizationId: "org_1",
+      memberId: "target",
+      body: { role: "viewer" },
+    },
+    { collections: { orgs, organizationMembers } },
+  );
+
+  assert.equal(updated.updated, true);
+  assert.equal(updated.member.role, "viewer");
+  assert.equal(Object.prototype.hasOwnProperty.call(updated.member, "_id"), false);
+  assert.equal(Object.prototype.hasOwnProperty.call(updated.member, "email"), false);
+  assert.equal(Object.prototype.hasOwnProperty.call(updated.member, "token"), false);
+
+  const disabled = await disableOrganizationMemberForUser(
+    {
+      userId: "owner_user",
+      organizationId: "org_1",
+      memberId: "target",
+    },
+    { collections: { orgs, organizationMembers } },
+  );
+
+  assert.equal(disabled.disabled, true);
+  assert.equal(disabled.member.status, "disabled");
 });

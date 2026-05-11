@@ -8,8 +8,11 @@ import { normalizeLocationBinding } from "../services/locationBinding.js";
 import { auditSuccess } from "../services/auditLog.js";
 import { requireOrganizationRole } from "../services/organizationAccess.js";
 import {
+  createOrganizationMember,
+  disableOrganizationMember,
   ensureOwnerMembershipForOrganization,
   listOrganizationMembers,
+  updateOrganizationMember,
 } from "../services/organizationMembers.js";
 
 const router = Router();
@@ -78,6 +81,33 @@ async function resolveOrgCollections(options = {}) {
   return {
     orgs: await col("orgs"),
     organizationMembers: await col("organization_members"),
+  };
+}
+
+async function resolveOrgManagementCollections(options = {}) {
+  if (options.collections?.orgs && (options.collections.organizationMembers || options.collections.organization_members)) {
+    return {
+      orgs: options.collections.orgs,
+      organizationMembers: options.collections.organizationMembers || options.collections.organization_members,
+      clients: options.collections.clients,
+      locations: options.collections.locations,
+    };
+  }
+
+  if (options.db?.collection) {
+    return {
+      orgs: options.db.collection("orgs"),
+      organizationMembers: options.db.collection("organization_members"),
+      clients: options.db.collection("clients"),
+      locations: options.db.collection("locations"),
+    };
+  }
+
+  return {
+    orgs: await col("orgs"),
+    organizationMembers: await col("organization_members"),
+    clients: await col("clients"),
+    locations: await col("locations"),
   };
 }
 
@@ -196,6 +226,133 @@ export async function listOrganizationMembersForUser(
   );
 
   return { org, membership, members };
+}
+
+async function requireOrgExists(orgs, orgId) {
+  const org = await orgs.findOne(
+    { id: orgId },
+    { projection: { _id: 0, id: 1 } },
+  );
+
+  if (!org) {
+    throw makeRouteError(404, "not_found", "org not found");
+  }
+
+  return org;
+}
+
+function memberAuditMetadata(result, extra = {}) {
+  const member = result?.member || {};
+  const previous = result?.previous || null;
+  const out = {
+    target_user_id: cleanStr(member.user_id, 200),
+    target_role: cleanStr(member.role, 80),
+    target_status: cleanStr(member.status, 80),
+    requester_role: cleanStr(result?.requesterMembership?.role, 80),
+    assigned_client_count: Array.isArray(member.assigned_client_ids) ? member.assigned_client_ids.length : 0,
+    assigned_location_count: Array.isArray(member.assigned_location_ids) ? member.assigned_location_ids.length : 0,
+    ...extra,
+  };
+
+  if (previous) {
+    out.previous_role = cleanStr(previous.role, 80);
+    out.previous_status = cleanStr(previous.status, 80);
+    out.previous_assigned_client_count = Array.isArray(previous.assigned_client_ids)
+      ? previous.assigned_client_ids.length
+      : 0;
+    out.previous_assigned_location_count = Array.isArray(previous.assigned_location_ids)
+      ? previous.assigned_location_ids.length
+      : 0;
+  }
+
+  return out;
+}
+
+export async function createOrganizationMemberForUser(
+  { userId, organizationId, body = {} } = {},
+  options = {},
+) {
+  const uid = cleanStr(userId, 200);
+  const orgId = cleanStr(organizationId, 200);
+  if (!uid || !orgId) {
+    throw makeRouteError(400, "bad_request", "userId and organizationId are required");
+  }
+
+  const collections = await resolveOrgManagementCollections(options);
+  const org = await requireOrgExists(collections.orgs, orgId);
+  const createMember = options.createOrganizationMember || createOrganizationMember;
+  const result = await createMember({
+    organizationId: orgId,
+    requesterUserId: uid,
+    targetUserId: body.user_id,
+    role: body.role,
+    status: body.status,
+    assignedClientIds: body.assigned_client_ids,
+    assignedLocationIds: body.assigned_location_ids,
+  }, {
+    collection: collections.organizationMembers,
+    clients: collections.clients,
+    locations: collections.locations,
+    idFactory: options.memberIdFactory,
+    now: options.now,
+  });
+
+  return { org, ...result };
+}
+
+export async function updateOrganizationMemberForUser(
+  { userId, organizationId, memberId, body = {} } = {},
+  options = {},
+) {
+  const uid = cleanStr(userId, 200);
+  const orgId = cleanStr(organizationId, 200);
+  const targetMemberId = cleanStr(memberId, 200);
+  if (!uid || !orgId || !targetMemberId) {
+    throw makeRouteError(400, "bad_request", "userId, organizationId, and memberId are required");
+  }
+
+  const collections = await resolveOrgManagementCollections(options);
+  const org = await requireOrgExists(collections.orgs, orgId);
+  const updateMember = options.updateOrganizationMember || updateOrganizationMember;
+  const result = await updateMember({
+    organizationId: orgId,
+    requesterUserId: uid,
+    memberId: targetMemberId,
+    patch: body,
+  }, {
+    collection: collections.organizationMembers,
+    clients: collections.clients,
+    locations: collections.locations,
+    now: options.now,
+  });
+
+  return { org, ...result };
+}
+
+export async function disableOrganizationMemberForUser(
+  { userId, organizationId, memberId } = {},
+  options = {},
+) {
+  const uid = cleanStr(userId, 200);
+  const orgId = cleanStr(organizationId, 200);
+  const targetMemberId = cleanStr(memberId, 200);
+  if (!uid || !orgId || !targetMemberId) {
+    throw makeRouteError(400, "bad_request", "userId, organizationId, and memberId are required");
+  }
+
+  const collections = await resolveOrgManagementCollections(options);
+  const org = await requireOrgExists(collections.orgs, orgId);
+  const disableMember = options.disableOrganizationMember || disableOrganizationMember;
+  const result = await disableMember({
+    organizationId: orgId,
+    requesterUserId: uid,
+    memberId: targetMemberId,
+  }, {
+    collection: collections.organizationMembers,
+    now: options.now,
+  });
+
+  return { org, ...result };
 }
 
 function buildOrganizationDoc({ userId, body = {}, id, now = new Date() }) {
@@ -359,6 +516,67 @@ router.get("/:orgId/members", authenticate, async (req, res) => {
       limit: req.query?.limit,
     });
     return res.json({ members: result.members });
+  } catch (error) {
+    return sendRouteError(res, error);
+  }
+});
+
+router.post("/:orgId/members", authenticate, async (req, res) => {
+  try {
+    const result = await createOrganizationMemberForUser({
+      userId: req.user.user_id,
+      organizationId: req.params.orgId,
+      body: req.body || {},
+    });
+    await auditSuccess(req, "organization.member.create", {
+      target_type: "organization_member",
+      target_id: result.member?.id,
+      organization_id: req.params.orgId,
+      metadata: memberAuditMetadata(result, { created: !!result.created }),
+    });
+    return res.json({ member: result.member, created: result.created });
+  } catch (error) {
+    return sendRouteError(res, error);
+  }
+});
+
+router.patch("/:orgId/members/:memberId", authenticate, async (req, res) => {
+  try {
+    const result = await updateOrganizationMemberForUser({
+      userId: req.user.user_id,
+      organizationId: req.params.orgId,
+      memberId: req.params.memberId,
+      body: req.body || {},
+    });
+    await auditSuccess(req, "organization.member.update", {
+      target_type: "organization_member",
+      target_id: result.member?.id,
+      organization_id: req.params.orgId,
+      metadata: memberAuditMetadata(result, { updated: !!result.updated }),
+    });
+    return res.json({ member: result.member, updated: result.updated });
+  } catch (error) {
+    return sendRouteError(res, error);
+  }
+});
+
+router.post("/:orgId/members/:memberId/disable", authenticate, async (req, res) => {
+  try {
+    const result = await disableOrganizationMemberForUser({
+      userId: req.user.user_id,
+      organizationId: req.params.orgId,
+      memberId: req.params.memberId,
+    });
+    await auditSuccess(req, "organization.member.disable", {
+      target_type: "organization_member",
+      target_id: result.member?.id,
+      organization_id: req.params.orgId,
+      metadata: memberAuditMetadata(result, {
+        disabled: !!result.disabled,
+        reason: cleanStr(req.body?.reason, 200),
+      }),
+    });
+    return res.json({ member: result.member, disabled: result.disabled });
   } catch (error) {
     return sendRouteError(res, error);
   }
