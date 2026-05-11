@@ -491,3 +491,14 @@ S2-18 produced the Sprint 2 / Phase 1 closeout proof pack (`docs/proof/sprint-2-
 - Phase 2 integrations remain blocked until the closeout is explicitly accepted
 
 Recommended next report-direction task per the closeout is S2-20: design report history / listing UI or durable report storage as a contract-only task before implementation, while keeping generation synchronous in the interim.
+
+## S2-20 Report History And Storage Contract
+
+S2-20 is complete as documentation/design only. The report history listing, run detail, output download, and durable output storage contract is recorded in `docs/architecture/report-history-and-storage.md`.
+
+The S2-20 contract intentionally keeps **current state vs target state** separate from this document:
+
+- Current state remains the synchronous `POST /api/v1/reports/dashboard-snapshot` route with base64 inline response, metadata-only `report_runs` persistence, and no durable storage. Nothing about that current state changes in S2-20.
+- Target state in `docs/architecture/report-history-and-storage.md` proposes `GET /api/v1/reports/runs`, `GET /api/v1/reports/runs/:runId`, `GET /api/v1/reports/runs/:runId/outputs/:format`, an optional future `POST /api/v1/reports/runs/:runId/regenerate`, a `ReportStorageAdapter` abstraction (local-first, cloud-later), additive `report_runs.outputs[]` fields (`storage_provider`, `storage_key`, `content_type`, `filename`, `checksum`, `generated_at`, `expires_at`), authorization aligned with `organization_members` (owner/admin/manager/viewer can read scoped history; `member`/`invited`/`disabled` denied), a `/reports/history` frontend page recommendation, listing/download indexes, and a conservative implementation sequence (S2-22 storage adapter → S2-23 listing API → S2-24 download API → S2-25 frontend history page; S2-26 queue/worker only after acceptance).
+
+S2-20 did not add backend code, frontend code, routes, services, queues, workers, scheduler changes, dependencies, email delivery, report history UI, file/cloud storage implementation, or Phase 2 integrations. Phase 2 work remains blocked.
