@@ -42,6 +42,7 @@ Current Sprint 2 task:
 - S2-15.2 organization member fixtures apply complete: controlled fixture organization and seven fixture memberships were applied and post-apply dry-run verified zero remaining backfillable fixture memberships.
 - S2-16 direct member-management API implementation complete: existing `user_id` based create/update/disable member routes are in place under the authenticated org route without email invitations, frontend UI, auth/JWT changes, provider changes, or Phase 2 scope.
 - S2-16.1 direct member-management API smoke verification complete: live local API/Mongo smoke proof for S2-16 is recorded in `docs/proof/s2-16-1-member-management-api-smoke.md`. A thin Claude Code governance adapter (`CLAUDE.md`, `docs/claude-code/README.md`) is also in place; `docs/codex/*` remains the source of truth.
+- S2-17 workspace member management UI complete: a minimal authenticated frontend page `/organization-members` wires the verified member-management APIs without changing backend behavior, adding email invitations, or installing dependencies; proof is recorded in `docs/proof/s2-17-workspace-member-ui.md`.
 
 Near follow-up tasks:
 
@@ -99,6 +100,8 @@ S2-15.2 is complete. It applied the controlled fixture organization and seven fi
 S2-16 is complete. It added authenticated direct member-management routes under the existing org router for existing `user_id` based membership creation, patching, and disabling, plus organization member service helpers, tests, and docs. It did not add email invitation delivery, invitation acceptance/token routes, frontend workspace/member UI, auth/JWT middleware changes, provider auth changes, report/location/GBP behavior changes, RBAC middleware, billing/entitlements, Phase 2 providers, multi-channel metrics, Google location binding changes, destructive cleanup, or make `location_org_map` canonical.
 
 S2-16.1 is complete. It smoke-tested S2-16 against the live local API and live MongoDB using only the controlled S2-15 fixture organization and prefix scope, and produced proof documentation. It did not change backend or frontend source code, API routes, member-management services, auth/JWT/provider behavior, report/location/GBP behavior, RBAC middleware, billing/entitlements, Phase 2 providers, Google location binding, or `location_org_map` canonicality, and did not run workers/scheduler or destructive cleanup. It also added a thin Claude Code governance adapter (`CLAUDE.md`, `docs/claude-code/README.md`); `docs/codex/*` remains the current source of truth.
+
+S2-17 is complete. It added a minimal authenticated frontend page at `/organization-members` that wires the existing member-management APIs (`GET/POST /api/v1/orgs/:orgId/members`, `PATCH /api/v1/orgs/:orgId/members/:memberId`, `POST /api/v1/orgs/:orgId/members/:memberId/disable`) through the existing API client, plus a small pure-helper module with unit tests. It did not change backend code, add backend routes, add email invitations, add invitation acceptance/token flows, add billing/entitlements, change auth/JWT/provider behavior, change GBP location binding behavior, change report/location/GBP behavior, make `location_org_map` canonical, or install dependencies.
 
 Report services should stay testable so later route, queue, worker, scheduler, and frontend tasks can build on a stable metadata contract.
 

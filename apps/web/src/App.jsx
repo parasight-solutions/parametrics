@@ -11,6 +11,7 @@ import "./index.css";
 import Integrations from "./pages/Integrations";
 import GoogleConnected from "./pages/GoogleConnected";
 import Locations from "./pages/Locations";
+import OrganizationMembers from "./pages/OrganizationMembers";
 import { clearAuthSession } from "./session";
 
 function isAuthed() {
@@ -31,6 +32,7 @@ export default function App() {
         <Route path="/recurrence" element={authed ? <Recurrence onLogout={onLogout} /> : <Navigate to="/login" />} />
         <Route path="/integrations" element={authed ? <Integrations onLogout={onLogout} /> : <Navigate to="/login" />} />
         <Route path="/locations" element={authed ? <Locations onLogout={onLogout} /> : <Navigate to="/login" />} />
+        <Route path="/organization-members" element={authed ? <OrganizationMembers onLogout={onLogout} /> : <Navigate to="/login" />} />
 
         <Route path="/integrations/google/connected" element={<GoogleConnected />} />
         <Route path="/login" element={authed ? <Navigate to="/" /> : <Login onAuthed={onAuthed} />} />

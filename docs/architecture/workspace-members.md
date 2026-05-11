@@ -359,3 +359,34 @@ The smoke confirmed:
 Skipped live cases (documented in the proof): live last-owner mutation against the fixture owner was avoided to preserve canonical fixture state; non-empty assignment id validation was not exercised live because the fixture organization has no client/location records. Both are covered by the existing unit tests in `apps/api/src/services/organizationMembers.test.js`.
 
 A thin Claude Code governance adapter was also added during S2-16.1 (`CLAUDE.md` and `docs/claude-code/README.md`). The existing `docs/codex/*` workflow remains the source of truth.
+
+## S2-17 Frontend Member Management UI
+
+S2-17 is complete. It added a minimal authenticated frontend page at `/organization-members` that wires the verified member-management APIs through the existing `apiClient.api()` wrapper:
+
+- `GET /api/v1/orgs` — sources the organization selector.
+- `GET /api/v1/orgs/:orgId/members` — list sanitized member rows.
+- `POST /api/v1/orgs/:orgId/members` — direct create by `user_id`.
+- `PATCH /api/v1/orgs/:orgId/members/:memberId` — inline edit panel for role/status/assignments.
+- `POST /api/v1/orgs/:orgId/members/:memberId/disable` — disable action with a `window.confirm()` step.
+
+Direct-only limitation: the UI explicitly states that membership is created by existing app `user_id` only, and that email invitations are not available yet. Direct create supports `active` and `disabled` statuses only, matching the backend contract.
+
+Sanitization preserved: the UI consumes only the documented sanitized backend response shape and never renders emails or raw user records. Backend `error.code` and `error.message` values are surfaced verbatim in non-destructive alert/status regions when a denial occurs, so operators see the canonical reason (for example `member_role_not_allowed`, `organization_role_required`, `last_owner_required`).
+
+Auth preservation: the page reuses the existing `api()` client; app-auth 401 handling, Google reauth banner handling, and `active_location_id` clearing on location-bound 404s are unchanged. Member-management 403 and 404 responses do not clear app auth.
+
+Out of scope for S2-17:
+
+- backend code changes
+- backend routes
+- email invitations or invitation acceptance/token flows
+- billing/entitlements
+- Phase 2 providers
+- GBP location binding behavior
+- report/location/GBP frontend or backend behavior changes
+- `location_org_map` canonicality
+- dependency installs
+- React component-render tests (no testing-library is installed); pure-helper tests cover CSV parsing, role-assignment gating, error formatting, and date formatting
+
+Live browser smoke remains a future follow-up. Sprint 2 API behavior coverage is already provided by S2-16.1.
