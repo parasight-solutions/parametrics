@@ -40,7 +40,8 @@ Current Sprint 2 task:
 - S2-14 member-management API contract and fixture strategy complete: future member mutation endpoints, role rules, last-owner protection, invite deferral, fixtures, tests, and non-goals are documented without runtime behavior changes; proof is recorded in `docs/proof/s2-14-member-management-api-contract.md`.
 - S2-15 controlled membership fixture seed/audit complete: dry-run-first local fixture workflow for owner/admin/manager/viewer/member/invited/disabled memberships exists without route behavior changes or Phase 2 scope.
 - S2-15.2 organization member fixtures apply complete: controlled fixture organization and seven fixture memberships were applied and post-apply dry-run verified zero remaining backfillable fixture memberships.
-- S2-16 direct member-management API implementation in progress: existing `user_id` based create/update/disable member routes are being added under the authenticated org route without email invitations, frontend UI, auth/JWT changes, provider changes, or Phase 2 scope.
+- S2-16 direct member-management API implementation complete: existing `user_id` based create/update/disable member routes are in place under the authenticated org route without email invitations, frontend UI, auth/JWT changes, provider changes, or Phase 2 scope.
+- S2-16.1 direct member-management API smoke verification complete: live local API/Mongo smoke proof for S2-16 is recorded in `docs/proof/s2-16-1-member-management-api-smoke.md`. A thin Claude Code governance adapter (`CLAUDE.md`, `docs/claude-code/README.md`) is also in place; `docs/codex/*` remains the source of truth.
 
 Near follow-up tasks:
 
@@ -95,7 +96,9 @@ S2-15 is complete. It added a dry-run-first fixture seed/audit script, fixture s
 
 S2-15.2 is complete. It applied the controlled fixture organization and seven fixture memberships, verified post-apply dry-run state, and produced proof documentation only. It did not change backend source code, frontend code, package files, API routes, auth/JWT behavior, provider auth behavior, report/location behavior, Phase 2 providers, or run destructive cleanup.
 
-S2-16 is in progress. It may add authenticated direct member-management routes under the existing org router, organization member service helpers, tests, and docs for existing `user_id` based membership creation, patching, and disabling. It must not add email invitation delivery, invitation acceptance/token routes, frontend workspace/member UI, auth/JWT middleware changes, provider auth changes, report/location/GBP behavior changes, RBAC middleware, billing/entitlements, Phase 2 providers, multi-channel metrics, Google location binding changes, destructive cleanup, or make `location_org_map` canonical.
+S2-16 is complete. It added authenticated direct member-management routes under the existing org router for existing `user_id` based membership creation, patching, and disabling, plus organization member service helpers, tests, and docs. It did not add email invitation delivery, invitation acceptance/token routes, frontend workspace/member UI, auth/JWT middleware changes, provider auth changes, report/location/GBP behavior changes, RBAC middleware, billing/entitlements, Phase 2 providers, multi-channel metrics, Google location binding changes, destructive cleanup, or make `location_org_map` canonical.
+
+S2-16.1 is complete. It smoke-tested S2-16 against the live local API and live MongoDB using only the controlled S2-15 fixture organization and prefix scope, and produced proof documentation. It did not change backend or frontend source code, API routes, member-management services, auth/JWT/provider behavior, report/location/GBP behavior, RBAC middleware, billing/entitlements, Phase 2 providers, Google location binding, or `location_org_map` canonicality, and did not run workers/scheduler or destructive cleanup. It also added a thin Claude Code governance adapter (`CLAUDE.md`, `docs/claude-code/README.md`); `docs/codex/*` remains the current source of truth.
 
 Report services should stay testable so later route, queue, worker, scheduler, and frontend tasks can build on a stable metadata contract.
 

@@ -283,7 +283,7 @@ S2-15 does not add member-management APIs, invite APIs, role update APIs, remove
 
 ## S2-16 Direct Member-Management API
 
-S2-16 is in progress. It implements direct member-management APIs for existing `user_id` based memberships under the authenticated organization router:
+S2-16 is complete. It implements direct member-management APIs for existing `user_id` based memberships under the authenticated organization router:
 
 ```text
 POST /api/v1/orgs/:orgId/members
@@ -341,3 +341,21 @@ Audit events are written best-effort through the existing audit service:
 - `organization.member.disable`
 
 Audit metadata is compact and contains ids, roles/statuses, assignment counts, operation outcome flags, and optional short disable reason only.
+
+## S2-16.1 Direct Member-Management API Smoke
+
+S2-16.1 is complete. It verified S2-16 against the live local API and live MongoDB using only the controlled S2-15 fixture organization (`s2-15-fixture-org`) and the `s2-15-user-*` requester / `s2-16-smoke-user-*` target prefix scope, and recorded proof in `docs/proof/s2-16-1-member-management-api-smoke.md`.
+
+The smoke confirmed:
+
+- `GET /api/v1/health` returns 200 with the API running as a single-process API only.
+- owner positive flow (create viewer, patch to manager with empty assignments, repeat patch no-op, disable) returns 200 with sanitized membership rows.
+- duplicate owner create returns `created: false`; disabling an already-disabled member returns `disabled: false`; identical patch returns `updated: false`.
+- admin can create `manager`/`member`/`viewer` targets and is denied (403) when creating `owner`/`admin` and when attempting to patch or disable fixture owner/admin memberships.
+- manager, viewer, and member fixture requesters are denied (403, `organization_role_required`) for create, patch, and disable; invited and disabled fixture requesters are denied (403, `organization_membership_required`).
+- response membership rows omit Mongo `_id`, email, password, token, secret, OAuth, and provider keys; no JWTs/tokens/secrets/emails/raw user records were printed in proof output.
+- no Beetle/current working organization was touched; zero `location_org_map` references existed for fixture or smoke prefixes after the run.
+
+Skipped live cases (documented in the proof): live last-owner mutation against the fixture owner was avoided to preserve canonical fixture state; non-empty assignment id validation was not exercised live because the fixture organization has no client/location records. Both are covered by the existing unit tests in `apps/api/src/services/organizationMembers.test.js`.
+
+A thin Claude Code governance adapter was also added during S2-16.1 (`CLAUDE.md` and `docs/claude-code/README.md`). The existing `docs/codex/*` workflow remains the source of truth.
