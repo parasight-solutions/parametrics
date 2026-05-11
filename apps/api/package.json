@@ -12,6 +12,8 @@
     "dev:scheduler": "node src/jobs/scheduler.js",
     "dev": "npm-run-all -p dev:api dev:workers dev:scheduler",
 
+    "test": "node --test src/services/organizationMemberFixtures.test.js src/services/organizationMembers.test.js src/services/organizationAccess.test.js src/routes/orgs.test.js src/routes/reports.test.js src/services/organizationMembersSeedMigration.test.js src/services/reportStore.test.js src/services/reportXlsx.test.js src/services/reportPdf.test.js src/services/reportService.test.js src/lib/corsConfig.test.js src/middleware/rateLimit.test.js src/services/locationBinding.test.js src/services/auditLog.test.js",
+
     "migrate": "node src/scripts/migrate.js",
     "seed": "node src/scripts/seed.js",
 

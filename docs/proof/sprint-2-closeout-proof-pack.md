@@ -184,7 +184,7 @@ Final diff/scope checks:
 - S2-17.1 browser smoke ran from the headless Claude Code shell. Visual rendering, click handlers, and `window.confirm()` dialog UX remain unverified; a human-driven manual browser pass is still recommended.
 - Fixture memberships (S2-15) and smoke memberships (S2-16.1, S2-17.1) intentionally remain in the fixture organization because no safe delete route exists.
 - Cross-user shared access to another user's imported Google locations is still blocked by the existing owned-location guard. Membership-aware checks run after that guard.
-- API package still lacks a formal `npm test` script.
+- API package still lacks a formal `npm test` script. (Resolved by S2-19 follow-up; see `docs/proof/s2-19-api-test-script.md`.)
 - No billing, entitlements, dashboard builder, AI/premium layer, or multi-channel metrics are in scope.
 - No Phase 2 provider adapters are in scope.
 - Pre-existing Browserslist build warning is unchanged.
@@ -194,7 +194,7 @@ Final diff/scope checks:
 Conservative, phase-aware follow-ups. Phase 2 work remains blocked until this closeout is explicitly accepted.
 
 - **S2-18.1 (optional)**: human/manual browser click smoke for `/organization-members`. Drive login, organization selector, list, create, edit, disable, and the `window.confirm()` step in a real browser; capture screenshots; verify backend error display formatting visually. No code changes expected.
-- **S2-19**: API `npm test` script consolidation. Add a formal `test` script in `apps/api/package.json` that runs the focused `node --test` matrix without changing test behavior. Run as a docs+package script-only task.
+- **S2-19**: API `npm test` script consolidation. Add a formal `test` script in `apps/api/package.json` that runs the focused `node --test` matrix without changing test behavior. Run as a docs+package script-only task. Complete; proof recorded in `docs/proof/s2-19-api-test-script.md`.
 - **S2-20**: report history / listing UI design or report storage design. Choose whichever direction the product calls for next (history-first or storage-first), produce a contract-only task before implementation, and keep generation synchronous in the interim.
 - **S2-21**: member invite contract / design. Define email normalization, invite-token issuance with hashed storage, expiry, acceptance, resend, cancellation, audit metadata, and safe email display rules. Design only; no delivery yet.
 - **Phase 2 provider adapter layer**: blocked until Sprint 2 closeout is explicitly accepted by GPT and the human. Future Phase 2 work should start with an adapter contract task that does not change current GBP behavior.
