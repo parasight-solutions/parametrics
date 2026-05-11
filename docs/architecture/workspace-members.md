@@ -390,3 +390,22 @@ Out of scope for S2-17:
 - React component-render tests (no testing-library is installed); pure-helper tests cover CSV parsing, role-assignment gating, error formatting, and date formatting
 
 Live browser smoke remains a future follow-up. Sprint 2 API behavior coverage is already provided by S2-16.1.
+
+## S2-17.1 Frontend Member UI Browser Smoke
+
+S2-17.1 is complete. It smoke-tested S2-17 against a local API + web dev-server pair from the headless Claude Code shell and recorded proof in `docs/proof/s2-17-1-workspace-member-ui-browser-smoke.md`.
+
+The smoke confirmed:
+
+- `GET /api/v1/health` returns 200; web dev server returns 200 at `/`; `GET /organization-members` returns 200 and serves the SPA shell.
+- The dev-served `OrganizationMembers.jsx` module contains the documented UX copy strings: direct user_id-based membership, email invitations are not available yet, invited status requires an invitation flow that is not implemented yet, and sanitized rows only.
+- The dev-served `AppShell.jsx` module contains the `Members` nav item targeting `/organization-members`.
+- The exact API endpoints the page calls behave correctly against the S2-15 fixture organization (`s2-15-fixture-org`): list 200 with sanitized rows (no unexpected keys); create 200 with `created: true` for a new `s2-17-smoke-user-browser-1` target; duplicate create 200 with `created: false`; patch role to manager 200 with `updated: true`; disable 200 with `disabled: true`; repeat disable 200 with `disabled: false`; manager-requester denial returns 403 with the compact `error.code = organization_role_required` envelope that the page's `describeBackendError` helper renders.
+- No backend or frontend source files were modified; only docs/proof updates were added.
+- No JWTs, OAuth tokens, secrets, emails, passwords, or raw user records were printed in the smoke output or this proof.
+
+Skipped live cases (documented in the proof):
+
+- Interactive button clicks, on-screen text rendering, and the disable `window.confirm()` modal were not exercised because no interactive browser session was available in the execution environment. A human-driven browser pass remains a recommended follow-up.
+
+Smoke membership: `s2-17-smoke-user-browser-1` remains in the fixture organization with `role: manager` and `status: disabled` after the run, consistent with the S2-15/S2-16.1 non-destructive convention.
