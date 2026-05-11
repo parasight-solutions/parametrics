@@ -480,3 +480,14 @@ S2-05 uses the report metadata, PDF, XLSX, and persistence services from S2-01 t
 S2-06 uses that endpoint from the existing dashboard and downloads returned files in-browser without persisting generated file content.
 
 Future queue direction may include a `report-generate` queue and dedicated report worker, but S2-01/S2-02/S2-03/S2-04/S2-05/S2-06 only document that direction. They do not create a queue or worker.
+
+## Sprint 2 / Phase 1 Closeout (S2-18)
+
+S2-18 produced the Sprint 2 / Phase 1 closeout proof pack (`docs/proof/sprint-2-closeout-proof-pack.md`). The report foundation is recorded as complete from S2-01 through S2-06.1 within the documented scope. Limitations explicitly carried forward to future tasks:
+
+- generation remains synchronous and returns base64 files only because no durable file storage exists yet
+- there is no report queue, dedicated report worker, scheduler hook, email delivery, recurring schedule, or report history UI
+- report definition CRUD is not exposed as a route; the `reports` collection contract exists but is wired only through the synchronous `POST /api/v1/reports/dashboard-snapshot` flow
+- Phase 2 integrations remain blocked until the closeout is explicitly accepted
+
+Recommended next report-direction task per the closeout is S2-20: design report history / listing UI or durable report storage as a contract-only task before implementation, while keeping generation synchronous in the interim.

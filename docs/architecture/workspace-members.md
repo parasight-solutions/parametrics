@@ -409,3 +409,11 @@ Skipped live cases (documented in the proof):
 - Interactive button clicks, on-screen text rendering, and the disable `window.confirm()` modal were not exercised because no interactive browser session was available in the execution environment. A human-driven browser pass remains a recommended follow-up.
 
 Smoke membership: `s2-17-smoke-user-browser-1` remains in the fixture organization with `role: manager` and `status: disabled` after the run, consistent with the S2-15/S2-16.1 non-destructive convention.
+
+## Sprint 2 / Phase 1 Closeout (S2-18)
+
+S2-18 produced a Sprint 2 / Phase 1 closeout proof pack (`docs/proof/sprint-2-closeout-proof-pack.md`). It is documentation/audit only and does not change runtime behavior.
+
+The closeout records Sprint 2 as Pass (pending GPT verification) on the basis that the report foundation (S2-01..S2-06.1) and the workspace/member foundation (S2-07..S2-17.1) are implemented within scope, with live smoke proofs and sanitized, member-aware authorization across the org/report/GBP location-bound surfaces. Limitations explicitly carried forward include direct-`user_id`-only membership (no email invitations), synchronous base64-only report generation (no queue/storage/history UI/email scheduling), no visual click-driven UI smoke, no safe delete route for fixture or smoke memberships, and the existing owned-location guard still gating cross-user shared Google location access.
+
+Phase 2 integrations remain blocked until the closeout is explicitly accepted. Recommended next tasks are conservative and phase-aware: S2-18.1 optional manual browser smoke for `/organization-members`, S2-19 API `npm test` script consolidation, S2-20 report history/listing UI or report storage design, and S2-21 member invite contract/design.
