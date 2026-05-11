@@ -1,8 +1,25 @@
 # Report History And Storage Contract
 
-ParaMetrics remains a Google Business Profile first operations app. This document is the S2-20 design contract for future report history listing, run detail, and durable output storage work. It does not implement runtime behavior. Sprint 2 / Phase 1 closeout (S2-18) and the S2-19 API `npm test` script consolidation are accepted preconditions for this design.
+ParaMetrics remains a Google Business Profile first operations app. This document is the S2-20 design contract for future report history listing, run detail, and durable output storage work, and the S2-22 implementation note for the first durable local report storage adapter. The listing and download routes remain design-only; only the storage adapter and its route wiring are implemented today. Sprint 2 / Phase 1 closeout (S2-18) and the S2-19 API `npm test` script consolidation are accepted preconditions for this design.
 
 Phase 2 integrations remain blocked. This contract intentionally does not assume new providers, dashboard builder, billing/entitlements, or multi-channel metrics.
+
+## S2-22 Implementation Note
+
+S2-22 introduces the first cut of the storage adapter described in Section 4 below.
+
+- Implemented module: `apps/api/src/services/reportStorage.js`.
+- Provider: `local` only. Cloud adapters (S3/GCS/Azure) are still future.
+- Adapter surface today: `provider`, `root`, `writeOutput`, `readOutput`, `statOutput`, `deleteOutput`. The Section 4 contract calls the read method `readOutputStream` and types it `Promise<ReadableStream>`. The first cut returns a `Promise<Buffer>` instead because the S2-22 scope writes durable bytes synchronously inside the existing `POST /api/v1/reports/dashboard-snapshot` route and does not expose a public download route yet. The future download API task (S2-24) may rename or extend this method to return a `ReadableStream` without changing on-disk layout or the persisted output metadata.
+- Storage root resolution:
+  - When `REPORT_STORAGE_LOCAL_DIR` is set in `process.env`, the adapter uses that path verbatim. The startup helper does not create the directory until the first write.
+  - When `REPORT_STORAGE_LOCAL_DIR` is unset, the adapter falls back to `<os.tmpdir()>/parametrics/report-outputs` so writes never land inside the git working tree.
+  - Tests must always pass an explicit `root` (typically via `fs.mkdtemp(...)`) so unit tests stay deterministic and self-cleaning.
+- Path safety: traversal, absolute keys, backslashes, empty segments, `.`/`..` segments, and disallowed formats/ids/filenames are rejected with codes `report_storage_invalid_id`, `report_storage_invalid_filename`, `report_storage_unsupported_format`, `report_storage_invalid_key`, `report_storage_empty_buffer`, `report_storage_invalid_content_type`, `report_storage_buffer_too_large`, or `report_storage_unsupported_provider`. Resolved absolute paths are confirmed to stay inside the resolved root with `path.relative`.
+- Output metadata returned by `writeOutput`: `storage_provider`, `storage_key`, `content_type`, `filename`, `size`, `checksum: { algorithm: "sha256", value }`, `generated_at`, `expires_at: null`. Absolute paths and adapter credentials are never returned to callers.
+- Route wiring: `POST /api/v1/reports/dashboard-snapshot` continues to generate PDF/XLSX buffers in memory, returns the existing base64 `files[]` response unchanged, and now also writes each successful output through the adapter. The persisted `report_runs.outputs[]` entries gain `storage_provider`, `storage_key`, `content_type`, `filename`, `checksum`, `generated_at`, and `expires_at` (additive on the existing `format`/`status`/`path`/`size`/`error`/timestamps shape). The legacy `path` field stays `null`. If storage write fails, the affected output is marked `failed` with `error.code = "report_storage_failed"` and the run is marked `failed` consistent with prior partial-failure behavior. Successfully written outputs from the same run remain on disk.
+- Listing/download routes remain future. `GET /api/v1/reports/runs`, `GET /api/v1/reports/runs/:runId`, `GET /api/v1/reports/runs/:runId/outputs/:format`, and the optional `POST .../regenerate` are still designed in Sections 3 and 11 and are not implemented in S2-22.
+- Audit log content unchanged: storage keys are not written to audit metadata. Existing `report.dashboard_snapshot.generate` audit events continue to record summarized identifiers, counts, role, and outcome only.
 
 ## 1. Current State
 

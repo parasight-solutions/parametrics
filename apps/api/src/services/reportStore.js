@@ -67,6 +67,14 @@ function normalizeReportKey(input = {}) {
   return key;
 }
 
+function normalizeChecksum(value) {
+  if (!value || typeof value !== "object") return null;
+  const algorithm = cleanStr(value.algorithm, 40).toLowerCase();
+  const checksum = cleanStr(value.value, 256);
+  if (!algorithm || !checksum) return null;
+  return { algorithm, value: checksum };
+}
+
 function normalizeOutputs(outputs = []) {
   if (!Array.isArray(outputs)) return [];
 
@@ -79,6 +87,13 @@ function normalizeOutputs(outputs = []) {
       size: Number.isFinite(Number(output.size)) && Number(output.size) >= 0
         ? Math.floor(Number(output.size))
         : null,
+      storage_provider: cleanStr(output.storage_provider, 80) || null,
+      storage_key: cleanStr(output.storage_key, 1000) || null,
+      content_type: cleanStr(output.content_type, 200) || null,
+      filename: cleanStr(output.filename, 200) || null,
+      checksum: normalizeChecksum(output.checksum),
+      generated_at: output.generated_at || null,
+      expires_at: output.expires_at || null,
       error: compactError(output.error),
       created_at: output.created_at || null,
       updated_at: output.updated_at || null,

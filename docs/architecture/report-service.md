@@ -492,6 +492,24 @@ S2-18 produced the Sprint 2 / Phase 1 closeout proof pack (`docs/proof/sprint-2-
 
 Recommended next report-direction task per the closeout is S2-20: design report history / listing UI or durable report storage as a contract-only task before implementation, while keeping generation synchronous in the interim.
 
+## S2-22 Durable Local Report Output Storage
+
+S2-22 is complete. It implements the first cut of the storage adapter designed in S2-20.
+
+Current state additions:
+
+- `apps/api/src/services/reportStorage.js` provides a `local` `ReportStorageAdapter` implementation with `writeOutput`/`readOutput`/`statOutput`/`deleteOutput`. Path safety rejects traversal, absolute keys, backslashes, empty segments, `.`/`..` segments, and unsupported formats/ids/filenames. Resolved on-disk paths are confirmed to stay inside the configured root.
+- Storage root resolution: `REPORT_STORAGE_LOCAL_DIR` when set; otherwise `<os.tmpdir()>/parametrics/report-outputs`. The adapter never writes inside the git working tree by default.
+- `POST /api/v1/reports/dashboard-snapshot` continues to generate PDF/XLSX buffers synchronously and now also writes each successful output through the adapter before persisting `report_runs.outputs[]` metadata. Persisted output metadata gains `storage_provider`, `storage_key`, `content_type`, `filename`, `checksum: { algorithm: "sha256", value }`, `generated_at`, and `expires_at: null` in addition to the existing fields. The legacy `path` field stays `null`. Generated raw buffers and base64 are still never stored in MongoDB.
+- The route response shape is unchanged: `files[]` still returns `{ format, filename, content_type, base64, size }` so existing frontend wiring keeps working. The base64 response remains for compatibility while durable storage now also exists on disk.
+- Storage write failure marks the affected output `failed` with `error.code = "report_storage_failed"` and the run `failed` (consistent with prior partial-failure behavior). Successfully written outputs from the same run remain on disk and are recorded in the failed run document for forensic clarity.
+
+Out of scope for S2-22 and still future:
+
+- `GET /api/v1/reports/runs` listing, `GET /api/v1/reports/runs/:runId` detail, `GET /api/v1/reports/runs/:runId/outputs/:format` download, and optional `POST .../regenerate`. These remain designed in `docs/architecture/report-history-and-storage.md` and are not implemented.
+- Cloud storage adapters (S3/GCS/Azure), signed URLs, retention/expiry enforcement, scheduled cleanup, and any frontend history UI.
+- Queue/worker-based report generation. The route continues to run synchronously on the API runtime.
+
 ## S2-20 Report History And Storage Contract
 
 S2-20 is complete as documentation/design only. The report history listing, run detail, output download, and durable output storage contract is recorded in `docs/architecture/report-history-and-storage.md`.

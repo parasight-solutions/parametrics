@@ -16,6 +16,7 @@ import {
   requireOrganizationLocationAccess,
   requireOrganizationRole,
 } from "../services/organizationAccess.js";
+import { getDefaultReportStorage } from "../services/reportStorage.js";
 
 const router = Router();
 const MAX_TOTAL_FILE_BYTES = 5 * 1024 * 1024;
@@ -152,6 +153,7 @@ function outputBuilderForFormat(format, deps) {
 async function generateOutputs(reportRun, deps = {}, options = {}) {
   const outputs = [];
   const files = [];
+  const buffers = [];
   let totalBytes = 0;
 
   for (const format of reportRun.requested_formats) {
@@ -164,6 +166,7 @@ async function generateOutputs(reportRun, deps = {}, options = {}) {
     outputs.push(result.output);
 
     if (result.output?.status !== "succeeded" || !Buffer.isBuffer(result.buffer)) {
+      buffers.push(null);
       continue;
     }
 
@@ -175,13 +178,83 @@ async function generateOutputs(reportRun, deps = {}, options = {}) {
     }
 
     files.push(buildFileResult(reportRun, format, result.buffer));
+    buffers.push(result.buffer);
   }
 
-  return { outputs, files };
+  return { outputs, files, buffers };
 }
 
 function hasFailedOutput(outputs) {
   return outputs.some((output) => output?.status !== "succeeded");
+}
+
+function resolveStorageAdapter(deps = {}) {
+  if (deps.reportStorage === null) return null;
+  if (deps.reportStorage) return deps.reportStorage;
+  return getDefaultReportStorage();
+}
+
+function fileForFormat(files, format) {
+  return files.find((file) => file?.format === format) || null;
+}
+
+function applyStorageMetadata(output, meta) {
+  return {
+    ...output,
+    storage_provider: meta.storage_provider,
+    storage_key: meta.storage_key,
+    content_type: meta.content_type,
+    filename: meta.filename,
+    size: meta.size,
+    checksum: meta.checksum,
+    generated_at: meta.generated_at,
+    expires_at: meta.expires_at,
+  };
+}
+
+function markOutputStorageFailed(output, error, completedAt) {
+  const code = cleanStr(error?.code || "report_storage_failed", 120) || "report_storage_failed";
+  const message = cleanStr(error?.message || "report storage failed", 500) || "report storage failed";
+  return {
+    ...output,
+    status: "failed",
+    error: { code, message },
+    updated_at: completedAt,
+    completed_at: completedAt,
+  };
+}
+
+export async function persistOutputsToStorage(reportRun, generated, storage, options = {}) {
+  if (!storage) return generated.outputs.slice();
+
+  const completedAt = options.now || new Date();
+  const next = generated.outputs.slice();
+
+  for (let i = 0; i < generated.outputs.length; i += 1) {
+    const output = generated.outputs[i];
+    const buffer = generated.buffers[i];
+    if (!output || output.status !== "succeeded" || !Buffer.isBuffer(buffer)) continue;
+
+    const file = fileForFormat(generated.files, output.format);
+    if (!file) continue;
+
+    try {
+      const meta = await storage.writeOutput({
+        organization_id: reportRun.organization_id,
+        run_id: reportRun.id,
+        format: output.format,
+        content_type: file.content_type,
+        filename: file.filename,
+        buffer,
+        now: completedAt,
+      });
+      next[i] = applyStorageMetadata(output, meta);
+    } catch (error) {
+      next[i] = markOutputStorageFailed(output, error, completedAt);
+    }
+  }
+
+  return next;
 }
 
 export async function generateDashboardSnapshotReport({
@@ -255,7 +328,8 @@ export async function generateDashboardSnapshotReport({
     });
 
     const generated = await generateOutputs(reportRun, deps, { now, maxTotalFileBytes });
-    outputs = generated.outputs;
+    const storage = resolveStorageAdapter(deps);
+    outputs = await persistOutputsToStorage(reportRun, generated, storage, { now });
 
     if (hasFailedOutput(outputs)) {
       throw makeError(500, "report_generation_failed", "one or more report outputs failed");

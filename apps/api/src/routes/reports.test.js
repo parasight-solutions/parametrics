@@ -43,6 +43,43 @@ function store() {
   };
 }
 
+function memoryStorage(options = {}) {
+  const writes = [];
+  return {
+    writes,
+    provider: "local",
+    root: "/memory",
+    async writeOutput({ organization_id, run_id, format, content_type, filename, buffer, now }) {
+      if (options.failOn && options.failOn(format)) {
+        const err = new Error(options.errorMessage || "memory storage failed");
+        err.code = options.errorCode || "report_storage_failed";
+        throw err;
+      }
+      const meta = {
+        storage_provider: "local",
+        storage_key: `report-outputs/${organization_id}/2026/05/${run_id}.${format}`,
+        content_type,
+        filename,
+        size: buffer.length,
+        checksum: { algorithm: "sha256", value: `sha256:${run_id}:${format}` },
+        generated_at: now || new Date(),
+        expires_at: null,
+      };
+      writes.push({ run_id, format, organization_id, size: buffer.length });
+      return meta;
+    },
+    async readOutput() {
+      throw new Error("not implemented in memory storage");
+    },
+    async statOutput() {
+      return { exists: true, size: 1 };
+    },
+    async deleteOutput() {
+      return { deleted: true };
+    },
+  };
+}
+
 function sampleBody(overrides = {}) {
   return {
     organization_id: "org_1",
@@ -111,7 +148,7 @@ test("generateDashboardSnapshotReport rejects missing organization_id", async ()
     () => generateDashboardSnapshotReport({
       body: sampleBody({ organization_id: "" }),
       user: { user_id: "user_1" },
-      deps: { requireOwnedLocation: async () => ownedLocation() },
+      deps: { requireOwnedLocation: async () => ownedLocation(), reportStorage: null },
       storeOptions: { collections: store() },
       now: fixedNow,
     }),
@@ -124,7 +161,7 @@ test("generateDashboardSnapshotReport rejects unsupported formats through report
     () => generateDashboardSnapshotReport({
       body: sampleBody({ location_id: "", client_id: "", requested_formats: ["csv"] }),
       user: { user_id: "user_1" },
-      deps: { requireOrganizationRole: allowMembership("owner") },
+      deps: { requireOrganizationRole: allowMembership("owner"), reportStorage: null },
       storeOptions: { collections: store() },
       now: fixedNow,
     }),
@@ -144,12 +181,14 @@ test("assertDashboardSnapshotLocationScope rejects canonical scope mismatch", ()
 
 test("generateDashboardSnapshotReport succeeds with PDF/XLSX files and persists metadata only", async () => {
   const collections = store();
+  const storage = memoryStorage();
   const result = await generateDashboardSnapshotReport({
     body: sampleBody(),
     user: { user_id: "user_1" },
     deps: {
       requireOrganizationLocationAccess: allowMembership("owner"),
       requireOwnedLocation: async () => ownedLocation(),
+      reportStorage: storage,
     },
     storeOptions: { collections },
     buildRunOptions: { idFactory: () => "run_route_1" },
@@ -172,6 +211,96 @@ test("generateDashboardSnapshotReport succeeds with PDF/XLSX files and persists 
   assert.equal(JSON.stringify(storedRun).includes("must not leak"), false);
 });
 
+test("generateDashboardSnapshotReport persists durable storage metadata on each succeeded output", async () => {
+  const collections = store();
+  const storage = memoryStorage();
+  const result = await generateDashboardSnapshotReport({
+    body: sampleBody(),
+    user: { user_id: "user_1" },
+    deps: {
+      requireOrganizationLocationAccess: allowMembership("owner"),
+      requireOwnedLocation: async () => ownedLocation(),
+      reportStorage: storage,
+    },
+    storeOptions: { collections },
+    buildRunOptions: { idFactory: () => "run_storage_1" },
+    now: fixedNow,
+  });
+
+  assert.equal(result.report_run.id, "run_storage_1");
+  assert.equal(result.report_run.status, "succeeded");
+  assert.equal(storage.writes.length, 2);
+  assert.deepEqual(storage.writes.map((w) => w.format), ["pdf", "xlsx"]);
+  assert.equal(storage.writes[0].organization_id, "org_1");
+  assert.equal(storage.writes[0].run_id, "run_storage_1");
+
+  const storedRun = collections.reportRuns.docs[0];
+  for (const output of storedRun.outputs) {
+    assert.equal(output.storage_provider, "local");
+    assert.match(output.storage_key, /^report-outputs\/org_1\/2026\/05\/run_storage_1\.(pdf|xlsx)$/);
+    assert.equal(output.path, null);
+    assert.equal(typeof output.content_type, "string");
+    assert.match(output.filename, /^[A-Za-z0-9._-]+$/);
+    assert.equal(output.checksum.algorithm, "sha256");
+    assert.equal(typeof output.checksum.value, "string");
+    assert.ok(output.generated_at);
+    assert.equal(output.expires_at, null);
+    assert.equal(output.error, null);
+  }
+
+  const pdfOutput = storedRun.outputs.find((o) => o.format === "pdf");
+  const xlsxOutput = storedRun.outputs.find((o) => o.format === "xlsx");
+  assert.equal(pdfOutput.content_type, "application/pdf");
+  assert.equal(
+    xlsxOutput.content_type,
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+  );
+  assert.equal(pdfOutput.storage_key.endsWith(".pdf"), true);
+  assert.equal(xlsxOutput.storage_key.endsWith(".xlsx"), true);
+
+  assert.deepEqual(result.files.map((file) => file.format), ["pdf", "xlsx"]);
+  for (const file of result.files) {
+    assert.equal(typeof file.base64, "string");
+    assert.ok(file.base64.length > 0);
+    assert.equal(typeof file.size, "number");
+  }
+});
+
+test("generateDashboardSnapshotReport marks run failed when storage write fails", async () => {
+  const collections = store();
+  const storage = memoryStorage({
+    failOn: (format) => format === "xlsx",
+    errorCode: "report_storage_failed",
+    errorMessage: "xlsx storage failed",
+  });
+
+  await assert.rejects(
+    () => generateDashboardSnapshotReport({
+      body: sampleBody(),
+      user: { user_id: "user_1" },
+      deps: {
+        requireOrganizationLocationAccess: allowMembership("owner"),
+        requireOwnedLocation: async () => ownedLocation(),
+        reportStorage: storage,
+      },
+      storeOptions: { collections },
+      buildRunOptions: { idFactory: () => "run_storage_fail_1" },
+      now: fixedNow,
+    }),
+    (err) => err.status === 500 && err.code === "report_generation_failed"
+  );
+
+  const storedRun = collections.reportRuns.docs[0];
+  assert.equal(storedRun.status, "failed");
+  const pdfOutput = storedRun.outputs.find((o) => o.format === "pdf");
+  const xlsxOutput = storedRun.outputs.find((o) => o.format === "xlsx");
+  assert.equal(pdfOutput.status, "succeeded");
+  assert.equal(pdfOutput.storage_provider, "local");
+  assert.equal(pdfOutput.storage_key.startsWith("report-outputs/org_1/"), true);
+  assert.equal(xlsxOutput.status, "failed");
+  assert.equal(xlsxOutput.error.code, "report_storage_failed");
+});
+
 test("generateDashboardSnapshotReport denies missing organization membership before persistence", async () => {
   const collections = store();
 
@@ -182,6 +311,7 @@ test("generateDashboardSnapshotReport denies missing organization membership bef
       deps: {
         requireOwnedLocation: async () => ownedLocation(),
         requireOrganizationLocationAccess: denyMembership(),
+        reportStorage: null,
       },
       storeOptions: { collections },
       now: fixedNow,
@@ -203,6 +333,7 @@ test("generateDashboardSnapshotReport denies viewer and member roles", async () 
         deps: {
           requireOwnedLocation: async () => ownedLocation(),
           requireOrganizationLocationAccess: denyMembership("organization_role_required"),
+          reportStorage: null,
         },
         storeOptions: { collections },
         now: fixedNow,
@@ -223,6 +354,7 @@ test("generateDashboardSnapshotReport allows owner admin and manager roles", asy
       deps: {
         requireOrganizationLocationAccess: allowMembership(role),
         requireOwnedLocation: async () => ownedLocation(),
+        reportStorage: memoryStorage(),
       },
       storeOptions: { collections },
       buildRunOptions: { idFactory: () => `run_${role}` },
@@ -232,6 +364,7 @@ test("generateDashboardSnapshotReport allows owner admin and manager roles", asy
     assert.equal(result.report_run.status, "succeeded");
     assert.deepEqual(result.files.map((file) => file.format), ["pdf"]);
     assert.equal(collections.reportRuns.docs[0].status, "succeeded");
+    assert.equal(collections.reportRuns.docs[0].outputs[0].storage_provider, "local");
   }
 });
 
@@ -249,6 +382,7 @@ test("generateDashboardSnapshotReport still rejects canonical location scope mis
           return { role: "owner", status: "active" };
         },
         requireOwnedLocation: async () => ownedLocation(),
+        reportStorage: null,
       },
       storeOptions: { collections: store() },
       now: fixedNow,
@@ -267,6 +401,7 @@ test("generateDashboardSnapshotReport marks run failed when an output fails", as
       deps: {
         requireOrganizationLocationAccess: allowMembership("owner"),
         requireOwnedLocation: async () => ownedLocation(),
+        reportStorage: memoryStorage(),
         buildPdfOutputResult: () => ({
           buffer: null,
           output: {
@@ -304,6 +439,7 @@ test("generateDashboardSnapshotReport denies manager for non-location org-level 
       body: sampleBody({ location_id: "", client_id: "", requested_formats: ["pdf"] }),
       user: { user_id: "user_1" },
       deps: {
+        reportStorage: null,
         requireOrganizationRole: async ({ organizationId, userId, allowedRoles }) => {
           assert.equal(organizationId, "org_1");
           assert.equal(userId, "user_1");
