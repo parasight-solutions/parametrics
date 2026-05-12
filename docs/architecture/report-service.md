@@ -510,6 +510,10 @@ Out of scope for S2-22 and still future:
 - Cloud storage adapters (S3/GCS/Azure), signed URLs, retention/expiry enforcement, scheduled cleanup, and any frontend history UI.
 - Queue/worker-based report generation. The route continues to run synchronously on the API runtime.
 
+### S2-22.1 Live Smoke
+
+S2-22.1 verified the durable local storage adapter and its route wiring end-to-end against a live local API + MongoDB under the controlled `s2-15-fixture-org` scope. Proof is recorded in `docs/proof/s2-22-1-durable-report-storage-live-smoke.md`. The smoke confirmed real files on disk under `REPORT_STORAGE_LOCAL_DIR` with sizes and sha256 hashes matching the persisted metadata, `report_runs.outputs[]` carrying the full durable metadata set with `path: null`, no `input_snapshot` and no raw buffer/base64 in Mongo, the unchanged base64 `files[]` response, and `location_org_map` untouched.
+
 ## S2-20 Report History And Storage Contract
 
 S2-20 is complete as documentation/design only. The report history listing, run detail, output download, and durable output storage contract is recorded in `docs/architecture/report-history-and-storage.md`.

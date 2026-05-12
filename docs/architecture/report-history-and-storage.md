@@ -21,6 +21,10 @@ S2-22 introduces the first cut of the storage adapter described in Section 4 bel
 - Listing/download routes remain future. `GET /api/v1/reports/runs`, `GET /api/v1/reports/runs/:runId`, `GET /api/v1/reports/runs/:runId/outputs/:format`, and the optional `POST .../regenerate` are still designed in Sections 3 and 11 and are not implemented in S2-22.
 - Audit log content unchanged: storage keys are not written to audit metadata. Existing `report.dashboard_snapshot.generate` audit events continue to record summarized identifiers, counts, role, and outcome only.
 
+### S2-22.1 Live Smoke
+
+S2-22.1 ran a live local API + MongoDB smoke against the controlled `s2-15-fixture-org` scope to verify the S2-22 implementation end-to-end. Proof is recorded in `docs/proof/s2-22-1-durable-report-storage-live-smoke.md`. The smoke confirmed: HTTP 200 from `POST /api/v1/reports/dashboard-snapshot`, `report_run.status: succeeded`, the unchanged base64 `files[]` response, the full durable metadata set on `report_runs.outputs[]` (`storage_provider`, `storage_key`, `content_type`, `filename`, `size`, `checksum: sha256`, `generated_at`, `expires_at: null`, `path: null`), files under `REPORT_STORAGE_LOCAL_DIR` whose byte sizes and sha256 hashes match the persisted metadata, no `input_snapshot` and no raw buffer/base64 fields in Mongo, and `location_org_map` untouched. Org-level coverage only; the GBP location-bound code path is still covered by the existing S2-10.2 GBP membership smoke and the S2-22 unit tests.
+
 ## 1. Current State
 
 The current report foundation, recorded as complete by S2-18, is:
