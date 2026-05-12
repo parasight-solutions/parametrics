@@ -50,6 +50,10 @@ S2-23 implements the read-only `GET /api/v1/reports/runs` listing endpoint descr
   - `403 organization_scope_required` — manager/viewer without a matching `client_id`/`location_id` filter.
 - Audit/rate-limit: matches the existing `GET /orgs/:orgId/members` read-only convention — no audit event and no dedicated rate-limit bucket in this first cut. The S2-20 contract reserves `report.run.list` and a dedicated `report_list` bucket; both remain optional hardening to be added in a future task if needed.
 
+### S2-23.1 Live Smoke
+
+S2-23.1 ran a live local API + MongoDB smoke against the controlled `s2-15-fixture-org` scope to verify the S2-23 listing endpoint end-to-end. Proof is recorded in `docs/proof/s2-23-1-report-runs-listing-live-smoke.md`. The smoke confirmed HTTP 200 from `GET /api/v1/reports/runs?organization_id=s2-15-fixture-org`, the documented `{ report_runs[], pagination: { limit, has_more, next_cursor: null } }` shape, server-controlled newest-first sort, visibility of the S2-22.1 smoke row (`s2-22-1-smoke-dashboard`) under broad roles, filter narrowing under `status=succeeded&report_type=dashboard_snapshot&report_key=s2-22-1-smoke-dashboard&date_from=2026-05-11&date_to=2026-05-13&limit=1`, the durable per-output metadata exposed (`storage_provider`, `storage_key` relative-only, `content_type`, `filename`, `size`, `checksum: sha256`, `generated_at`, `expires_at: null`, `path: null`), no `_id`/`input_snapshot`/`buffer`/`base64`/absolute-path leakage, and the denial codes `organization_scope_required` (manager/viewer without scope), `organization_role_required` (`member`), and `organization_membership_required` (`invited`, `disabled`). JWT `role` was the default `"individual"` and authorization came from `organization_members` only.
+
 ## 1. Current State
 
 The current report foundation, recorded as complete by S2-18, is:

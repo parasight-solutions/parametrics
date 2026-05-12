@@ -536,6 +536,10 @@ Out of scope for S2-23 and still future:
 - Frontend report history UI (S2-25).
 - Queue/worker-based report generation, dedicated `report.run.list` audit event, dedicated `report_list` rate-limit bucket, cloud storage adapters, signed URLs, retention enforcement.
 
+### S2-23.1 Live Smoke
+
+S2-23.1 verified the read-only listing endpoint end-to-end against a live local API + MongoDB under the controlled `s2-15-fixture-org` scope. Proof is recorded in `docs/proof/s2-23-1-report-runs-listing-live-smoke.md`. The smoke confirmed HTTP 200, the documented response shape, server-controlled newest-first sort, visibility of the S2-22.1 smoke row, filter narrowing to a single row under `status`/`report_type`/`report_key`/`date_from`/`date_to`/`limit=1`, the durable output metadata exposed per row with `path: null`, no `_id`/`input_snapshot`/`buffer`/`base64`/absolute path in the response, denial codes for missing scope and denied/non-active roles, and matching Mongo counts. Only the API runtime was started; workers and scheduler were not.
+
 ## S2-20 Report History And Storage Contract
 
 S2-20 is complete as documentation/design only. The report history listing, run detail, output download, and durable output storage contract is recorded in `docs/architecture/report-history-and-storage.md`.
