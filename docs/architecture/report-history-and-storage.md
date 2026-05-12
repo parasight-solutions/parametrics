@@ -25,6 +25,31 @@ S2-22 introduces the first cut of the storage adapter described in Section 4 bel
 
 S2-22.1 ran a live local API + MongoDB smoke against the controlled `s2-15-fixture-org` scope to verify the S2-22 implementation end-to-end. Proof is recorded in `docs/proof/s2-22-1-durable-report-storage-live-smoke.md`. The smoke confirmed: HTTP 200 from `POST /api/v1/reports/dashboard-snapshot`, `report_run.status: succeeded`, the unchanged base64 `files[]` response, the full durable metadata set on `report_runs.outputs[]` (`storage_provider`, `storage_key`, `content_type`, `filename`, `size`, `checksum: sha256`, `generated_at`, `expires_at: null`, `path: null`), files under `REPORT_STORAGE_LOCAL_DIR` whose byte sizes and sha256 hashes match the persisted metadata, no `input_snapshot` and no raw buffer/base64 fields in Mongo, and `location_org_map` untouched. Org-level coverage only; the GBP location-bound code path is still covered by the existing S2-10.2 GBP membership smoke and the S2-22 unit tests.
 
+## S2-23 Implementation Note
+
+S2-23 implements the read-only `GET /api/v1/reports/runs` listing endpoint described in Section 3.1. Detail (`GET /api/v1/reports/runs/:runId`) and output download (`GET /api/v1/reports/runs/:runId/outputs/:format`) remain future work (S2-24+); the optional regenerate route remains design-only.
+
+- Implemented route: `GET /api/v1/reports/runs` mounted under the existing `/api/v1/reports` router. Read-only.
+- Implemented service helper: `listReportRuns(filter, options)` in `apps/api/src/services/reportStore.js`. Supporting exports: `buildReportRunListQuery`, `sanitizeReportRunRow`, `REPORT_LIST_DEFAULT_LIMIT`, `REPORT_LIST_MAX_LIMIT`.
+- Query parameters honored: `organization_id` (required), `client_id`, `location_id`, `report_type`, `report_key`, `status` (one of `pending`/`running`/`succeeded`/`failed`), `date_from` / `date_to` (`YYYY-MM-DD`; filter `created_at >= date_from` and `<= end of date_to`), `limit` (default 25, max 100). `sort` is server-controlled (`created_at desc` with `id` tiebreaker); no client-supplied sort is accepted.
+- Pagination: `{ limit, has_more, next_cursor: null }`. The first cut uses limit-only behavior with `has_more` derived from a `limit + 1` fetch. `next_cursor` is reserved for a future cursor implementation (see Section 3.5) and is always `null` today.
+- Authorization: requires app authentication; resolves an `active` `organization_members` record for the requester via `requireOrganizationMembership` and applies the role rules in Section 6:
+  - `owner` and `admin`: see all runs in the requested organization regardless of optional `client_id`/`location_id` filters.
+  - `manager` and `viewer`: must supply at least one of `client_id` / `location_id`; the value is validated against the requester's `assigned_client_ids` / `assigned_location_ids`. Missing or mismatched scope returns `403 organization_scope_required`.
+  - `member`, `invited`, `disabled`, and missing memberships are denied with `403 organization_role_required` or `403 organization_membership_required` (matching the S2-12 read-only listing convention).
+  - JWT `role` claim and `location_org_map` are not used for authorization.
+- Sanitization: rows never include Mongo `_id`, the raw `input_snapshot` body, raw buffers, base64 payloads, or absolute server paths. `storage_key` is exposed because S2-20 explicitly classifies it as durable metadata; no download route exists yet, so possession of a `storage_key` cannot be used to fetch bytes. The persistence layer already excludes `input_snapshot` from saved documents (S2-04), and the list helper additionally projects `_id: 0, input_snapshot: 0` defensively.
+- Error codes:
+  - `400 bad_request` — missing `organization_id`, malformed `limit`.
+  - `400 invalid_date_range` — malformed `date_from`/`date_to`, inverted range.
+  - `400 invalid_report_run_status` — `status` not in the run status vocabulary.
+  - `400 invalid_report_run_limit` — non-positive limit at the service layer.
+  - `401 unauthorized` — missing/invalid JWT.
+  - `403 organization_membership_required` — no active membership in the organization.
+  - `403 organization_role_required` — active membership but unsupported role.
+  - `403 organization_scope_required` — manager/viewer without a matching `client_id`/`location_id` filter.
+- Audit/rate-limit: matches the existing `GET /orgs/:orgId/members` read-only convention — no audit event and no dedicated rate-limit bucket in this first cut. The S2-20 contract reserves `report.run.list` and a dedicated `report_list` bucket; both remain optional hardening to be added in a future task if needed.
+
 ## 1. Current State
 
 The current report foundation, recorded as complete by S2-18, is:

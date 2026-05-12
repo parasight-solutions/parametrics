@@ -514,6 +514,28 @@ Out of scope for S2-22 and still future:
 
 S2-22.1 verified the durable local storage adapter and its route wiring end-to-end against a live local API + MongoDB under the controlled `s2-15-fixture-org` scope. Proof is recorded in `docs/proof/s2-22-1-durable-report-storage-live-smoke.md`. The smoke confirmed real files on disk under `REPORT_STORAGE_LOCAL_DIR` with sizes and sha256 hashes matching the persisted metadata, `report_runs.outputs[]` carrying the full durable metadata set with `path: null`, no `input_snapshot` and no raw buffer/base64 in Mongo, the unchanged base64 `files[]` response, and `location_org_map` untouched.
 
+## S2-23 Report Run Listing API
+
+S2-23 adds the read-only `GET /api/v1/reports/runs` endpoint. The synchronous `POST /api/v1/reports/dashboard-snapshot` route is unchanged; the listing endpoint returns sanitized rows for existing `report_runs` documents, including the durable storage metadata persisted in S2-22.
+
+Current state additions:
+
+- New backend endpoint `GET /api/v1/reports/runs` (authenticated, mounted under `/api/v1/reports`). Returns `{ report_runs, pagination: { limit, has_more, next_cursor } }`.
+- Supported filters: `organization_id` (required), `client_id`, `location_id`, `report_type`, `report_key`, `status`, `date_from`/`date_to` (`YYYY-MM-DD`), `limit` (default `25`, max `100`).
+- Sort is server-controlled (`created_at` descending with `id` tiebreaker). `next_cursor` is reserved for a future cursor implementation and is always `null`.
+- Authorization uses `organization_members` only. `owner`/`admin` see all runs in the organization; `manager`/`viewer` must supply a `client_id` or `location_id` matching their `assigned_client_ids`/`assigned_location_ids`. `member`/`invited`/`disabled`/missing memberships are denied. JWT `role` and `location_org_map` are not used.
+- Sanitization: omits Mongo `_id`, raw `input_snapshot`, generated buffers/base64, and absolute server paths. `storage_key` is exposed as durable metadata per the S2-20 contract; no download route exists yet.
+- New backend service helpers: `listReportRuns`, `buildReportRunListQuery`, `sanitizeReportRunRow`, `REPORT_LIST_DEFAULT_LIMIT`, `REPORT_LIST_MAX_LIMIT` in `apps/api/src/services/reportStore.js`.
+- No new dependency. No `package-lock.json` change. The `apps/api` `npm test` script already covers the updated tests.
+
+Out of scope for S2-23 and still future:
+
+- `GET /api/v1/reports/runs/:runId` detail (S2-24).
+- `GET /api/v1/reports/runs/:runId/outputs/:format` download (S2-24).
+- Optional `POST /api/v1/reports/runs/:runId/regenerate` (still design-only).
+- Frontend report history UI (S2-25).
+- Queue/worker-based report generation, dedicated `report.run.list` audit event, dedicated `report_list` rate-limit bucket, cloud storage adapters, signed URLs, retention enforcement.
+
 ## S2-20 Report History And Storage Contract
 
 S2-20 is complete as documentation/design only. The report history listing, run detail, output download, and durable output storage contract is recorded in `docs/architecture/report-history-and-storage.md`.

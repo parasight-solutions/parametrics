@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import {
   assertDashboardSnapshotLocationScope,
   generateDashboardSnapshotReport,
+  listReportRunsForUser,
 } from "./reports.js";
 
 const fixedNow = new Date("2026-05-01T12:00:00.000Z");
@@ -456,4 +457,310 @@ test("generateDashboardSnapshotReport denies manager for non-location org-level 
     }),
     (err) => err.status === 403 && err.code === "organization_role_required",
   );
+});
+
+function listMembership(role, { assigned_client_ids = [], assigned_location_ids = [], status = "active", organization_id = "org_1", user_id = "user_1" } = {}) {
+  return {
+    organization_id,
+    user_id,
+    role,
+    status,
+    assigned_client_ids,
+    assigned_location_ids,
+  };
+}
+
+function denyMembershipForList(code = "organization_membership_required") {
+  return async () => {
+    const err = new Error(
+      code === "organization_role_required"
+        ? "required organization role is missing"
+        : "active organization membership is required",
+    );
+    err.status = 403;
+    err.statusCode = 403;
+    err.code = code;
+    throw err;
+  };
+}
+
+function sampleListResult(rows = []) {
+  return {
+    runs: rows,
+    pagination: { limit: 25, has_more: false, next_cursor: null },
+  };
+}
+
+function sampleSanitizedRun(overrides = {}) {
+  return {
+    id: "run_seed_1",
+    report_id: null,
+    report_key: "gbp_dashboard_april",
+    report_type: "dashboard_snapshot",
+    report_name: "April GBP Dashboard",
+    status: "succeeded",
+    requested_formats: ["pdf"],
+    outputs: [
+      {
+        format: "pdf",
+        status: "succeeded",
+        size: 123,
+        path: null,
+        storage_provider: "local",
+        storage_key: "report-outputs/org_1/2026/05/run_seed_1.pdf",
+        content_type: "application/pdf",
+        filename: "seed-run_seed_1.pdf",
+        checksum: { algorithm: "sha256", value: "a".repeat(64) },
+        generated_at: fixedNow,
+        expires_at: null,
+        error: null,
+        created_at: fixedNow,
+        updated_at: fixedNow,
+        completed_at: fixedNow,
+      },
+    ],
+    input_snapshot_summary: { card_count: 0 },
+    filters: {},
+    organization_id: "org_1",
+    client_id: null,
+    location_id: null,
+    requested_by_user_id: "user_1",
+    created_at: fixedNow,
+    updated_at: fixedNow,
+    started_at: fixedNow,
+    completed_at: fixedNow,
+    error: null,
+    ...overrides,
+  };
+}
+
+test("listReportRunsForUser rejects missing organization_id", async () => {
+  await assert.rejects(
+    () => listReportRunsForUser({
+      query: { organization_id: "" },
+      user: { user_id: "user_1" },
+      deps: {
+        requireOrganizationMembership: async () => listMembership("owner"),
+        listReportRuns: async () => sampleListResult([]),
+      },
+    }),
+    (err) => err.status === 400 && err.code === "bad_request",
+  );
+});
+
+test("listReportRunsForUser denies missing membership", async () => {
+  let calledList = false;
+  await assert.rejects(
+    () => listReportRunsForUser({
+      query: { organization_id: "org_1" },
+      user: { user_id: "user_1" },
+      deps: {
+        requireOrganizationMembership: denyMembershipForList("organization_membership_required"),
+        listReportRuns: async () => { calledList = true; return sampleListResult([]); },
+      },
+    }),
+    (err) => err.status === 403 && err.code === "organization_membership_required",
+  );
+  assert.equal(calledList, false);
+});
+
+test("listReportRunsForUser denies member/invited/disabled and unknown roles", async () => {
+  for (const role of ["member", "invited", "disabled"]) {
+    await assert.rejects(
+      () => listReportRunsForUser({
+        query: { organization_id: "org_1" },
+        user: { user_id: "user_1" },
+        deps: {
+          requireOrganizationMembership: async () => listMembership(role, { status: role === "member" ? "active" : role }),
+          listReportRuns: async () => sampleListResult([]),
+        },
+      }),
+      (err) => err.status === 403 && err.code === "organization_role_required",
+      `role ${role} should be denied`,
+    );
+  }
+});
+
+test("listReportRunsForUser allows owner and admin without scope filter", async () => {
+  for (const role of ["owner", "admin"]) {
+    const result = await listReportRunsForUser({
+      query: { organization_id: "org_1", limit: "10" },
+      user: { user_id: "user_1" },
+      deps: {
+        requireOrganizationMembership: async () => listMembership(role),
+        listReportRuns: async (filter) => {
+          assert.equal(filter.organization_id, "org_1");
+          assert.equal(filter.limit, 10);
+          return sampleListResult([sampleSanitizedRun({ id: `run_${role}` })]);
+        },
+      },
+    });
+    assert.equal(result.report_runs.length, 1);
+    assert.equal(result.report_runs[0].id, `run_${role}`);
+    assert.equal(result.pagination.limit, 25);
+    assert.equal(result.pagination.has_more, false);
+    assert.equal(result.pagination.next_cursor, null);
+  }
+});
+
+test("listReportRunsForUser allows manager with assigned client/location scope", async () => {
+  const result = await listReportRunsForUser({
+    query: {
+      organization_id: "org_1",
+      client_id: "client_1",
+      location_id: "loc_1",
+    },
+    user: { user_id: "user_1" },
+    deps: {
+      requireOrganizationMembership: async () => listMembership("manager", {
+        assigned_client_ids: ["client_1"],
+        assigned_location_ids: ["loc_1"],
+      }),
+      listReportRuns: async (filter) => {
+        assert.equal(filter.client_id, "client_1");
+        assert.equal(filter.location_id, "loc_1");
+        return sampleListResult([sampleSanitizedRun({ client_id: "client_1", location_id: "loc_1" })]);
+      },
+    },
+  });
+  assert.equal(result.report_runs.length, 1);
+});
+
+test("listReportRunsForUser allows viewer with assigned client/location scope", async () => {
+  const result = await listReportRunsForUser({
+    query: { organization_id: "org_1", location_id: "loc_1" },
+    user: { user_id: "user_1" },
+    deps: {
+      requireOrganizationMembership: async () => listMembership("viewer", {
+        assigned_client_ids: [],
+        assigned_location_ids: ["loc_1"],
+      }),
+      listReportRuns: async (filter) => {
+        assert.equal(filter.location_id, "loc_1");
+        return sampleListResult([sampleSanitizedRun({ location_id: "loc_1" })]);
+      },
+    },
+  });
+  assert.equal(result.report_runs.length, 1);
+});
+
+test("listReportRunsForUser denies manager without any scope filter", async () => {
+  await assert.rejects(
+    () => listReportRunsForUser({
+      query: { organization_id: "org_1" },
+      user: { user_id: "user_1" },
+      deps: {
+        requireOrganizationMembership: async () => listMembership("manager", {
+          assigned_client_ids: ["client_1"],
+          assigned_location_ids: ["loc_1"],
+        }),
+        listReportRuns: async () => sampleListResult([]),
+      },
+    }),
+    (err) => err.status === 403 && err.code === "organization_scope_required",
+  );
+});
+
+test("listReportRunsForUser denies manager when supplied scope is outside assignments", async () => {
+  await assert.rejects(
+    () => listReportRunsForUser({
+      query: { organization_id: "org_1", client_id: "client_other" },
+      user: { user_id: "user_1" },
+      deps: {
+        requireOrganizationMembership: async () => listMembership("manager", {
+          assigned_client_ids: ["client_1"],
+          assigned_location_ids: ["loc_1"],
+        }),
+        listReportRuns: async () => sampleListResult([]),
+      },
+    }),
+    (err) => err.status === 403 && err.code === "organization_scope_required",
+  );
+});
+
+test("listReportRunsForUser passes through filter values without mutating role checks", async () => {
+  let observed = null;
+  await listReportRunsForUser({
+    query: {
+      organization_id: "org_1",
+      status: "succeeded",
+      report_type: "dashboard_snapshot",
+      report_key: "gbp_dashboard_april",
+      date_from: "2026-04-01",
+      date_to: "2026-04-30",
+      limit: "50",
+    },
+    user: { user_id: "user_1" },
+    deps: {
+      requireOrganizationMembership: async () => listMembership("owner"),
+      listReportRuns: async (filter) => {
+        observed = filter;
+        return sampleListResult([]);
+      },
+    },
+  });
+  assert.equal(observed.organization_id, "org_1");
+  assert.equal(observed.status, "succeeded");
+  assert.equal(observed.report_type, "dashboard_snapshot");
+  assert.equal(observed.report_key, "gbp_dashboard_april");
+  assert.equal(observed.date_from, "2026-04-01");
+  assert.equal(observed.date_to, "2026-04-30");
+  assert.equal(observed.limit, 50);
+});
+
+test("listReportRunsForUser rejects a non-positive limit query value", async () => {
+  await assert.rejects(
+    () => listReportRunsForUser({
+      query: { organization_id: "org_1", limit: "0" },
+      user: { user_id: "user_1" },
+      deps: {
+        requireOrganizationMembership: async () => listMembership("owner"),
+        listReportRuns: async () => sampleListResult([]),
+      },
+    }),
+    (err) => err.status === 400 && err.code === "bad_request",
+  );
+});
+
+test("listReportRunsForUser surfaces invalid filter codes from the store as 400", async () => {
+  await assert.rejects(
+    () => listReportRunsForUser({
+      query: {
+        organization_id: "org_1",
+        status: "succeeded",
+        date_from: "2026-04-30",
+        date_to: "2026-04-01",
+      },
+      user: { user_id: "user_1" },
+      deps: {
+        requireOrganizationMembership: async () => listMembership("owner"),
+        listReportRuns: async () => {
+          const err = new Error("date_from must be on or before date_to");
+          err.code = "invalid_date_range";
+          throw err;
+        },
+      },
+    }),
+    (err) => err.status === 400 && err.code === "invalid_date_range",
+  );
+});
+
+test("listReportRunsForUser response shape matches the documented contract", async () => {
+  const result = await listReportRunsForUser({
+    query: { organization_id: "org_1" },
+    user: { user_id: "user_1" },
+    deps: {
+      requireOrganizationMembership: async () => listMembership("owner"),
+      listReportRuns: async () => sampleListResult([sampleSanitizedRun()]),
+    },
+  });
+
+  assert.ok(Array.isArray(result.report_runs));
+  assert.equal(Object.prototype.hasOwnProperty.call(result, "pagination"), true);
+  assert.deepEqual(Object.keys(result.pagination).sort(), ["has_more", "limit", "next_cursor"]);
+  const [row] = result.report_runs;
+  assert.equal(row._id, undefined);
+  assert.equal(row.input_snapshot, undefined);
+  assert.equal(row.outputs[0].buffer, undefined);
+  assert.equal(row.outputs[0].base64, undefined);
 });

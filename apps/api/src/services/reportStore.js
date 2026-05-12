@@ -253,6 +253,198 @@ export async function markReportRunSucceeded(runId, { outputs = [], completedAt 
   });
 }
 
+export const REPORT_LIST_DEFAULT_LIMIT = 25;
+export const REPORT_LIST_MAX_LIMIT = 100;
+
+const DATE_YMD_RE = /^(\d{4})-(\d{2})-(\d{2})$/;
+
+function parseYmdStart(value) {
+  if (!value) return null;
+  if (value instanceof Date) {
+    if (Number.isNaN(value.getTime())) return null;
+    return value;
+  }
+  const s = cleanStr(value, 40);
+  if (!DATE_YMD_RE.test(s)) {
+    throw makeError("invalid_date_range", "date must be YYYY-MM-DD");
+  }
+  const d = new Date(`${s}T00:00:00.000Z`);
+  if (Number.isNaN(d.getTime())) {
+    throw makeError("invalid_date_range", "date must be a valid YYYY-MM-DD");
+  }
+  return d;
+}
+
+function parseYmdEnd(value) {
+  if (!value) return null;
+  if (value instanceof Date) {
+    if (Number.isNaN(value.getTime())) return null;
+    return value;
+  }
+  const s = cleanStr(value, 40);
+  if (!DATE_YMD_RE.test(s)) {
+    throw makeError("invalid_date_range", "date must be YYYY-MM-DD");
+  }
+  const d = new Date(`${s}T23:59:59.999Z`);
+  if (Number.isNaN(d.getTime())) {
+    throw makeError("invalid_date_range", "date must be a valid YYYY-MM-DD");
+  }
+  return d;
+}
+
+function clampLimit(value) {
+  if (value === undefined || value === null || value === "") {
+    return REPORT_LIST_DEFAULT_LIMIT;
+  }
+  const n = Number(value);
+  if (!Number.isFinite(n) || n < 1) {
+    throw makeError("invalid_report_run_limit", "limit must be a positive integer");
+  }
+  const floored = Math.floor(n);
+  return Math.min(REPORT_LIST_MAX_LIMIT, Math.max(1, floored));
+}
+
+function sanitizeOutputForList(output = {}) {
+  return {
+    format: cleanStr(output.format, 20).toLowerCase(),
+    status: cleanStr(output.status, 40).toLowerCase(),
+    size: Number.isFinite(Number(output.size)) ? Math.floor(Number(output.size)) : null,
+    path: cleanStr(output.path, 1000) || null,
+    storage_provider: cleanStr(output.storage_provider, 80) || null,
+    storage_key: cleanStr(output.storage_key, 1000) || null,
+    content_type: cleanStr(output.content_type, 200) || null,
+    filename: cleanStr(output.filename, 200) || null,
+    checksum: normalizeChecksum(output.checksum),
+    generated_at: output.generated_at || null,
+    expires_at: output.expires_at || null,
+    error: compactError(output.error),
+    created_at: output.created_at || null,
+    updated_at: output.updated_at || null,
+    completed_at: output.completed_at || null,
+  };
+}
+
+export function sanitizeReportRunRow(doc = {}) {
+  const outputs = Array.isArray(doc.outputs) ? doc.outputs.map(sanitizeOutputForList) : [];
+  return {
+    id: cleanStr(doc.id, 200),
+    report_id: cleanStr(doc.report_id, 200) || null,
+    report_key: cleanStr(doc.report_key, 160),
+    report_type: cleanStr(doc.report_type, 80),
+    report_name: cleanStr(doc.report_name, 160),
+    status: cleanStr(doc.status, 40).toLowerCase(),
+    requested_formats: Array.isArray(doc.requested_formats)
+      ? doc.requested_formats
+          .filter((format) => REPORT_OUTPUT_FORMATS.includes(cleanStr(format, 20).toLowerCase()))
+          .map((format) => cleanStr(format, 20).toLowerCase())
+      : [],
+    outputs,
+    input_snapshot_summary: doc.input_snapshot_summary && typeof doc.input_snapshot_summary === "object"
+      ? sanitizeReportMetadata(doc.input_snapshot_summary)
+      : {},
+    filters: doc.filters && typeof doc.filters === "object"
+      ? sanitizeReportMetadata(doc.filters)
+      : {},
+    organization_id: cleanStr(doc.organization_id, 200),
+    client_id: cleanStr(doc.client_id, 200) || null,
+    location_id: cleanStr(doc.location_id, 200) || null,
+    requested_by_user_id: cleanStr(doc.requested_by_user_id, 200) || null,
+    created_at: doc.created_at || null,
+    updated_at: doc.updated_at || null,
+    started_at: doc.started_at || null,
+    completed_at: doc.completed_at || null,
+    error: compactError(doc.error),
+  };
+}
+
+function normalizeListStatus(status) {
+  if (!status) return null;
+  const value = cleanStr(status, 40).toLowerCase();
+  if (!REPORT_STATUSES.includes(value)) {
+    throw makeError("invalid_report_run_status", `unsupported report run status: ${status}`);
+  }
+  return value;
+}
+
+function normalizeListFormat(value) {
+  if (!value) return null;
+  const v = cleanStr(value, 80);
+  return v || null;
+}
+
+export function buildReportRunListQuery(filter = {}) {
+  const organization_id = cleanStr(filter.organization_id || filter.organizationId, 200);
+  if (!organization_id) {
+    throw makeError("missing_report_scope", "organization_id is required for report run listing");
+  }
+
+  const client_id = cleanStr(filter.client_id || filter.clientId, 200) || null;
+  const location_id = cleanStr(filter.location_id || filter.locationId, 200) || null;
+  const status = normalizeListStatus(filter.status);
+  const report_type = normalizeListFormat(filter.report_type || filter.reportType);
+  const report_key = cleanStr(filter.report_key || filter.reportKey, 160) || null;
+
+  const date_from = parseYmdStart(filter.date_from || filter.dateFrom);
+  const date_to = parseYmdEnd(filter.date_to || filter.dateTo);
+  if (date_from && date_to && date_from.getTime() > date_to.getTime()) {
+    throw makeError("invalid_date_range", "date_from must be on or before date_to");
+  }
+
+  const query = { organization_id };
+  if (client_id) query.client_id = client_id;
+  if (location_id) query.location_id = location_id;
+  if (status) query.status = status;
+  if (report_type) query.report_type = report_type;
+  if (report_key) query.report_key = report_key;
+  if (date_from || date_to) {
+    query.created_at = {};
+    if (date_from) query.created_at.$gte = date_from;
+    if (date_to) query.created_at.$lte = date_to;
+  }
+
+  return query;
+}
+
+async function fetchReportRunListDocs(reportRuns, query, { limit }) {
+  const sort = { created_at: -1, id: -1 };
+  const projection = { _id: 0, input_snapshot: 0 };
+
+  if (typeof reportRuns.find === "function") {
+    const cursor = reportRuns.find(query, { sort, limit: limit + 1, projection });
+    if (cursor && typeof cursor.toArray === "function") {
+      return cursor.toArray();
+    }
+    if (Array.isArray(cursor)) {
+      return cursor;
+    }
+  }
+
+  throw makeError(
+    "report_run_list_unsupported_collection",
+    "collection does not support listing report runs",
+  );
+}
+
+export async function listReportRuns(filter = {}, options = {}) {
+  const limit = clampLimit(filter.limit);
+  const query = buildReportRunListQuery(filter);
+
+  const { reportRuns } = await resolveCollections(options);
+  const docs = await fetchReportRunListDocs(reportRuns, query, { limit });
+
+  const has_more = docs.length > limit;
+  const trimmed = has_more ? docs.slice(0, limit) : docs;
+
+  return {
+    runs: trimmed.map(sanitizeReportRunRow),
+    pagination: {
+      limit,
+      has_more,
+      next_cursor: null,
+    },
+  };
+}
+
 export async function markReportRunFailed(runId, { error = null, outputs = null, completedAt = null, ...options } = {}) {
   const id = cleanStr(runId, 200);
   if (!id) throw makeError("missing_report_run_id", "report run id is required");

@@ -7,13 +7,18 @@ import { buildDashboardSnapshotReportRun } from "../services/reportService.js";
 import { buildPdfOutputResult } from "../services/reportPdf.js";
 import { buildXlsxOutputResult } from "../services/reportXlsx.js";
 import {
+  REPORT_LIST_DEFAULT_LIMIT,
+  REPORT_LIST_MAX_LIMIT,
+  listReportRuns,
   markReportRunFailed,
   markReportRunRunning,
   markReportRunSucceeded,
   savePendingReportRun,
 } from "../services/reportStore.js";
 import {
+  isMembershipAssignedToLocation,
   requireOrganizationLocationAccess,
+  requireOrganizationMembership,
   requireOrganizationRole,
 } from "../services/organizationAccess.js";
 import { getDefaultReportStorage } from "../services/reportStorage.js";
@@ -22,6 +27,8 @@ const router = Router();
 const MAX_TOTAL_FILE_BYTES = 5 * 1024 * 1024;
 const DASHBOARD_REPORT_GENERATION_ROLES = Object.freeze(["owner", "admin", "manager"]);
 const DASHBOARD_REPORT_ORGANIZATION_ROLES = Object.freeze(["owner", "admin"]);
+const REPORT_RUN_LIST_ROLES = Object.freeze(["owner", "admin", "manager", "viewer"]);
+const REPORT_RUN_LIST_BROAD_ROLES = Object.freeze(["owner", "admin"]);
 
 const FILE_INFO = Object.freeze({
   pdf: { extension: "pdf", content_type: "application/pdf" },
@@ -57,6 +64,8 @@ function mapValidationError(error) {
       "invalid_dashboard_snapshot",
       "missing_report_key",
       "missing_report_scope",
+      "invalid_report_run_status",
+      "invalid_report_run_limit",
     ].includes(code)
   ) {
     error.status = 400;
@@ -374,6 +383,119 @@ function auditDetailsFromRun(run, extra = {}) {
     },
   };
 }
+
+function parseListLimit(value) {
+  if (value === undefined || value === null || value === "") {
+    return REPORT_LIST_DEFAULT_LIMIT;
+  }
+  const n = Number(value);
+  if (!Number.isFinite(n) || n < 1) {
+    throw makeError(400, "bad_request", "limit must be a positive integer");
+  }
+  return Math.min(REPORT_LIST_MAX_LIMIT, Math.max(1, Math.floor(n)));
+}
+
+function listFilterFromQuery(query = {}) {
+  return {
+    organization_id: cleanStr(query.organization_id || query.organizationId, 200),
+    client_id: cleanStr(query.client_id || query.clientId, 200) || null,
+    location_id: cleanStr(query.location_id || query.locationId, 200) || null,
+    status: cleanStr(query.status, 40) || null,
+    report_type: cleanStr(query.report_type || query.reportType, 80) || null,
+    report_key: cleanStr(query.report_key || query.reportKey, 160) || null,
+    date_from: cleanStr(query.date_from || query.dateFrom, 40) || null,
+    date_to: cleanStr(query.date_to || query.dateTo, 40) || null,
+    limit: parseListLimit(query.limit),
+  };
+}
+
+function assertManagerOrViewerListScope(filter, membership) {
+  const role = String(membership?.role || "").toLowerCase();
+  if (REPORT_RUN_LIST_BROAD_ROLES.includes(role)) return;
+
+  const hasScope = Boolean(filter.client_id || filter.location_id);
+  if (!hasScope) {
+    throw makeError(
+      403,
+      "organization_scope_required",
+      "client_id or location_id is required for the requested role",
+    );
+  }
+
+  if (!isMembershipAssignedToLocation(membership, {
+    clientId: filter.client_id || "",
+    locationId: filter.location_id || "",
+  })) {
+    throw makeError(
+      403,
+      "organization_scope_required",
+      "required organization assignment is missing",
+    );
+  }
+}
+
+export async function listReportRunsForUser({
+  body = null,
+  query = {},
+  user = {},
+  storeOptions = {},
+  deps = {},
+} = {}) {
+  const userId = cleanStr(user.user_id || user.id, 200);
+  if (!userId) {
+    throw makeError(401, "unauthorized", "Unauthorized");
+  }
+
+  let filter;
+  try {
+    filter = listFilterFromQuery(body || query || {});
+  } catch (error) {
+    throw mapValidationError(error);
+  }
+
+  if (!filter.organization_id) {
+    throw makeError(400, "bad_request", "organization_id is required");
+  }
+
+  const requireMembership = deps.requireOrganizationMembership || requireOrganizationMembership;
+  const membership = await requireMembership({
+    organizationId: filter.organization_id,
+    userId,
+  }, deps.organizationAccessOptions || {});
+
+  const role = String(membership?.role || "").toLowerCase();
+  if (!REPORT_RUN_LIST_ROLES.includes(role)) {
+    throw makeError(403, "organization_role_required", "required organization role is missing");
+  }
+
+  assertManagerOrViewerListScope(filter, membership);
+
+  try {
+    const result = await (deps.listReportRuns || listReportRuns)(filter, storeOptions);
+    return {
+      report_runs: result.runs,
+      pagination: result.pagination,
+      membership_role: role,
+    };
+  } catch (error) {
+    throw mapValidationError(error);
+  }
+}
+
+router.get("/runs", authenticate, async (req, res) => {
+  try {
+    const result = await listReportRunsForUser({
+      query: req.query || {},
+      user: req.user || {},
+    });
+    return res.json({
+      report_runs: result.report_runs,
+      pagination: result.pagination,
+    });
+  } catch (error) {
+    return toApiError(res, mapValidationError(error));
+  }
+});
 
 router.post("/dashboard-snapshot", authenticate, generationRateLimit, async (req, res) => {
   let membershipRole = null;
