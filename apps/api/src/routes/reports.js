@@ -1,6 +1,10 @@
 import { Router } from "express";
 import { authenticate } from "../middleware/auth.js";
-import { generationRateLimit } from "../middleware/rateLimit.js";
+import {
+  generationRateLimit,
+  reportDownloadRateLimit,
+  reportListRateLimit,
+} from "../middleware/rateLimit.js";
 import { requireOwnedLocation, toApiError } from "../services/ownership.js";
 import { auditFailure, auditQueued, auditSuccess } from "../services/auditLog.js";
 import { buildDashboardSnapshotReportRun } from "../services/reportService.js";
@@ -485,18 +489,79 @@ export async function listReportRunsForUser({
   }
 }
 
-router.get("/runs", authenticate, async (req, res) => {
+export function compactListAuditFilters(query = {}) {
+  const reportType = cleanStr(query.report_type || query.reportType, 80) || null;
+  const reportKey = cleanStr(query.report_key || query.reportKey, 160) || null;
+  const status = cleanStr(query.status, 40) || null;
+  const dateFrom = cleanStr(query.date_from || query.dateFrom, 40) || null;
+  const dateTo = cleanStr(query.date_to || query.dateTo, 40) || null;
+  const out = {};
+  if (reportType) out.report_type = reportType;
+  if (reportKey) out.report_key = reportKey;
+  if (status) out.status = status;
+  if (dateFrom) out.date_from = dateFrom;
+  if (dateTo) out.date_to = dateTo;
+  return out;
+}
+
+function parseListLimitForAudit(value) {
+  try {
+    return parseListLimit(value);
+  } catch {
+    return null;
+  }
+}
+
+export function buildListAuditDetails(query = {}, result = {}) {
+  return {
+    target_type: "report_run",
+    organization_id: cleanStr(query.organization_id || query.organizationId, 200) || null,
+    client_id: cleanStr(query.client_id || query.clientId, 200) || null,
+    location_id: cleanStr(query.location_id || query.locationId, 200) || null,
+    metadata: {
+      ...compactListAuditFilters(query),
+      limit: result?.pagination?.limit ?? parseListLimitForAudit(query.limit),
+      result_count: Array.isArray(result.report_runs) ? result.report_runs.length : 0,
+      has_more: Boolean(result?.pagination?.has_more),
+      membership_role: cleanStr(result.membership_role, 80) || null,
+    },
+  };
+}
+
+export function buildListFailureAuditDetails(query = {}, error = null) {
+  return {
+    target_type: "report_run",
+    organization_id: cleanStr(query.organization_id || query.organizationId, 200) || null,
+    client_id: cleanStr(query.client_id || query.clientId, 200) || null,
+    location_id: cleanStr(query.location_id || query.locationId, 200) || null,
+    metadata: {
+      ...compactListAuditFilters(query),
+      limit: parseListLimitForAudit(query.limit),
+      reason: compactReason(error || {}),
+      status: Number.isFinite(error?.status) ? error.status : null,
+    },
+  };
+}
+
+router.get("/runs", authenticate, reportListRateLimit, async (req, res) => {
+  const query = req.query || {};
+
   try {
     const result = await listReportRunsForUser({
-      query: req.query || {},
+      query,
       user: req.user || {},
     });
+
+    await auditSuccess(req, "report.run.list", buildListAuditDetails(query, result));
+
     return res.json({
       report_runs: result.report_runs,
       pagination: result.pagination,
     });
   } catch (error) {
-    return toApiError(res, mapValidationError(error));
+    const mapped = mapValidationError(error);
+    await auditFailure(req, "report.run.list_failed", buildListFailureAuditDetails(query, mapped));
+    return toApiError(res, mapped);
   }
 });
 
@@ -701,29 +766,90 @@ export async function downloadReportOutputForUser({
     filename: downloadFilenameFor(run, output, cleanFormat),
     size: buffer.length,
     membership_role: role,
+    organization_id: organizationId,
+    storage_provider: storageProvider,
+    checksum_algorithm: expectedAlgo || null,
   };
 }
 
-router.get("/runs/:runId/outputs/:format", authenticate, async (req, res) => {
-  try {
-    const result = await downloadReportOutputForUser({
-      runId: req.params.runId,
-      format: req.params.format,
-      user: req.user || {},
-    });
+function normalizeDownloadAuditFormat(format) {
+  const cleaned = cleanStr(format, 20).toLowerCase();
+  return REPORT_DOWNLOAD_FORMATS.includes(cleaned) ? cleaned : null;
+}
 
-    res.setHeader("Content-Type", result.content_type);
-    res.setHeader(
-      "Content-Disposition",
-      `attachment; filename="${result.filename}"`,
-    );
-    res.setHeader("Content-Length", String(result.size));
-    res.setHeader("Cache-Control", "no-store");
-    res.setHeader("X-Content-Type-Options", "nosniff");
-    return res.status(200).end(result.buffer);
-  } catch (error) {
-    return toApiError(res, mapValidationError(error));
-  }
-});
+export function buildDownloadAuditDetails({ runId, format, result } = {}) {
+  const safeRunId = cleanStr(runId, 200) || null;
+  return {
+    target_type: "report_run_output",
+    target_id: safeRunId,
+    organization_id: cleanStr(result?.organization_id, 200) || null,
+    metadata: {
+      report_run_id: safeRunId,
+      format: normalizeDownloadAuditFormat(format),
+      size: Number.isFinite(result?.size) ? result.size : null,
+      content_type: cleanStr(result?.content_type, 200) || null,
+      storage_provider: cleanStr(result?.storage_provider, 80) || null,
+      checksum_algorithm: cleanStr(result?.checksum_algorithm, 40) || null,
+      membership_role: cleanStr(result?.membership_role, 80) || null,
+    },
+  };
+}
+
+export function buildDownloadFailureAuditDetails({ runId, format, error } = {}) {
+  const safeRunId = cleanStr(runId, 200) || null;
+  return {
+    target_type: "report_run_output",
+    target_id: safeRunId,
+    metadata: {
+      report_run_id: safeRunId,
+      format: normalizeDownloadAuditFormat(format),
+      reason: compactReason(error || {}),
+      status: Number.isFinite(error?.status) ? error.status : null,
+    },
+  };
+}
+
+router.get(
+  "/runs/:runId/outputs/:format",
+  authenticate,
+  reportDownloadRateLimit,
+  async (req, res) => {
+    const runId = req.params?.runId;
+    const format = req.params?.format;
+
+    try {
+      const result = await downloadReportOutputForUser({
+        runId,
+        format,
+        user: req.user || {},
+      });
+
+      res.setHeader("Content-Type", result.content_type);
+      res.setHeader(
+        "Content-Disposition",
+        `attachment; filename="${result.filename}"`,
+      );
+      res.setHeader("Content-Length", String(result.size));
+      res.setHeader("Cache-Control", "no-store");
+      res.setHeader("X-Content-Type-Options", "nosniff");
+
+      await auditSuccess(req, "report.output.download", buildDownloadAuditDetails({
+        runId,
+        format,
+        result,
+      }));
+
+      return res.status(200).end(result.buffer);
+    } catch (error) {
+      const mapped = mapValidationError(error);
+      await auditFailure(req, "report.output.download_failed", buildDownloadFailureAuditDetails({
+        runId,
+        format,
+        error: mapped,
+      }));
+      return toApiError(res, mapped);
+    }
+  },
+);
 
 export default router;

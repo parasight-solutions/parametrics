@@ -7,6 +7,8 @@ const DEFAULT_LIMITS = {
   sync: 10,
   generation: 20,
   mutation: 120,
+  report_list: 120,
+  report_download: 60,
 };
 
 const DEFAULT_ENV_KEYS = {
@@ -17,6 +19,8 @@ const DEFAULT_ENV_KEYS = {
   sync: "RATE_LIMIT_SYNC_MAX",
   generation: "RATE_LIMIT_GENERATION_MAX",
   mutation: "RATE_LIMIT_MUTATION_MAX",
+  report_list: "RATE_LIMIT_REPORT_LIST_MAX",
+  report_download: "RATE_LIMIT_REPORT_DOWNLOAD_MAX",
 };
 
 const sharedStore = new Map();
@@ -49,6 +53,8 @@ export function resolveRateLimitConfig(env = process.env) {
       sync: positiveInt(env[DEFAULT_ENV_KEYS.sync], DEFAULT_LIMITS.sync),
       generation: positiveInt(env[DEFAULT_ENV_KEYS.generation], DEFAULT_LIMITS.generation),
       mutation: positiveInt(env[DEFAULT_ENV_KEYS.mutation], DEFAULT_LIMITS.mutation),
+      report_list: positiveInt(env[DEFAULT_ENV_KEYS.report_list], DEFAULT_LIMITS.report_list),
+      report_download: positiveInt(env[DEFAULT_ENV_KEYS.report_download], DEFAULT_LIMITS.report_download),
     },
   };
 }
@@ -193,6 +199,18 @@ export const generationRateLimit = createRateLimiter({
 export const mutationRateLimit = createRateLimiter({
   action: "mutation",
   max: config.limits.mutation,
+  windowSeconds: config.windowSeconds,
+});
+
+export const reportListRateLimit = createRateLimiter({
+  action: "report_list",
+  max: config.limits.report_list,
+  windowSeconds: config.windowSeconds,
+});
+
+export const reportDownloadRateLimit = createRateLimiter({
+  action: "report_download",
+  max: config.limits.report_download,
   windowSeconds: config.windowSeconds,
 });
 

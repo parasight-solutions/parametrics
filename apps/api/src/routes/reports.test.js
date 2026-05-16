@@ -4,10 +4,21 @@ import assert from "node:assert/strict";
 import crypto from "node:crypto";
 import {
   assertDashboardSnapshotLocationScope,
+  buildDownloadAuditDetails,
+  buildDownloadFailureAuditDetails,
+  buildListAuditDetails,
+  buildListFailureAuditDetails,
+  compactListAuditFilters,
   downloadReportOutputForUser,
   generateDashboardSnapshotReport,
   listReportRunsForUser,
 } from "./reports.js";
+import reportsRouter from "./reports.js";
+import {
+  generationRateLimit,
+  reportDownloadRateLimit,
+  reportListRateLimit,
+} from "../middleware/rateLimit.js";
 
 const fixedNow = new Date("2026-05-01T12:00:00.000Z");
 
@@ -1258,4 +1269,239 @@ test("listReportRunsForUser response shape matches the documented contract", asy
   assert.equal(row.input_snapshot, undefined);
   assert.equal(row.outputs[0].buffer, undefined);
   assert.equal(row.outputs[0].base64, undefined);
+});
+
+function routerLayerStack(router, method, routePath) {
+  return router.stack
+    .filter((layer) => layer?.route?.path === routePath)
+    .flatMap((layer) =>
+      layer.route.stack.filter((handler) =>
+        handler.method === method.toLowerCase() || handler.method === undefined,
+      ),
+    );
+}
+
+test("router.get('/runs') is wired with authenticate + report_list rate limiter", () => {
+  const handlers = routerLayerStack(reportsRouter, "get", "/runs").map((h) => h.handle);
+  const names = handlers.map((fn) => fn.name);
+  assert.ok(names.includes("authenticate"), `expected authenticate, got ${names.join(",")}`);
+  assert.ok(handlers.includes(reportListRateLimit), "expected reportListRateLimit on /runs");
+  assert.equal(handlers.includes(reportDownloadRateLimit), false);
+  assert.equal(handlers.includes(generationRateLimit), false);
+});
+
+test("router.get('/runs/:runId/outputs/:format') is wired with authenticate + report_download rate limiter", () => {
+  const handlers = routerLayerStack(
+    reportsRouter,
+    "get",
+    "/runs/:runId/outputs/:format",
+  ).map((h) => h.handle);
+  const names = handlers.map((fn) => fn.name);
+  assert.ok(names.includes("authenticate"), `expected authenticate, got ${names.join(",")}`);
+  assert.ok(handlers.includes(reportDownloadRateLimit), "expected reportDownloadRateLimit on download route");
+  assert.equal(handlers.includes(reportListRateLimit), false);
+  assert.equal(handlers.includes(generationRateLimit), false);
+});
+
+test("router.post('/dashboard-snapshot') stays on the generation rate-limit bucket", () => {
+  const handlers = routerLayerStack(reportsRouter, "post", "/dashboard-snapshot").map((h) => h.handle);
+  assert.ok(handlers.includes(generationRateLimit), "expected generationRateLimit on dashboard-snapshot");
+  assert.equal(handlers.includes(reportListRateLimit), false);
+  assert.equal(handlers.includes(reportDownloadRateLimit), false);
+});
+
+test("compactListAuditFilters omits empty filters and trims long values", () => {
+  assert.deepEqual(compactListAuditFilters({}), {});
+  assert.deepEqual(
+    compactListAuditFilters({
+      report_type: "dashboard_snapshot",
+      report_key: "",
+      status: "succeeded",
+      date_from: "2026-05-11",
+      date_to: "2026-05-13",
+    }),
+    {
+      report_type: "dashboard_snapshot",
+      status: "succeeded",
+      date_from: "2026-05-11",
+      date_to: "2026-05-13",
+    },
+  );
+});
+
+test("buildListAuditDetails returns compact metadata and never leaks storage_key/path/base64", () => {
+  const query = {
+    organization_id: "org_1",
+    client_id: "client_a",
+    location_id: "loc_b",
+    report_type: "dashboard_snapshot",
+    report_key: "k1",
+    status: "succeeded",
+    date_from: "2026-05-11",
+    date_to: "2026-05-13",
+    limit: "5",
+  };
+  const result = {
+    report_runs: [sampleSanitizedRun(), sampleSanitizedRun()],
+    pagination: { limit: 5, has_more: true, next_cursor: null },
+    membership_role: "owner",
+  };
+
+  const details = buildListAuditDetails(query, result);
+
+  assert.equal(details.target_type, "report_run");
+  assert.equal(details.organization_id, "org_1");
+  assert.equal(details.client_id, "client_a");
+  assert.equal(details.location_id, "loc_b");
+  assert.deepEqual(
+    Object.keys(details.metadata).sort(),
+    [
+      "date_from",
+      "date_to",
+      "has_more",
+      "limit",
+      "membership_role",
+      "report_key",
+      "report_type",
+      "result_count",
+      "status",
+    ],
+  );
+  assert.equal(details.metadata.limit, 5);
+  assert.equal(details.metadata.result_count, 2);
+  assert.equal(details.metadata.has_more, true);
+  assert.equal(details.metadata.membership_role, "owner");
+
+  const serialized = JSON.stringify(details);
+  for (const banned of ["storage_key", "buffer", "base64", "/tmp/", "/var/www/", "absolute"]) {
+    assert.equal(serialized.includes(banned), false, `should not contain ${banned}`);
+  }
+});
+
+test("buildListFailureAuditDetails captures the reason and status without exposing query payloads", () => {
+  const details = buildListFailureAuditDetails(
+    {
+      organization_id: "org_1",
+      report_key: "k1",
+      limit: "9",
+    },
+    {
+      status: 403,
+      code: "organization_role_required",
+      message: "required organization role is missing",
+    },
+  );
+
+  assert.equal(details.target_type, "report_run");
+  assert.equal(details.organization_id, "org_1");
+  assert.equal(details.metadata.limit, 9);
+  assert.equal(details.metadata.reason.code, "organization_role_required");
+  assert.equal(details.metadata.status, 403);
+  assert.equal("report_runs" in details.metadata, false);
+  const serialized = JSON.stringify(details);
+  for (const banned of ["storage_key", "buffer", "base64", "/tmp/"]) {
+    assert.equal(serialized.includes(banned), false);
+  }
+});
+
+test("buildDownloadAuditDetails returns compact metadata and never leaks storage_key/path/base64/filename", () => {
+  const details = buildDownloadAuditDetails({
+    runId: "run_xyz",
+    format: "PDF",
+    result: {
+      organization_id: "org_1",
+      size: 2047,
+      content_type: "application/pdf",
+      storage_provider: "local",
+      storage_key: "report-outputs/org_1/2026/05/run_xyz.pdf",
+      checksum_algorithm: "sha256",
+      filename: "report.pdf",
+      membership_role: "owner",
+      buffer: Buffer.from("ignored"),
+    },
+  });
+
+  assert.equal(details.target_type, "report_run_output");
+  assert.equal(details.target_id, "run_xyz");
+  assert.equal(details.organization_id, "org_1");
+  assert.equal(details.metadata.report_run_id, "run_xyz");
+  assert.equal(details.metadata.format, "pdf");
+  assert.equal(details.metadata.size, 2047);
+  assert.equal(details.metadata.content_type, "application/pdf");
+  assert.equal(details.metadata.storage_provider, "local");
+  assert.equal(details.metadata.checksum_algorithm, "sha256");
+  assert.equal(details.metadata.membership_role, "owner");
+
+  assert.equal("storage_key" in details.metadata, false);
+  assert.equal("filename" in details.metadata, false);
+  assert.equal("buffer" in details.metadata, false);
+  assert.equal("path" in details.metadata, false);
+  assert.equal("base64" in details.metadata, false);
+
+  const serialized = JSON.stringify(details);
+  for (const banned of ["storage_key", "report-outputs/", "buffer", "base64", "filename", "/tmp/", "/var/www/"]) {
+    assert.equal(serialized.includes(banned), false, `should not contain ${banned}`);
+  }
+});
+
+test("buildDownloadAuditDetails normalizes invalid format to null and trims the run id", () => {
+  const details = buildDownloadAuditDetails({
+    runId: "  run_short  ",
+    format: "csv",
+    result: { organization_id: "org_1" },
+  });
+
+  assert.equal(details.target_id, "run_short");
+  assert.equal(details.metadata.report_run_id, "run_short");
+  assert.equal(details.metadata.format, null);
+});
+
+test("buildDownloadFailureAuditDetails captures the reason and status without bytes", () => {
+  const details = buildDownloadFailureAuditDetails({
+    runId: "run_dl",
+    format: "pdf",
+    error: {
+      status: 409,
+      code: "report_output_not_ready",
+      message: "report output is not ready for download",
+    },
+  });
+
+  assert.equal(details.target_id, "run_dl");
+  assert.equal(details.metadata.format, "pdf");
+  assert.equal(details.metadata.reason.code, "report_output_not_ready");
+  assert.equal(details.metadata.status, 409);
+  assert.equal("size" in details.metadata, false);
+  assert.equal("storage_provider" in details.metadata, false);
+});
+
+test("writeAuditLog (used by report routes) swallows errors so route handlers cannot fail because of audit", async () => {
+  // Force an early failure inside writeAuditLog by passing a `req` whose
+  // headers accessor throws synchronously. writeAuditLog wraps the entire
+  // body in try/catch, so the audit failure must not propagate out.
+  const { writeAuditLog } = await import("../services/auditLog.js");
+  const brokenReq = {
+    user: { user_id: "user_1" },
+    get headers() {
+      throw new Error("headers boom");
+    },
+    socket: {},
+  };
+
+  const originalError = console.error;
+  const logged = [];
+  console.error = (...args) => { logged.push(args.map(String).join(" ")); };
+  try {
+    await writeAuditLog({
+      req: brokenReq,
+      action: "report.run.list",
+      organization_id: "org_1",
+      metadata: { report_type: "dashboard_snapshot" },
+    });
+  } finally {
+    console.error = originalError;
+  }
+
+  // The promise must resolve (no throw); the failure must be logged as `[audit] write failed`.
+  assert.ok(logged.some((line) => line.includes("[audit] write failed")), "expected [audit] write failed in console.error");
 });

@@ -18,15 +18,81 @@ test("resolveRateLimitConfig uses safe defaults", () => {
   assert.equal(cfg.limits.sync, 10);
   assert.equal(cfg.limits.generation, 20);
   assert.equal(cfg.limits.mutation, 120);
+  assert.equal(cfg.limits.report_list, 120);
+  assert.equal(cfg.limits.report_download, 60);
 });
 
 test("resolveRateLimitConfig honors env overrides", () => {
   const cfg = resolveRateLimitConfig({
     RATE_LIMIT_WINDOW_SECONDS: "60",
     RATE_LIMIT_AUTH_MAX: "3",
+    RATE_LIMIT_REPORT_LIST_MAX: "7",
+    RATE_LIMIT_REPORT_DOWNLOAD_MAX: "4",
   });
   assert.equal(cfg.windowSeconds, 60);
   assert.equal(cfg.limits.auth, 3);
+  assert.equal(cfg.limits.report_list, 7);
+  assert.equal(cfg.limits.report_download, 4);
+});
+
+test("createRateLimiter uses the report_list bucket and key", () => {
+  const store = new Map();
+  const limiter = createRateLimiter({
+    action: "report_list",
+    max: 1,
+    windowSeconds: 60,
+    store,
+    now: () => 1000,
+  });
+
+  const req = { user: { user_id: "user_x" }, ip: "203.0.113.1", headers: {} };
+  const res = {
+    headers: {},
+    statusCode: 200,
+    body: null,
+    set(k, v) { this.headers[k] = v; },
+    status(code) { this.statusCode = code; return this; },
+    json(body) { this.body = body; return this; },
+  };
+
+  let nextCount = 0;
+  limiter(req, res, () => { nextCount += 1; });
+  limiter(req, res, () => { nextCount += 1; });
+
+  assert.equal(nextCount, 1);
+  assert.equal(res.statusCode, 429);
+  assert.equal(res.body.error.code, "rate_limited");
+  assert.equal(Array.from(store.keys())[0], "report_list:user:user_x");
+});
+
+test("createRateLimiter uses the report_download bucket and key", () => {
+  const store = new Map();
+  const limiter = createRateLimiter({
+    action: "report_download",
+    max: 1,
+    windowSeconds: 60,
+    store,
+    now: () => 1000,
+  });
+
+  const req = { user: { user_id: "user_y" }, ip: "203.0.113.2", headers: {} };
+  const res = {
+    headers: {},
+    statusCode: 200,
+    body: null,
+    set(k, v) { this.headers[k] = v; },
+    status(code) { this.statusCode = code; return this; },
+    json(body) { this.body = body; return this; },
+  };
+
+  let nextCount = 0;
+  limiter(req, res, () => { nextCount += 1; });
+  limiter(req, res, () => { nextCount += 1; });
+
+  assert.equal(nextCount, 1);
+  assert.equal(res.statusCode, 429);
+  assert.equal(res.body.error.code, "rate_limited");
+  assert.equal(Array.from(store.keys())[0], "report_download:user:user_y");
 });
 
 test("keying prefers authenticated user id over IP", () => {

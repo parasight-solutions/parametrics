@@ -590,6 +590,26 @@ Out of scope for S2-25 and still future:
 - Component-render testing (no `@testing-library/react` installed); helper coverage is the testing surface today.
 - Phase 2 providers, multi-channel metrics, billing/entitlements, or GBP behavior changes.
 
+## S2-29 Report Audit / Rate-Limit Hardening
+
+S2-29 wires the read-only report listing and download routes onto dedicated audit events and dedicated rate-limit buckets.
+
+Current state additions:
+
+- `GET /api/v1/reports/runs` runs the `report_list` rate-limit bucket (default `120` requests per `RATE_LIMIT_WINDOW_SECONDS` window per `req.user.user_id`; env override `RATE_LIMIT_REPORT_LIST_MAX`). Successful responses emit a `report.run.list` audit event with compact metadata `{ report_type?, report_key?, status?, date_from?, date_to?, limit, result_count, has_more, membership_role }`. Failures after auth/membership emit `report.run.list_failed` with `{ ...filters, limit, reason: { code, message }, status }`.
+- `GET /api/v1/reports/runs/:runId/outputs/:format` runs the `report_download` rate-limit bucket (default `60` requests per window per `req.user.user_id`; env override `RATE_LIMIT_REPORT_DOWNLOAD_MAX`). Successful responses emit a `report.output.download` audit event with `{ report_run_id, format, size, content_type, storage_provider, checksum_algorithm, membership_role }`. Failures emit `report.output.download_failed` with `{ report_run_id, format?, reason, status }`.
+- `POST /api/v1/reports/dashboard-snapshot` continues to use the existing `generation` rate-limit bucket and `report.dashboard_snapshot.generate` audit events. No change to its body, headers, or response shape.
+- The audit payload builders `compactListAuditFilters`, `buildListAuditDetails`, `buildListFailureAuditDetails`, `buildDownloadAuditDetails`, and `buildDownloadFailureAuditDetails` are exported from `apps/api/src/routes/reports.js` for direct unit testing. The route handlers stay thin and call `auditSuccess` / `auditFailure` with the produced payload.
+- Sanitization: storage keys, absolute paths, filenames, generated buffers, base64 payloads, and the run document body are never logged in the new audit events; secret-bearing fields stay redacted by the existing `sanitizeAuditMetadata` pipeline. Audit failures are swallowed by `writeAuditLog`'s try/catch so they cannot fail listing/download requests.
+- Rate-limit middleware exposes new helpers `reportListRateLimit` and `reportDownloadRateLimit` from `apps/api/src/middleware/rateLimit.js`, with the new defaults added to `resolveRateLimitConfig`. The 429 response shape, `Retry-After`, and `X-RateLimit-*` headers are unchanged.
+
+Out of scope for S2-29 and still future:
+
+- Redis-backed distributed rate limiting (the in-process limiter remains).
+- Per-bucket configuration UI or admin overrides beyond the `RATE_LIMIT_*` env keys.
+- Report detail / regenerate routes and their audit/rate-limit definitions.
+- Frontend code changes, dependency installs, or `package-lock.json` updates.
+
 ## S2-28 Report Storage Env Hardening
 
 S2-28 adds startup-time validation of `REPORT_STORAGE_LOCAL_DIR` so production-like environments cannot silently use `<os.tmpdir()>/parametrics/report-outputs`. The exported helper `validateReportStorageConfig({ env, cwd, fsImpl })` lives in `apps/api/src/services/reportStorage.js` and is called by `apps/api/src/server.js` before `ensureIndexes()` and `app.listen()`. On failure, the API logs `[report_storage] startup validation failed: <code>: <message>` and exits non-zero. On success, it logs only `[report_storage] provider=local configured=<bool> production=<bool> root=<redacted-label>` (e.g. `<persistent-root>/<basename>` or `<os-tmpdir>/parametrics/report-outputs`). Absolute paths, env values, and storage credentials are never logged or returned to clients. The synchronous `POST /api/v1/reports/dashboard-snapshot` route, the listing API (S2-23), the download API (S2-24), and the report history UI (S2-25) are unchanged; `report_runs.outputs[]` metadata shape is unchanged; storage key safety rules and adapter read/write/stat/delete behavior are unchanged.
