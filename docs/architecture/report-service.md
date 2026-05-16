@@ -540,6 +540,29 @@ Out of scope for S2-23 and still future:
 
 S2-23.1 verified the read-only listing endpoint end-to-end against a live local API + MongoDB under the controlled `s2-15-fixture-org` scope. Proof is recorded in `docs/proof/s2-23-1-report-runs-listing-live-smoke.md`. The smoke confirmed HTTP 200, the documented response shape, server-controlled newest-first sort, visibility of the S2-22.1 smoke row, filter narrowing to a single row under `status`/`report_type`/`report_key`/`date_from`/`date_to`/`limit=1`, the durable output metadata exposed per row with `path: null`, no `_id`/`input_snapshot`/`buffer`/`base64`/absolute path in the response, denial codes for missing scope and denied/non-active roles, and matching Mongo counts. Only the API runtime was started; workers and scheduler were not.
 
+## S2-24 Report Output Download API
+
+S2-24 adds the read-only `GET /api/v1/reports/runs/:runId/outputs/:format` endpoint. The synchronous `POST /api/v1/reports/dashboard-snapshot` route, the durable local storage adapter, PDF/XLSX generation, the persisted output shape, and the S2-23 listing endpoint are unchanged.
+
+Current state additions:
+
+- New backend endpoint `GET /api/v1/reports/runs/:runId/outputs/:format` (authenticated, mounted under `/api/v1/reports`). Returns raw bytes (not JSON, not base64) for the requested output format.
+- Supported path params: `runId` (required), `format` (required; one of `pdf`/`xlsx`). Any other format ⇒ `400 bad_request`.
+- Authorization uses `organization_members` only. `owner`/`admin` can download any output for runs in their organization. `manager`/`viewer` can download only when the run's `client_id` or `location_id` matches their `assigned_client_ids`/`assigned_location_ids`; org-level runs (no `client_id`/`location_id`) are denied for `manager`/`viewer` with `403 organization_scope_required`. `member`/`invited`/`disabled`/missing are denied. JWT `role` and `location_org_map` are not used.
+- Output readiness: the requested output must exist on the run, have `status: succeeded`, and carry both `storage_provider` and `storage_key`. Otherwise the route returns `404 report_output_not_found` (format absent on the run) or `409 report_output_not_ready` (output not yet stored, failed, or pending).
+- Storage read & integrity: bytes are read through the `ReportStorageAdapter.readOutput({ storage_provider, storage_key })`. Read failures surface as `500 report_output_read_failed`. The route verifies the read buffer's length matches the persisted `size` when present and recomputes `sha256` and compares against `checksum.value` when the persisted checksum is `sha256`. Mismatches surface as `500 report_output_integrity_failed`.
+- Response headers on success: `Content-Type` from persisted `content_type` (falling back to the canonical MIME per format), `Content-Disposition: attachment; filename="<sanitized>"` using `output.filename` when it matches `^[A-Za-z0-9._-]+$`, `Content-Length` from the buffer length, `Cache-Control: no-store`, and `X-Content-Type-Options: nosniff`.
+- Sanitization: the route never returns absolute server paths, storage keys, base64 bodies, or the report run document; it only returns the response headers above and the raw bytes. Storage roots and adapter credentials are never exposed.
+- New backend service helpers `getReportRunById` and `findReportRunOutput` in `apps/api/src/services/reportStore.js`. `getReportRunById` defensively strips `_id` and `input_snapshot` even if the underlying collection ignores Mongo projection.
+- No new dependency. No `package-lock.json` change. The `apps/api` `npm test` script already covers the updated tests.
+
+Out of scope for S2-24 and still future:
+
+- Frontend report history UI (S2-25).
+- Optional `POST /api/v1/reports/runs/:runId/regenerate` (still design-only).
+- Optional `GET /api/v1/reports/runs/:runId` detail endpoint (the download path resolves the run by id internally; a dedicated detail route remains a future addition if the frontend needs it).
+- Queue/worker-based report generation, dedicated `report.output.download` audit event, dedicated `report_download` rate-limit bucket, cloud storage adapters, signed URLs, retention enforcement.
+
 ## S2-20 Report History And Storage Contract
 
 S2-20 is complete as documentation/design only. The report history listing, run detail, output download, and durable output storage contract is recorded in `docs/architecture/report-history-and-storage.md`.

@@ -1,8 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
+import crypto from "node:crypto";
 import {
   assertDashboardSnapshotLocationScope,
+  downloadReportOutputForUser,
   generateDashboardSnapshotReport,
   listReportRunsForUser,
 } from "./reports.js";
@@ -743,6 +745,499 @@ test("listReportRunsForUser surfaces invalid filter codes from the store as 400"
     }),
     (err) => err.status === 400 && err.code === "invalid_date_range",
   );
+});
+
+function downloadMembership(role, {
+  assigned_client_ids = [],
+  assigned_location_ids = [],
+  status = "active",
+  organization_id = "org_dl",
+  user_id = "user_dl",
+} = {}) {
+  return {
+    organization_id,
+    user_id,
+    role,
+    status,
+    assigned_client_ids,
+    assigned_location_ids,
+  };
+}
+
+function denyDownloadMembership(code = "organization_membership_required") {
+  return async () => {
+    const err = new Error(
+      code === "organization_role_required"
+        ? "required organization role is missing"
+        : "active organization membership is required",
+    );
+    err.status = 403;
+    err.statusCode = 403;
+    err.code = code;
+    throw err;
+  };
+}
+
+function downloadRun({
+  id = "run_dl_1",
+  organization_id = "org_dl",
+  client_id = null,
+  location_id = null,
+  outputs = null,
+  status = "succeeded",
+} = {}) {
+  const pdfBuffer = Buffer.from("%PDF-1.4 download fixture bytes", "utf8");
+  const xlsxBuffer = Buffer.from("PK\x03\x04 xlsx download fixture bytes", "utf8");
+  const checksumOf = (buf) => crypto.createHash("sha256").update(buf).digest("hex");
+  const defaultOutputs = [
+    {
+      format: "pdf",
+      status: "succeeded",
+      size: pdfBuffer.length,
+      path: null,
+      storage_provider: "local",
+      storage_key: `report-outputs/${organization_id}/2026/05/${id}.pdf`,
+      content_type: "application/pdf",
+      filename: `dl-${id}.pdf`,
+      checksum: { algorithm: "sha256", value: checksumOf(pdfBuffer) },
+      generated_at: fixedNow,
+      expires_at: null,
+      error: null,
+    },
+    {
+      format: "xlsx",
+      status: "succeeded",
+      size: xlsxBuffer.length,
+      path: null,
+      storage_provider: "local",
+      storage_key: `report-outputs/${organization_id}/2026/05/${id}.xlsx`,
+      content_type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      filename: `dl-${id}.xlsx`,
+      checksum: { algorithm: "sha256", value: checksumOf(xlsxBuffer) },
+      generated_at: fixedNow,
+      expires_at: null,
+      error: null,
+    },
+  ];
+  return {
+    run: {
+      id,
+      report_id: null,
+      report_key: "gbp_dashboard_april",
+      report_type: "dashboard_snapshot",
+      report_name: "April GBP Dashboard",
+      status,
+      requested_formats: ["pdf", "xlsx"],
+      outputs: outputs || defaultOutputs,
+      organization_id,
+      client_id,
+      location_id,
+      requested_by_user_id: "user_dl",
+      created_at: fixedNow,
+      updated_at: fixedNow,
+      started_at: fixedNow,
+      completed_at: fixedNow,
+      error: null,
+    },
+    buffers: { pdf: pdfBuffer, xlsx: xlsxBuffer },
+  };
+}
+
+function downloadStorage(map = {}, { onRead = null } = {}) {
+  return {
+    provider: "local",
+    root: "/memory",
+    async writeOutput() { throw new Error("not implemented in download fixture"); },
+    async readOutput({ storage_provider, storage_key }) {
+      if (onRead) onRead({ storage_provider, storage_key });
+      if (storage_provider !== "local") {
+        const err = new Error("unsupported provider");
+        err.code = "report_storage_unsupported_provider";
+        throw err;
+      }
+      if (!Object.prototype.hasOwnProperty.call(map, storage_key)) {
+        const err = new Error("missing on disk");
+        err.code = "ENOENT";
+        throw err;
+      }
+      const value = map[storage_key];
+      if (value === "throw") {
+        const err = new Error("read failed");
+        err.code = "EIO";
+        throw err;
+      }
+      return value;
+    },
+    async statOutput() { return { exists: true, size: 1 }; },
+    async deleteOutput() { return { deleted: true }; },
+  };
+}
+
+test("downloadReportOutputForUser rejects an invalid format", async () => {
+  await assert.rejects(
+    () => downloadReportOutputForUser({
+      runId: "run_dl_1",
+      format: "csv",
+      user: { user_id: "user_dl" },
+      deps: {
+        getReportRunById: async () => downloadRun().run,
+        requireOrganizationMembership: async () => downloadMembership("owner"),
+        reportStorage: downloadStorage({}),
+      },
+    }),
+    (err) => err.status === 400 && err.code === "bad_request",
+  );
+});
+
+test("downloadReportOutputForUser rejects a missing runId", async () => {
+  await assert.rejects(
+    () => downloadReportOutputForUser({
+      runId: "",
+      format: "pdf",
+      user: { user_id: "user_dl" },
+      deps: {
+        getReportRunById: async () => downloadRun().run,
+        requireOrganizationMembership: async () => downloadMembership("owner"),
+        reportStorage: downloadStorage({}),
+      },
+    }),
+    (err) => err.status === 400 && err.code === "bad_request",
+  );
+});
+
+test("downloadReportOutputForUser returns 404 report_run_not_found when run is missing", async () => {
+  let memberCalled = false;
+  await assert.rejects(
+    () => downloadReportOutputForUser({
+      runId: "run_missing",
+      format: "pdf",
+      user: { user_id: "user_dl" },
+      deps: {
+        getReportRunById: async () => null,
+        requireOrganizationMembership: async () => { memberCalled = true; return downloadMembership("owner"); },
+        reportStorage: downloadStorage({}),
+      },
+    }),
+    (err) => err.status === 404 && err.code === "report_run_not_found",
+  );
+  assert.equal(memberCalled, false);
+});
+
+test("downloadReportOutputForUser denies missing organization membership", async () => {
+  const { run } = downloadRun();
+  await assert.rejects(
+    () => downloadReportOutputForUser({
+      runId: run.id,
+      format: "pdf",
+      user: { user_id: "user_dl" },
+      deps: {
+        getReportRunById: async () => run,
+        requireOrganizationMembership: denyDownloadMembership("organization_membership_required"),
+        reportStorage: downloadStorage({}),
+      },
+    }),
+    (err) => err.status === 403 && err.code === "organization_membership_required",
+  );
+});
+
+test("downloadReportOutputForUser denies member/invited/disabled roles", async () => {
+  const cases = [
+    { role: "member", status: "active" },
+    { role: "viewer", status: "invited" },
+    { role: "viewer", status: "disabled" },
+  ];
+  for (const { role, status } of cases) {
+    const { run } = downloadRun();
+    await assert.rejects(
+      () => downloadReportOutputForUser({
+        runId: run.id,
+        format: "pdf",
+        user: { user_id: "user_dl" },
+        deps: {
+          getReportRunById: async () => run,
+          requireOrganizationMembership: status === "active"
+            ? async () => downloadMembership(role)
+            : denyDownloadMembership("organization_membership_required"),
+          reportStorage: downloadStorage({}),
+        },
+      }),
+      (err) => {
+        if (status === "active") {
+          return err.status === 403 && err.code === "organization_role_required";
+        }
+        return err.status === 403 && err.code === "organization_membership_required";
+      },
+      `${role}/${status} should be denied`,
+    );
+  }
+});
+
+test("downloadReportOutputForUser denies manager/viewer for org-level runs", async () => {
+  for (const role of ["manager", "viewer"]) {
+    const { run } = downloadRun({ client_id: null, location_id: null });
+    await assert.rejects(
+      () => downloadReportOutputForUser({
+        runId: run.id,
+        format: "pdf",
+        user: { user_id: "user_dl" },
+        deps: {
+          getReportRunById: async () => run,
+          requireOrganizationMembership: async () => downloadMembership(role, {
+            assigned_client_ids: ["client_x"],
+            assigned_location_ids: ["loc_x"],
+          }),
+          reportStorage: downloadStorage({}),
+        },
+      }),
+      (err) => err.status === 403 && err.code === "organization_scope_required",
+      `org-level deny for ${role}`,
+    );
+  }
+});
+
+test("downloadReportOutputForUser denies manager/viewer when run scope is outside their assignments", async () => {
+  for (const role of ["manager", "viewer"]) {
+    const { run } = downloadRun({ client_id: "client_other", location_id: "loc_other" });
+    await assert.rejects(
+      () => downloadReportOutputForUser({
+        runId: run.id,
+        format: "pdf",
+        user: { user_id: "user_dl" },
+        deps: {
+          getReportRunById: async () => run,
+          requireOrganizationMembership: async () => downloadMembership(role, {
+            assigned_client_ids: ["client_dl"],
+            assigned_location_ids: ["loc_dl"],
+          }),
+          reportStorage: downloadStorage({}),
+        },
+      }),
+      (err) => err.status === 403 && err.code === "organization_scope_required",
+      `scope-mismatch deny for ${role}`,
+    );
+  }
+});
+
+test("downloadReportOutputForUser allows owner/admin to download an org-level run output", async () => {
+  for (const role of ["owner", "admin"]) {
+    const { run, buffers } = downloadRun({ id: `run_${role}` });
+    const storage = downloadStorage({
+      [run.outputs[0].storage_key]: buffers.pdf,
+      [run.outputs[1].storage_key]: buffers.xlsx,
+    });
+    const result = await downloadReportOutputForUser({
+      runId: run.id,
+      format: "pdf",
+      user: { user_id: "user_dl" },
+      deps: {
+        getReportRunById: async () => run,
+        requireOrganizationMembership: async () => downloadMembership(role),
+        reportStorage: storage,
+      },
+    });
+    assert.equal(result.content_type, "application/pdf");
+    assert.equal(result.filename, `dl-${run.id}.pdf`);
+    assert.equal(result.size, buffers.pdf.length);
+    assert.equal(Buffer.compare(result.buffer, buffers.pdf), 0);
+    assert.equal(result.membership_role, role);
+  }
+});
+
+test("downloadReportOutputForUser allows manager with assigned client scope", async () => {
+  const { run, buffers } = downloadRun({ id: "run_mgr_client", client_id: "client_dl", location_id: null });
+  const storage = downloadStorage({
+    [run.outputs[0].storage_key]: buffers.pdf,
+    [run.outputs[1].storage_key]: buffers.xlsx,
+  });
+  const result = await downloadReportOutputForUser({
+    runId: run.id,
+    format: "xlsx",
+    user: { user_id: "user_dl" },
+    deps: {
+      getReportRunById: async () => run,
+      requireOrganizationMembership: async () => downloadMembership("manager", {
+        assigned_client_ids: ["client_dl"],
+      }),
+      reportStorage: storage,
+    },
+  });
+  assert.equal(result.content_type, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+  assert.equal(result.filename, `dl-${run.id}.xlsx`);
+  assert.equal(Buffer.compare(result.buffer, buffers.xlsx), 0);
+});
+
+test("downloadReportOutputForUser allows viewer with assigned location scope", async () => {
+  const { run, buffers } = downloadRun({ id: "run_viewer_loc", client_id: null, location_id: "loc_dl" });
+  const storage = downloadStorage({
+    [run.outputs[0].storage_key]: buffers.pdf,
+    [run.outputs[1].storage_key]: buffers.xlsx,
+  });
+  const result = await downloadReportOutputForUser({
+    runId: run.id,
+    format: "pdf",
+    user: { user_id: "user_dl" },
+    deps: {
+      getReportRunById: async () => run,
+      requireOrganizationMembership: async () => downloadMembership("viewer", {
+        assigned_location_ids: ["loc_dl"],
+      }),
+      reportStorage: storage,
+    },
+  });
+  assert.equal(Buffer.compare(result.buffer, buffers.pdf), 0);
+});
+
+test("downloadReportOutputForUser returns 404 report_output_not_found when the format is not in the run", async () => {
+  const { run, buffers } = downloadRun();
+  const onlyPdf = [run.outputs[0]];
+  await assert.rejects(
+    () => downloadReportOutputForUser({
+      runId: run.id,
+      format: "xlsx",
+      user: { user_id: "user_dl" },
+      deps: {
+        getReportRunById: async () => ({ ...run, outputs: onlyPdf }),
+        requireOrganizationMembership: async () => downloadMembership("owner"),
+        reportStorage: downloadStorage({
+          [onlyPdf[0].storage_key]: buffers.pdf,
+        }),
+      },
+    }),
+    (err) => err.status === 404 && err.code === "report_output_not_found",
+  );
+});
+
+test("downloadReportOutputForUser returns 409 report_output_not_ready for failed/pending outputs", async () => {
+  for (const status of ["failed", "pending", "running"]) {
+    const { run } = downloadRun();
+    const outputs = run.outputs.map((o) => o.format === "pdf" ? { ...o, status } : o);
+    await assert.rejects(
+      () => downloadReportOutputForUser({
+        runId: run.id,
+        format: "pdf",
+        user: { user_id: "user_dl" },
+        deps: {
+          getReportRunById: async () => ({ ...run, outputs }),
+          requireOrganizationMembership: async () => downloadMembership("owner"),
+          reportStorage: downloadStorage({}),
+        },
+      }),
+      (err) => err.status === 409 && err.code === "report_output_not_ready",
+      `status=${status}`,
+    );
+  }
+});
+
+test("downloadReportOutputForUser returns 409 report_output_not_ready when storage metadata is missing", async () => {
+  const { run } = downloadRun();
+  const outputs = run.outputs.map((o) => o.format === "pdf"
+    ? { ...o, storage_provider: null, storage_key: null }
+    : o);
+  await assert.rejects(
+    () => downloadReportOutputForUser({
+      runId: run.id,
+      format: "pdf",
+      user: { user_id: "user_dl" },
+      deps: {
+        getReportRunById: async () => ({ ...run, outputs }),
+        requireOrganizationMembership: async () => downloadMembership("owner"),
+        reportStorage: downloadStorage({}),
+      },
+    }),
+    (err) => err.status === 409 && err.code === "report_output_not_ready",
+  );
+});
+
+test("downloadReportOutputForUser returns 500 report_output_read_failed when storage throws", async () => {
+  const { run } = downloadRun();
+  const storage = downloadStorage({ [run.outputs[0].storage_key]: "throw" });
+  await assert.rejects(
+    () => downloadReportOutputForUser({
+      runId: run.id,
+      format: "pdf",
+      user: { user_id: "user_dl" },
+      deps: {
+        getReportRunById: async () => run,
+        requireOrganizationMembership: async () => downloadMembership("owner"),
+        reportStorage: storage,
+      },
+    }),
+    (err) => err.status === 500 && err.code === "report_output_read_failed",
+  );
+});
+
+test("downloadReportOutputForUser returns 500 report_output_integrity_failed on size mismatch", async () => {
+  const { run, buffers } = downloadRun();
+  const truncated = buffers.pdf.subarray(0, buffers.pdf.length - 3);
+  const storage = downloadStorage({ [run.outputs[0].storage_key]: truncated });
+  await assert.rejects(
+    () => downloadReportOutputForUser({
+      runId: run.id,
+      format: "pdf",
+      user: { user_id: "user_dl" },
+      deps: {
+        getReportRunById: async () => run,
+        requireOrganizationMembership: async () => downloadMembership("owner"),
+        reportStorage: storage,
+      },
+    }),
+    (err) => err.status === 500 && err.code === "report_output_integrity_failed",
+  );
+});
+
+test("downloadReportOutputForUser returns 500 report_output_integrity_failed on checksum mismatch", async () => {
+  const { run, buffers } = downloadRun();
+  const tampered = Buffer.from(buffers.pdf);
+  tampered[0] = tampered[0] ^ 0xff; // size unchanged but checksum changes
+  const storage = downloadStorage({ [run.outputs[0].storage_key]: tampered });
+  await assert.rejects(
+    () => downloadReportOutputForUser({
+      runId: run.id,
+      format: "pdf",
+      user: { user_id: "user_dl" },
+      deps: {
+        getReportRunById: async () => run,
+        requireOrganizationMembership: async () => downloadMembership("owner"),
+        reportStorage: storage,
+      },
+    }),
+    (err) => err.status === 500 && err.code === "report_output_integrity_failed",
+  );
+});
+
+test("downloadReportOutputForUser returns a raw Buffer and never base64/absolute paths", async () => {
+  const { run, buffers } = downloadRun({ id: "run_payload_check" });
+  let observedKey = null;
+  const storage = downloadStorage(
+    {
+      [run.outputs[0].storage_key]: buffers.pdf,
+      [run.outputs[1].storage_key]: buffers.xlsx,
+    },
+    { onRead: ({ storage_key }) => { observedKey = storage_key; } },
+  );
+  const result = await downloadReportOutputForUser({
+    runId: run.id,
+    format: "pdf",
+    user: { user_id: "user_dl" },
+    deps: {
+      getReportRunById: async () => run,
+      requireOrganizationMembership: async () => downloadMembership("owner"),
+      reportStorage: storage,
+    },
+  });
+  assert.ok(Buffer.isBuffer(result.buffer));
+  assert.equal(result.size, buffers.pdf.length);
+  assert.equal(result.buffer.length, buffers.pdf.length);
+  assert.equal(typeof result.filename, "string");
+  assert.match(result.filename, /^[A-Za-z0-9._-]+$/);
+  assert.equal(result.filename.startsWith("/"), false);
+  assert.equal(typeof result.content_type, "string");
+  const keys = Object.keys(result);
+  for (const key of keys) {
+    assert.equal(key === "base64", false);
+    assert.equal(key === "path", false);
+  }
+  assert.equal(observedKey.startsWith("/"), false);
 });
 
 test("listReportRunsForUser response shape matches the documented contract", async () => {

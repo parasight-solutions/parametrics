@@ -9,6 +9,8 @@ import {
   buildReportRunDoc,
   buildReportRunListQuery,
   createReportDefinition,
+  findReportRunOutput,
+  getReportRunById,
   listReportRuns,
   markReportRunFailed,
   markReportRunRunning,
@@ -507,6 +509,49 @@ test("buildReportRunListQuery rejects an inverted date range and invalid limits"
     () => buildReportRunListQuery({ organization_id: "" }),
     (err) => err.code === "missing_report_scope",
   );
+});
+
+test("getReportRunById returns null for empty/missing id and drops _id/input_snapshot from the loaded doc", async () => {
+  const store = collections();
+  await seedReportRuns(store, [
+    {
+      id: "run_lookup",
+      organization_id: "org_seed",
+      report_key: "k1",
+      created_at: fixedNow,
+      outputs: [pdfOutputForList("run_lookup")],
+      extra: { input_snapshot: { huge: "leaked snapshot" } },
+    },
+  ]);
+  store.reportRuns.docs[0]._id = "should-not-leak";
+
+  assert.equal(await getReportRunById("", { collections: store }), null);
+  assert.equal(await getReportRunById(null, { collections: store }), null);
+  assert.equal(await getReportRunById("missing-run", { collections: store }), null);
+
+  const doc = await getReportRunById("run_lookup", { collections: store });
+  assert.ok(doc);
+  assert.equal(doc.id, "run_lookup");
+  assert.equal(doc._id, undefined);
+  assert.equal(doc.input_snapshot, undefined);
+  assert.equal(doc.outputs[0].format, "pdf");
+});
+
+test("findReportRunOutput returns the matching format output or null", () => {
+  const run = {
+    id: "run_find",
+    outputs: [
+      { format: "pdf", status: "succeeded" },
+      { format: "XLSX", status: "succeeded" },
+    ],
+  };
+  assert.equal(findReportRunOutput(run, "pdf").status, "succeeded");
+  assert.equal(findReportRunOutput(run, "PDF").format, "pdf");
+  assert.equal(findReportRunOutput(run, "xlsx").format, "XLSX");
+  assert.equal(findReportRunOutput(run, ""), null);
+  assert.equal(findReportRunOutput(null, "pdf"), null);
+  assert.equal(findReportRunOutput({}, "pdf"), null);
+  assert.equal(findReportRunOutput({ outputs: [] }, "pdf"), null);
 });
 
 test("sanitizeReportRunRow handles missing optional fields without leaking secrets", () => {

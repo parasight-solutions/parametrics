@@ -25,6 +25,37 @@ S2-22 introduces the first cut of the storage adapter described in Section 4 bel
 
 S2-22.1 ran a live local API + MongoDB smoke against the controlled `s2-15-fixture-org` scope to verify the S2-22 implementation end-to-end. Proof is recorded in `docs/proof/s2-22-1-durable-report-storage-live-smoke.md`. The smoke confirmed: HTTP 200 from `POST /api/v1/reports/dashboard-snapshot`, `report_run.status: succeeded`, the unchanged base64 `files[]` response, the full durable metadata set on `report_runs.outputs[]` (`storage_provider`, `storage_key`, `content_type`, `filename`, `size`, `checksum: sha256`, `generated_at`, `expires_at: null`, `path: null`), files under `REPORT_STORAGE_LOCAL_DIR` whose byte sizes and sha256 hashes match the persisted metadata, no `input_snapshot` and no raw buffer/base64 fields in Mongo, and `location_org_map` untouched. Org-level coverage only; the GBP location-bound code path is still covered by the existing S2-10.2 GBP membership smoke and the S2-22 unit tests.
 
+## S2-24 Implementation Note
+
+S2-24 implements the read-only `GET /api/v1/reports/runs/:runId/outputs/:format` endpoint described in Section 3.3. The optional regenerate route remains design-only; the frontend `/reports/history` page (S2-25) remains future work.
+
+- Implemented route: `GET /api/v1/reports/runs/:runId/outputs/:format` mounted under the existing `/api/v1/reports` router. Read-only. Streams persisted bytes back to the requester as a raw response body (not JSON, not base64).
+- Implemented service helpers: `getReportRunById(runId, options)` and `findReportRunOutput(run, format)` in `apps/api/src/services/reportStore.js`. `getReportRunById` projects `_id: 0, input_snapshot: 0` at the Mongo layer and additionally strips both fields defensively after load.
+- Path parameters: `runId` required; `format` required and limited to `pdf` or `xlsx`. Any other format value is rejected with `400 bad_request` at the route layer; the storage adapter's `report_storage_unsupported_format` is never surfaced because the route validates first.
+- Authorization (matches Section 6):
+  - Requires app authentication via the existing `authenticate` middleware.
+  - Resolves an `active` `organization_members` record for the requester using the run's `organization_id` via `requireOrganizationMembership`. JWT `role` and `location_org_map` are not used.
+  - `owner` and `admin` can download any output for runs in their organization.
+  - `manager` and `viewer` can download only when the run has a `client_id` or `location_id` that is present in their `assigned_client_ids` / `assigned_location_ids`. Org-level runs (`client_id` and `location_id` both null) are denied for `manager`/`viewer` with `403 organization_scope_required` — consistent with the listing endpoint's "deny-by-default until an org-level scope model exists" convention.
+  - `member`, any other role, and missing memberships are denied. Non-`active` memberships (`invited`, `disabled`) are denied by `requireOrganizationMembership` itself.
+- Output selection and readiness:
+  - `findReportRunOutput(run, format)` returns the case-insensitive match in `report_runs.outputs[]`. Missing format ⇒ `404 report_output_not_found`.
+  - Output `status` must equal `succeeded`. Output must also carry a non-empty `storage_provider` and `storage_key`. Otherwise the route returns `409 report_output_not_ready`. This covers both freshly-pending/running outputs and legacy outputs from before durable storage existed.
+- Storage read and integrity:
+  - Bytes are read via the storage adapter's `readOutput({ storage_provider, storage_key })`. The default storage adapter resolution path mirrors the synchronous report route (`getDefaultReportStorage()`); tests inject a fake adapter through `deps.reportStorage`.
+  - The adapter's path-safety rules continue to apply: `report_storage_invalid_key`, `report_storage_unsupported_provider`, traversal/absolute-path checks. All storage errors are surfaced to the route as `500 report_output_read_failed` with a compact message.
+  - If the persisted output carries a `size`, the route verifies the read buffer's length matches before sending. Mismatch ⇒ `500 report_output_integrity_failed`.
+  - If the persisted output carries `checksum.algorithm === "sha256"` with a value, the route recomputes `sha256(buffer)` and compares. Mismatch ⇒ `500 report_output_integrity_failed`.
+- Response headers and body:
+  - `Content-Type` is read from the persisted output `content_type` (falling back to the canonical MIME for the format).
+  - `Content-Disposition: attachment; filename="<sanitized-filename>"`. The filename comes from `output.filename` if it matches `^[A-Za-z0-9._-]+$`; otherwise it falls back to `<sanitized-report_key>-<run_id>.<format>`. Never echoes user-controlled strings.
+  - `Content-Length` is set from the read buffer length.
+  - `Cache-Control: no-store` and `X-Content-Type-Options: nosniff` are set on every successful response.
+  - Body is the raw `Buffer` (`res.end(buffer)`); the response is never JSON and never base64.
+- Non-mutating: the route never updates `report_runs`, never writes new storage, never logs the storage root, and never returns the run document body. Absolute paths and storage credentials never appear in the response.
+- Error codes used: `400 bad_request`, `401 unauthorized`, `403 organization_membership_required`, `403 organization_role_required`, `403 organization_scope_required`, `404 report_run_not_found`, `404 report_output_not_found`, `409 report_output_not_ready`, `500 report_output_read_failed`, `500 report_output_integrity_failed`.
+- Audit/rate-limit: matches the existing S2-23 read-only convention — no dedicated `report.output.download` audit event and no dedicated `report_download` rate-limit bucket in this first cut. The S2-20 contract reserves both; they remain optional hardening for a future task.
+
 ## S2-23 Implementation Note
 
 S2-23 implements the read-only `GET /api/v1/reports/runs` listing endpoint described in Section 3.1. Detail (`GET /api/v1/reports/runs/:runId`) and output download (`GET /api/v1/reports/runs/:runId/outputs/:format`) remain future work (S2-24+); the optional regenerate route remains design-only.

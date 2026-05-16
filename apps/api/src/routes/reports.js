@@ -9,6 +9,8 @@ import { buildXlsxOutputResult } from "../services/reportXlsx.js";
 import {
   REPORT_LIST_DEFAULT_LIMIT,
   REPORT_LIST_MAX_LIMIT,
+  findReportRunOutput,
+  getReportRunById,
   listReportRuns,
   markReportRunFailed,
   markReportRunRunning,
@@ -22,6 +24,7 @@ import {
   requireOrganizationRole,
 } from "../services/organizationAccess.js";
 import { getDefaultReportStorage } from "../services/reportStorage.js";
+import crypto from "node:crypto";
 
 const router = Router();
 const MAX_TOTAL_FILE_BYTES = 5 * 1024 * 1024;
@@ -529,6 +532,196 @@ router.post("/dashboard-snapshot", authenticate, generationRateLimit, async (req
       }),
     });
 
+    return toApiError(res, mapValidationError(error));
+  }
+});
+
+const REPORT_DOWNLOAD_BROAD_ROLES = Object.freeze(["owner", "admin"]);
+const REPORT_DOWNLOAD_SCOPED_ROLES = Object.freeze(["manager", "viewer"]);
+const REPORT_DOWNLOAD_FORMATS = Object.freeze(["pdf", "xlsx"]);
+const SAFE_FILENAME_PATTERN = /^[A-Za-z0-9._-]+$/;
+
+function sha256HexBuffer(buffer) {
+  const hash = crypto.createHash("sha256");
+  hash.update(buffer);
+  return hash.digest("hex");
+}
+
+function downloadFilenameFor(run, output, format) {
+  const persisted = cleanStr(output?.filename, 200);
+  if (persisted && SAFE_FILENAME_PATTERN.test(persisted)) return persisted;
+  const base = safeFilenamePart(run?.report_key || run?.report_name || run?.id);
+  return `${base}-${cleanStr(run?.id, 200) || "run"}.${format}`;
+}
+
+function contentTypeFor(output, format) {
+  const persisted = cleanStr(output?.content_type, 200);
+  if (persisted) return persisted;
+  return FILE_INFO[format].content_type;
+}
+
+function assertManagerOrViewerDownloadScope(run, membership) {
+  const role = String(membership?.role || "").toLowerCase();
+  if (REPORT_DOWNLOAD_BROAD_ROLES.includes(role)) return;
+  if (!REPORT_DOWNLOAD_SCOPED_ROLES.includes(role)) {
+    throw makeError(403, "organization_role_required", "required organization role is missing");
+  }
+
+  const clientId = cleanStr(run?.client_id, 200);
+  const locationId = cleanStr(run?.location_id, 200);
+  if (!clientId && !locationId) {
+    throw makeError(
+      403,
+      "organization_scope_required",
+      "organization-level reports are not available for the requested role",
+    );
+  }
+
+  if (!isMembershipAssignedToLocation(membership, {
+    clientId: clientId || "",
+    locationId: locationId || "",
+  })) {
+    throw makeError(
+      403,
+      "organization_scope_required",
+      "required organization assignment is missing",
+    );
+  }
+}
+
+export async function downloadReportOutputForUser({
+  runId,
+  format,
+  user = {},
+  storeOptions = {},
+  deps = {},
+} = {}) {
+  const userId = cleanStr(user.user_id || user.id, 200);
+  if (!userId) {
+    throw makeError(401, "unauthorized", "Unauthorized");
+  }
+
+  const cleanRunId = cleanStr(runId, 200);
+  if (!cleanRunId) {
+    throw makeError(400, "bad_request", "runId is required");
+  }
+
+  const cleanFormat = cleanStr(format, 20).toLowerCase();
+  if (!REPORT_DOWNLOAD_FORMATS.includes(cleanFormat)) {
+    throw makeError(400, "bad_request", "format must be pdf or xlsx");
+  }
+
+  const loadRun = deps.getReportRunById || getReportRunById;
+  const run = await loadRun(cleanRunId, storeOptions);
+  if (!run) {
+    throw makeError(404, "report_run_not_found", "report run not found");
+  }
+
+  const organizationId = cleanStr(run.organization_id, 200);
+  if (!organizationId) {
+    throw makeError(404, "report_run_not_found", "report run not found");
+  }
+
+  const requireMembership = deps.requireOrganizationMembership || requireOrganizationMembership;
+  const membership = await requireMembership({
+    organizationId,
+    userId,
+  }, deps.organizationAccessOptions || {});
+
+  const role = String(membership?.role || "").toLowerCase();
+  if (
+    !REPORT_DOWNLOAD_BROAD_ROLES.includes(role)
+    && !REPORT_DOWNLOAD_SCOPED_ROLES.includes(role)
+  ) {
+    throw makeError(403, "organization_role_required", "required organization role is missing");
+  }
+
+  assertManagerOrViewerDownloadScope(run, membership);
+
+  const findOutput = deps.findReportRunOutput || findReportRunOutput;
+  const output = findOutput(run, cleanFormat);
+  if (!output) {
+    throw makeError(404, "report_output_not_found", "report output not found for format");
+  }
+
+  if (cleanStr(output.status, 40).toLowerCase() !== "succeeded") {
+    throw makeError(409, "report_output_not_ready", "report output is not ready for download");
+  }
+
+  const storageProvider = cleanStr(output.storage_provider, 80);
+  const storageKey = cleanStr(output.storage_key, 1000);
+  if (!storageProvider || !storageKey) {
+    throw makeError(409, "report_output_not_ready", "report output storage metadata is missing");
+  }
+
+  const storage = resolveStorageAdapter(deps);
+  if (!storage || typeof storage.readOutput !== "function") {
+    throw makeError(500, "report_output_read_failed", "report storage adapter is unavailable");
+  }
+
+  let buffer;
+  try {
+    buffer = await storage.readOutput({
+      storage_provider: storageProvider,
+      storage_key: storageKey,
+    });
+  } catch (error) {
+    throw makeError(500, "report_output_read_failed", compactReason(error).message);
+  }
+
+  if (!Buffer.isBuffer(buffer)) {
+    throw makeError(500, "report_output_read_failed", "report storage returned no bytes");
+  }
+
+  if (Number.isFinite(Number(output.size)) && Number(output.size) >= 0
+    && buffer.length !== Number(output.size)) {
+    throw makeError(
+      500,
+      "report_output_integrity_failed",
+      "report output size does not match persisted metadata",
+    );
+  }
+
+  const expectedAlgo = cleanStr(output.checksum?.algorithm, 40).toLowerCase();
+  const expectedValue = cleanStr(output.checksum?.value, 256);
+  if (expectedAlgo === "sha256" && expectedValue) {
+    const actual = sha256HexBuffer(buffer);
+    if (actual !== expectedValue) {
+      throw makeError(
+        500,
+        "report_output_integrity_failed",
+        "report output checksum does not match persisted metadata",
+      );
+    }
+  }
+
+  return {
+    buffer,
+    content_type: contentTypeFor(output, cleanFormat),
+    filename: downloadFilenameFor(run, output, cleanFormat),
+    size: buffer.length,
+    membership_role: role,
+  };
+}
+
+router.get("/runs/:runId/outputs/:format", authenticate, async (req, res) => {
+  try {
+    const result = await downloadReportOutputForUser({
+      runId: req.params.runId,
+      format: req.params.format,
+      user: req.user || {},
+    });
+
+    res.setHeader("Content-Type", result.content_type);
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="${result.filename}"`,
+    );
+    res.setHeader("Content-Length", String(result.size));
+    res.setHeader("Cache-Control", "no-store");
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    return res.status(200).end(result.buffer);
+  } catch (error) {
     return toApiError(res, mapValidationError(error));
   }
 });

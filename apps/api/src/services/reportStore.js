@@ -445,6 +445,32 @@ export async function listReportRuns(filter = {}, options = {}) {
   };
 }
 
+export async function getReportRunById(runId, options = {}) {
+  const id = cleanStr(runId, 200);
+  if (!id) return null;
+
+  const { reportRuns } = await resolveCollections(options);
+  if (typeof reportRuns.findOne !== "function") return null;
+
+  const doc = await reportRuns.findOne(
+    { id },
+    { projection: { _id: 0, input_snapshot: 0 } },
+  );
+  if (!doc) return null;
+
+  // Defensive: drop _id and input_snapshot in case the underlying collection
+  // ignored the projection (e.g., the test in-memory adapter).
+  const { _id, input_snapshot, ...rest } = doc;
+  return rest;
+}
+
+export function findReportRunOutput(run, format) {
+  if (!run || !Array.isArray(run.outputs)) return null;
+  const fmt = cleanStr(format, 20).toLowerCase();
+  if (!fmt) return null;
+  return run.outputs.find((output) => cleanStr(output?.format, 20).toLowerCase() === fmt) || null;
+}
+
 export async function markReportRunFailed(runId, { error = null, outputs = null, completedAt = null, ...options } = {}) {
   const id = cleanStr(runId, 200);
   if (!id) throw makeError("missing_report_run_id", "report run id is required");
