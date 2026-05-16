@@ -69,6 +69,23 @@ S2-25 implements the minimal authenticated `/reports/history` frontend page desc
 - Out of scope: a frontend detail page, regenerate button, cursor pagination UI (`next_cursor` is reserved in the backend response shape but not yet wired), signed URLs, cloud storage adapters, scheduled reports, email delivery, audit events, rate-limit buckets, and Phase 2 providers.
 - Proof: `docs/proof/s2-25-report-history-ui.md`. No backend, API tests, web `package.json`, or `package-lock.json` change.
 
+## S2-28 Storage Config Hardening Note
+
+S2-28 adds a startup-time validation step for `REPORT_STORAGE_LOCAL_DIR` so production-like environments cannot silently fall back to `<os.tmpdir()>/parametrics/report-outputs`. Implementation lives in `apps/api/src/services/reportStorage.js` as the exported `validateReportStorageConfig({ env, cwd, fsImpl })` helper; `apps/api/src/server.js` calls it before `ensureIndexes()` and `app.listen()` and exits non-zero on failure with a compact `[report_storage] startup validation failed: <code>: <message>` log line.
+
+- Development / test (`NODE_ENV=development|test`): `REPORT_STORAGE_LOCAL_DIR` remains optional. When unset, the helper returns the existing `<os.tmpdir()>/parametrics/report-outputs` fallback root and the adapter continues to lazily create the directory on first write. The configured root is never logged absolutely; the startup log shows `root=<os-tmpdir>/parametrics/report-outputs` only.
+- Production (`NODE_ENV` neither `development` nor `test`): `REPORT_STORAGE_LOCAL_DIR` is required and validated:
+  - must be a non-empty string and an absolute path (`report_storage_config_missing_root` / `report_storage_config_relative_root` / `report_storage_config_invalid_env_type`)
+  - must not resolve inside the project root (`report_storage_config_inside_repo`)
+  - must not resolve to `/`, `/tmp`, or any path under `/var/tmp` (`report_storage_config_blocked_root`) — these are explicitly blocked because `/tmp` cleanup wiped earlier smoke files (see S2-22.1 / S2-24.1 risks)
+  - existing path must be a directory (`report_storage_config_path_is_file`); missing path is created (`report_storage_config_mkdir_failed`)
+  - directory must be writable by the runtime user (`report_storage_config_not_writable`) — verified by writing and immediately removing a `.parametrics-storage-writable-check` probe file
+- Logging: startup logs only a redacted `safeRootLabel` such as `<persistent-root>/<basename>` (configured) or `<os-tmpdir>/parametrics/report-outputs` (fallback). Absolute paths, env values, and storage credentials are never logged. The download API (S2-24) continues to omit absolute paths from responses, and the listing API (S2-23) continues to expose `storage_key` as durable metadata only.
+- Storage key safety (`isUnsafeStorageKey` / `resolveSafePath`) and adapter metadata behavior (`storage_provider`, `storage_key`, `content_type`, `filename`, `checksum`, `generated_at`, `expires_at`, `path: null`) are unchanged. Existing `createLocalReportStorage` write/read/stat/delete tests remain green.
+- Old `report_runs` rows whose on-disk files were wiped by `/tmp` cleanup are not recoverable; their download requests continue to return `500 report_output_read_failed`. Production deployments should configure `REPORT_STORAGE_LOCAL_DIR` to a persistent path outside `/tmp` (recommended: `/var/lib/parametrics/report-outputs` or an equivalent deployment-owned persistent path).
+
+Out of scope for S2-28: cloud storage adapters, signed URLs, retention/cleanup, listing/download API contract changes, queue/worker/scheduler changes, frontend changes, dependency installation.
+
 ### S2-26 Closeout
 
 S2-26 is the Sprint 2 report foundation closeout audit. It records the final Pass decision for the report-foundation sequence S2-01..S2-06.1, S2-20, and S2-22..S2-25.1, summarizes the security/tenancy posture (`organization_members`-only authorization, no JWT-role / `location_org_map` authorization, no raw buffers/base64 in Mongo, no absolute paths exposed, `storage_key` treated as durable metadata only and never rendered, no secrets/tokens/raw records in proofs), and proposes the next conservative follow-ups (`S2-27` optional manual browser click smoke, `S2-28` persistent storage env/deployment hardening, `S2-29` report audit/rate-limit hardening, `S2-30` optional report detail/regenerate contract). Phase 2 provider adapters remain blocked until this closeout is explicitly accepted. Proof: `docs/proof/sprint-2-report-foundation-proof-pack.md`. No backend, frontend, API tests, web `package.json`, or `package-lock.json` change.

@@ -1,10 +1,15 @@
 import fs from "node:fs/promises";
+import fsSync from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import crypto from "node:crypto";
+import { fileURLToPath } from "node:url";
 
 export const STORAGE_PROVIDER_LOCAL = "local";
 export const SUPPORTED_STORAGE_FORMATS = Object.freeze(["pdf", "xlsx"]);
+
+const PRODUCTION_BLOCKED_ROOTS = Object.freeze(["/", "/tmp", "/var/tmp"]);
+const STORAGE_WRITE_CHECK_FILENAME = ".parametrics-storage-writable-check";
 
 const ID_PATTERN = /^[A-Za-z0-9._-]+$/;
 const FILENAME_PATTERN = /^[A-Za-z0-9._-]+$/;
@@ -215,4 +220,150 @@ export function getDefaultReportStorage() {
 
 export function resetDefaultReportStorageForTests() {
   defaultStorageInstance = null;
+}
+
+function isLocalNodeEnv(env) {
+  const value = String(env?.NODE_ENV ?? "").trim().toLowerCase();
+  return value === "development" || value === "test";
+}
+
+function defaultRepoRoot() {
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  // reportStorage.js lives at apps/api/src/services → up 4 levels to repo root.
+  return path.resolve(here, "../../../..");
+}
+
+function isPathInside(parent, child) {
+  const rel = path.relative(parent, child);
+  return rel === "" || (!rel.startsWith("..") && !path.isAbsolute(rel));
+}
+
+function isBlockedProductionRoot(absRoot) {
+  for (const blocked of PRODUCTION_BLOCKED_ROOTS) {
+    if (absRoot === blocked) return true;
+    if (absRoot.startsWith(blocked === "/" ? "/" : `${blocked}/`)) {
+      if (blocked === "/") {
+        // Every absolute path starts with "/"; only block the root itself.
+        if (absRoot === "/") return true;
+        continue;
+      }
+      return true;
+    }
+  }
+  return false;
+}
+
+function redactedRootLabel({ configured, absRoot, defaultRoot }) {
+  if (!configured) {
+    return `<os-tmpdir>/${path.basename(path.dirname(defaultRoot))}/${path.basename(defaultRoot)}`;
+  }
+  return `<persistent-root>/${path.basename(absRoot)}`;
+}
+
+export function validateReportStorageConfig({
+  env = process.env,
+  cwd,
+  fsImpl = fsSync,
+} = {}) {
+  const repoRoot = cwd ? path.resolve(String(cwd)) : defaultRepoRoot();
+  const production = !isLocalNodeEnv(env);
+  const rawValue = env?.REPORT_STORAGE_LOCAL_DIR;
+
+  if (rawValue !== undefined && rawValue !== null && typeof rawValue !== "string") {
+    const err = new Error("REPORT_STORAGE_LOCAL_DIR must be a string when set");
+    err.code = "report_storage_config_invalid_env_type";
+    throw err;
+  }
+
+  const trimmed = String(rawValue ?? "").trim();
+
+  if (!trimmed) {
+    if (production) {
+      const err = new Error(
+        "REPORT_STORAGE_LOCAL_DIR is required outside NODE_ENV=development or test",
+      );
+      err.code = "report_storage_config_missing_root";
+      throw err;
+    }
+    const defaultRoot = getDefaultLocalStorageRoot(env || {});
+    return Object.freeze({
+      provider: STORAGE_PROVIDER_LOCAL,
+      configured: false,
+      production: false,
+      root: defaultRoot,
+      safeRootLabel: redactedRootLabel({
+        configured: false,
+        absRoot: defaultRoot,
+        defaultRoot,
+      }),
+    });
+  }
+
+  if (!path.isAbsolute(trimmed)) {
+    const err = new Error("REPORT_STORAGE_LOCAL_DIR must resolve to an absolute path");
+    err.code = "report_storage_config_relative_root";
+    throw err;
+  }
+
+  const absRoot = path.resolve(trimmed);
+
+  if (production && isBlockedProductionRoot(absRoot)) {
+    const err = new Error(
+      "REPORT_STORAGE_LOCAL_DIR resolves to a non-persistent system path in production",
+    );
+    err.code = "report_storage_config_blocked_root";
+    throw err;
+  }
+
+  if (isPathInside(repoRoot, absRoot)) {
+    const err = new Error("REPORT_STORAGE_LOCAL_DIR must resolve outside the project root");
+    err.code = "report_storage_config_inside_repo";
+    throw err;
+  }
+
+  if (typeof fsImpl?.existsSync === "function" && fsImpl.existsSync(absRoot)) {
+    let stats;
+    try {
+      stats = fsImpl.statSync(absRoot);
+    } catch (error) {
+      const err = new Error("REPORT_STORAGE_LOCAL_DIR cannot be inspected");
+      err.code = "report_storage_config_stat_failed";
+      throw err;
+    }
+    if (!stats.isDirectory()) {
+      const err = new Error("REPORT_STORAGE_LOCAL_DIR resolves to a file, not a directory");
+      err.code = "report_storage_config_path_is_file";
+      throw err;
+    }
+  } else {
+    try {
+      fsImpl.mkdirSync(absRoot, { recursive: true });
+    } catch (error) {
+      const err = new Error("REPORT_STORAGE_LOCAL_DIR could not be created");
+      err.code = "report_storage_config_mkdir_failed";
+      throw err;
+    }
+  }
+
+  const probe = path.join(absRoot, STORAGE_WRITE_CHECK_FILENAME);
+  try {
+    fsImpl.writeFileSync(probe, Buffer.from("ok"));
+    fsImpl.unlinkSync(probe);
+  } catch (error) {
+    const err = new Error("REPORT_STORAGE_LOCAL_DIR is not writable by the runtime user");
+    err.code = "report_storage_config_not_writable";
+    throw err;
+  }
+
+  return Object.freeze({
+    provider: STORAGE_PROVIDER_LOCAL,
+    configured: true,
+    production,
+    root: absRoot,
+    safeRootLabel: redactedRootLabel({
+      configured: true,
+      absRoot,
+      defaultRoot: absRoot,
+    }),
+  });
 }

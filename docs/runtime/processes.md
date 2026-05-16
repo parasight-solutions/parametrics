@@ -160,6 +160,14 @@ API startup currently expects:
 - `RATE_LIMIT_GENERATION_MAX`: AI generation, plan-now, create/publish retry attempts per window per user/IP. Defaults to `20`.
 - `RATE_LIMIT_MUTATION_MAX`: generic mutation attempts per window per user/IP. Defaults to `120`.
 - `REDIS_HOST`, `REDIS_PORT`, and `REDIS_TLS`: currently needed because API route modules initialize BullMQ queues for enqueue operations, even though the API process does not run workers.
+- `REPORT_STORAGE_LOCAL_DIR`: persistent directory the local report storage adapter writes durable PDF/XLSX outputs into.
+  - Required outside `NODE_ENV=development` or `NODE_ENV=test`. API startup fails fast with `report_storage_config_missing_root` when unset in production-like environments.
+  - When unset in `development`/`test`, the adapter falls back under `<os.tmpdir()>/parametrics/report-outputs` (non-durable; `/tmp` may be wiped on host reboot).
+  - Must resolve to an absolute path outside the project root and outside obvious non-persistent system locations (`/`, `/tmp`, `/var/tmp`). Production startup rejects those locations with `report_storage_config_blocked_root`.
+  - The directory is created at startup if missing and must be writable by the API runtime user. Validation failures surface as `report_storage_config_relative_root`, `report_storage_config_inside_repo`, `report_storage_config_path_is_file`, `report_storage_config_mkdir_failed`, or `report_storage_config_not_writable`.
+  - The validated absolute root is never returned to clients and never logged verbatim. Startup logs a redacted label such as `<persistent-root>/<basename>` only.
+  - Directory permission baseline: owned by the API runtime user, not world-writable (e.g. `chmod 0750`), outside the repository working tree, and backed by persistent disk (not `tmpfs` / `/tmp`). Recommended deployment value: `REPORT_STORAGE_LOCAL_DIR=/var/lib/parametrics/report-outputs` (or any equivalent deployment-owned persistent path).
+  - Older smoke or local rows that were backed by files under `/tmp` are not recoverable after host reboot or `/tmp` cleanup; their `report_runs` rows remain in MongoDB but downloads will return `500 report_output_read_failed`.
 - Google auth/provider variables as needed by Google login and GBP integration routes:
   - `GOOGLE_OIDC_CLIENT_ID`
   - `GOOGLE_OIDC_CLIENT_SECRET`

@@ -22,6 +22,7 @@ import locationOrgRouter from "./routes/locationOrg.js";
 import recurrenceRouter from "./routes/recurrence.js";
 import googleAuthRouter from "./routes/auth.google.js";
 import reportsRouter from "./routes/reports.js";
+import { validateReportStorageConfig } from "./services/reportStorage.js";
 
 
 const locationsRoutes = locationsMod.default || locationsMod.locations
@@ -78,6 +79,20 @@ console.log(
 
 
 const port = Number(process.env.PORT || 5050)
+
+try {
+  const reportStorageCfg = validateReportStorageConfig()
+  console.log(
+    `[report_storage] provider=${reportStorageCfg.provider}`,
+    `configured=${reportStorageCfg.configured}`,
+    `production=${reportStorageCfg.production}`,
+    `root=${reportStorageCfg.safeRootLabel}`,
+  )
+} catch (error) {
+  const code = error?.code || "report_storage_config_error"
+  console.error(`[report_storage] startup validation failed: ${code}: ${error?.message || ""}`)
+  process.exit(1)
+}
 
 ensureIndexes().then(() => {
   app.listen(port, () => console.log(`API listening on http://localhost:${port}`))
