@@ -22,6 +22,36 @@ const STATUS_SORT_ORDER = Object.freeze({
   disabled: 2,
 });
 
+// S2-31 member-candidate search (safe user lookup for the org members UI).
+const MEMBER_CANDIDATE_DEFAULT_LIMIT = 10;
+const MEMBER_CANDIDATE_MAX_LIMIT = 25;
+const MEMBER_CANDIDATE_MIN_SEARCH = 2;
+// Upper bound when scanning existing memberships to flag already-member users.
+const MEMBER_CANDIDATE_MEMBERSHIP_SCAN_LIMIT = 1000;
+// User documents flagged with any of these statuses, or with deleted/disabled
+// boolean flags, are excluded from candidate search. Users with no status field
+// (legacy local-password users) are treated as eligible.
+const NON_ACTIVE_USER_STATUSES = Object.freeze([
+  "disabled",
+  "deleted",
+  "suspended",
+  "inactive",
+  "banned",
+]);
+// Only safe display fields are projected from the users collection. Sensitive
+// fields (password, oauth_sub, _id, ...) are never selected.
+const USER_CANDIDATE_PROJECTION = Object.freeze({
+  _id: 0,
+  id: 1,
+  email: 1,
+  normalized_email: 1,
+  full_name: 1,
+  name: 1,
+  status: 1,
+  deleted: 1,
+  disabled: 1,
+});
+
 function cleanStr(value, max = 500) {
   const v = String(value ?? "").trim();
   if (!v) return "";
@@ -512,6 +542,22 @@ export async function createOrganizationMember(
   });
   assertRequesterCanManageRole(requesterMembership.role, requestedRole);
 
+  // Direct membership must target a real, active app user. When a users
+  // collection is available the target id is validated so arbitrary text (for
+  // example a name typed into the search box) cannot become a membership.
+  if (options.users) {
+    const userDoc = await options.users.findOne(
+      { id: user_id },
+      { projection: { _id: 0, id: 1, status: 1, deleted: 1, disabled: 1 } },
+    );
+    if (!userDoc) {
+      throw makeMembershipError(404, "user_not_found", "target user does not exist");
+    }
+    if (!isActiveUserAccount(userDoc)) {
+      throw makeMembershipError(400, "invalid_user_id", "target user is not active");
+    }
+  }
+
   const existing = await organizationMembers.findOne(
     { organization_id, user_id },
     { projection: { _id: 0 } },
@@ -733,4 +779,195 @@ export async function disableOrganizationMember(
     previous: target,
     requesterMembership,
   };
+}
+
+// ---------------------------------------------------------------------------
+// S2-31: safe user lookup / display helpers for the organization members UI.
+// ---------------------------------------------------------------------------
+
+function escapeRegExp(value) {
+  return String(value ?? "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+// Mask an email so the local part is never disclosed: "john@company.com"
+// becomes "j***@company.com". Returns null when there is nothing safe to show.
+export function maskEmail(email) {
+  const value = cleanStr(email, 320);
+  const at = value.lastIndexOf("@");
+  if (at <= 0 || at === value.length - 1) return null;
+  const local = value.slice(0, at);
+  const domain = value.slice(at + 1);
+  if (!local || !domain) return null;
+  return `${local[0]}***@${domain}`;
+}
+
+// Build a human-friendly display name from whichever safe fields the user
+// document actually carries (Google OIDC users have full_name; local password
+// users may only have an email). The email local part is never used: shown next
+// to `email_masked` it would reconstruct the raw address (S2-31.1).
+export function deriveUserDisplayName(user = {}) {
+  const fullName = cleanStr(user.full_name, 200);
+  if (fullName) return fullName;
+  const name = cleanStr(user.name, 200);
+  if (name) return name;
+  const id = cleanStr(user.id, 200);
+  if (id) return `User ${id.slice(0, 8)}`;
+  return "Unknown user";
+}
+
+// Safe nested user profile used to enrich member listing rows.
+export function buildUserPublicProfile(user) {
+  if (!user) return null;
+  const userId = cleanStr(user.id, 200);
+  if (!userId) return null;
+  return {
+    display_name: deriveUserDisplayName(user),
+    email_masked: maskEmail(user.email),
+  };
+}
+
+export function normalizeCandidateLimit(limit) {
+  const n = Number.parseInt(String(limit ?? ""), 10);
+  if (!Number.isFinite(n) || n <= 0) return MEMBER_CANDIDATE_DEFAULT_LIMIT;
+  return Math.min(n, MEMBER_CANDIDATE_MAX_LIMIT);
+}
+
+// Build the Mongo query for candidate search. A search shorter than the minimum
+// length is only allowed to match an exact user id; longer searches do a
+// case-insensitive contains match over safe identifier/name fields. Disabled and
+// deleted users are excluded; users without a status field remain eligible.
+export function buildMemberCandidateQuery(search) {
+  const term = cleanStr(search, 200);
+  const exclude = {
+    deleted: { $ne: true },
+    disabled: { $ne: true },
+    status: { $nin: NON_ACTIVE_USER_STATUSES },
+  };
+
+  if (!term) {
+    return { ...exclude, id: "__never_matches__" };
+  }
+
+  if (term.length < MEMBER_CANDIDATE_MIN_SEARCH) {
+    return { ...exclude, id: term };
+  }
+
+  const rx = { $regex: escapeRegExp(term), $options: "i" };
+  return {
+    ...exclude,
+    $or: [
+      { id: term },
+      { id: rx },
+      { email: rx },
+      { normalized_email: rx },
+      { full_name: rx },
+    ],
+  };
+}
+
+// A user account is eligible (for candidate search and for direct membership
+// creation) when it is not deleted/disabled and has no non-active status. Users
+// with no status field (legacy local-password accounts) are treated as active.
+export function isActiveUserAccount(user) {
+  if (!user) return false;
+  if (user.deleted === true || user.disabled === true) return false;
+  const status = cleanStr(user.status, 80).toLowerCase();
+  if (status && NON_ACTIVE_USER_STATUSES.includes(status)) return false;
+  return true;
+}
+
+function userIsActiveCandidate(user = {}) {
+  return isActiveUserAccount(user);
+}
+
+function userMatchesCandidateSearch(user = {}, term, exactOnly) {
+  const id = cleanStr(user.id, 200);
+  if (!id) return false;
+  if (id === term) return true;
+  if (exactOnly) return false;
+  const needle = term.toLowerCase();
+  if (!needle) return false;
+  const haystacks = [
+    id.toLowerCase(),
+    cleanStr(user.email, 320).toLowerCase(),
+    cleanStr(user.normalized_email, 320).toLowerCase(),
+    cleanStr(user.full_name, 200).toLowerCase(),
+    cleanStr(user.name, 200).toLowerCase(),
+  ];
+  return haystacks.some((value) => value && value.includes(needle));
+}
+
+function buildMembershipsByUserId(memberships = []) {
+  const map = new Map();
+  for (const membership of memberships) {
+    const userId = cleanStr(membership.user_id, 200);
+    if (!userId) continue;
+    const existing = map.get(userId);
+    if (!existing) {
+      map.set(userId, membership);
+      continue;
+    }
+    const existingActive = cleanStr(existing.status, 80).toLowerCase() === "active";
+    const candidateActive = cleanStr(membership.status, 80).toLowerCase() === "active";
+    if (!existingActive && candidateActive) map.set(userId, membership);
+  }
+  return map;
+}
+
+// Build the sanitized candidate row. Never returns Mongo _id, password, raw
+// email, tokens, secrets, oauth payloads, or any raw user record field.
+export function sanitizeMemberCandidate(user, membershipsByUserId = new Map()) {
+  if (!user) return null;
+  const userId = cleanStr(user.id, 200);
+  if (!userId) return null;
+  const membership = membershipsByUserId.get(userId) || null;
+  return {
+    user_id: userId,
+    display_name: deriveUserDisplayName(user),
+    email_masked: maskEmail(user.email),
+    already_member: Boolean(membership),
+    membership_role: membership ? cleanStr(membership.role, 80).toLowerCase() : null,
+  };
+}
+
+export async function searchMemberCandidates(
+  { organizationId, search, limit } = {},
+  options = {},
+) {
+  const organization_id = requireIdentifier(organizationId, "organizationId");
+  const term = cleanStr(search, 200);
+  if (!term) {
+    throw makeMembershipError(400, "bad_request", "search query is required");
+  }
+  const exactOnly = term.length < MEMBER_CANDIDATE_MIN_SEARCH;
+  const boundedLimit = normalizeCandidateLimit(limit);
+
+  const users = await resolveOptionalCollection("users", options);
+  const organizationMembers = await resolveOrganizationMembersCollection(options);
+
+  const query = buildMemberCandidateQuery(term);
+  const fetchLimit = Math.min(boundedLimit * 5, 200);
+  const rows = await users
+    .find(query, { projection: USER_CANDIDATE_PROJECTION })
+    .limit(fetchLimit)
+    .toArray();
+
+  const matched = rows
+    .filter(
+      (user) => userIsActiveCandidate(user) && userMatchesCandidateSearch(user, term, exactOnly),
+    )
+    .slice(0, boundedLimit);
+
+  const memberships = await organizationMembers
+    .find(
+      { organization_id },
+      { projection: { _id: 0, user_id: 1, role: 1, status: 1 } },
+    )
+    .limit(MEMBER_CANDIDATE_MEMBERSHIP_SCAN_LIMIT)
+    .toArray();
+  const membershipsByUserId = buildMembershipsByUserId(memberships);
+
+  return matched
+    .map((user) => sanitizeMemberCandidate(user, membershipsByUserId))
+    .filter(Boolean);
 }

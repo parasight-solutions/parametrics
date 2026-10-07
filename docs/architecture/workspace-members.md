@@ -417,3 +417,70 @@ S2-18 produced a Sprint 2 / Phase 1 closeout proof pack (`docs/proof/sprint-2-cl
 The closeout records Sprint 2 as Pass (pending GPT verification) on the basis that the report foundation (S2-01..S2-06.1) and the workspace/member foundation (S2-07..S2-17.1) are implemented within scope, with live smoke proofs and sanitized, member-aware authorization across the org/report/GBP location-bound surfaces. Limitations explicitly carried forward include direct-`user_id`-only membership (no email invitations), synchronous base64-only report generation (no queue/storage/history UI/email scheduling), no visual click-driven UI smoke, no safe delete route for fixture or smoke memberships, and the existing owned-location guard still gating cross-user shared Google location access.
 
 Phase 2 integrations remain blocked until the closeout is explicitly accepted. Recommended next tasks are conservative and phase-aware: S2-18.1 optional manual browser smoke for `/organization-members`, S2-19 API `npm test` script consolidation, S2-20 report history/listing UI or report storage design, and S2-21 member invite contract/design.
+
+## S2-31 Member Lookup And Safe Display
+
+S2-31 repaired the Organization Members UI usability gap: admins no longer need to know an internal `user_id`, and the member list now shows human-friendly names instead of only raw ids.
+
+New read-only endpoint:
+
+```text
+GET /api/v1/orgs/:orgId/member-candidates?search=<query>&limit=<n>
+```
+
+- Requires app authentication and active `organization_members` access; allows `owner`/`admin` only (`requireOrganizationRole` with `allowedRoles = ["owner","admin"]`). `manager`/`viewer`/`member` are denied with `organization_role_required`; `invited`/`disabled`/missing with `organization_membership_required`. JWT role and `location_org_map` are never used.
+- Searches the `users` collection by safe fields (`id`, `email`, `normalized_email`, `full_name`). A search of `>= 2` characters does a case-insensitive contains match; a shorter search only matches an exact `user_id`. Empty search ⇒ `400 bad_request`.
+- `limit` default `10`, max `25`. Excludes disabled/deleted users (`deleted`/`disabled` flags and a non-active `status`); users without a `status` field remain eligible.
+- Marks `already_member` and `membership_role` from existing org memberships.
+
+Safe candidate row shape: `{ user_id, display_name, email_masked, already_member, membership_role }`. The endpoint never returns Mongo `_id`, `password`, `normalized_email`, OAuth/provider payloads, tokens, secrets, raw emails, or raw user records. `email_masked` shows only the first local character plus domain (`j***@company.com`); `display_name` is derived from `full_name` → `name` → `User <short id>` (S2-31.1 removed the earlier email local-part fallback because, next to `email_masked`, it reconstructed the raw email).
+
+`GET /api/v1/orgs/:orgId/members` is unchanged in contract and still returns the existing sanitized fields; it now additionally attaches an optional `user: { display_name, email_masked }` per member when the user document is available, and omits it otherwise. The `create`/`update`/`disable` contracts are unchanged.
+
+Frontend `/organization-members` now leads with a "Search existing user" flow (display name, masked email, user id, already-member badge), fills the target `user_id` on selection, keeps a clearly labeled advanced manual `user_id` fallback, and shows `display_name` as the primary member label with the membership id labeled as such. Raw emails and raw records are never rendered.
+
+S2-31 does not implement email invitations, send emails, add invitation tokens, change auth/JWT or Google provider auth, add Phase 2 providers, change report APIs, change the member create/update/disable contracts, or install dependencies. Proof: `docs/proof/s2-31-organization-members-usability-repair.md`.
+
+S2-31-fix tightened this further. Direct membership creation now checks that the target user exists and is active whenever a `users` collection is available, which is always the case on the runtime route path:
+
+- **Missing user:** `404 user_not_found`.
+- **Deleted, disabled, or non-active user:** `400 invalid_user_id`.
+
+In either case no membership is created, so arbitrary text such as a name typed into the search box can never become a membership.
+
+On the frontend, the add flow is built from pure helpers in `apps/web/src/lib/memberManagement.js`:
+
+- The target `user_id` comes only from a selected search candidate, or from the explicit "Advanced: enter user_id manually" field. The backend still validates the manual field.
+- Editing the search clears the selection.
+- Candidates that are already members cannot be selected.
+- Assigned client/location inputs are shown only for manager/viewer, as optional advanced scope.
+- Member rows show `display_name`, then the masked email, then labeled technical user and membership IDs.
+
+Router tests guard the `member-candidates` endpoint in three ways: it must be registered, no earlier GET route may shadow it, and an unauthenticated request must return `401` rather than Express `Cannot GET`.
+
+Current state: implemented in the working tree, pending GPT verification. No invitation or email flow exists.
+
+### Product UX Lessons (S2-31 / S2-31.1)
+
+S2-31 first shipped an admin screen built around raw internal `user_id`s. People
+could not tell who they were adding, and typed text looked addable. These rules
+apply to all future admin and management UI in ParaMetrics:
+
+- **Do not build admin UI around raw internal IDs.** People identify users and
+  resources by name, not by UUID.
+- **Include human-readable display fields from the start.** API responses carry
+  `display_name`, a masked email, and labels in the first iteration, not as a
+  retrofit. Display fields must not leak what masking hides; for example, never
+  derive a display name from the email local part.
+- **Search/select before mutation.** Any action that targets an entity (add,
+  assign, disable) starts from a search or picker over existing, validated
+  records. Free text never becomes a mutation target.
+- **Technical IDs belong in secondary or advanced UI.** They stay collapsed, muted,
+  and labeled, for support and debugging only.
+- **Manual ID entry is advanced-only and backend-validated.** It sits behind an
+  explicit Advanced control. The server independently rejects unknown or inactive
+  targets (`404 user_not_found` / `400 invalid_user_id`) and never trusts the
+  client.
+- **Verify with a browser before acceptance.** Unit tests and a build did not
+  catch the S2-31 usability problems. S2-31.1 added a scripted Playwright pass
+  over the real page.

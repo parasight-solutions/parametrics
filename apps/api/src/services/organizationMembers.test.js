@@ -2,11 +2,19 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  buildMemberCandidateQuery,
+  buildUserPublicProfile,
   createOrganizationMember,
+  deriveUserDisplayName,
   disableOrganizationMember,
   ensureOwnerMembershipForOrganization,
+  isActiveUserAccount,
   listOrganizationMembers,
+  maskEmail,
+  normalizeCandidateLimit,
+  sanitizeMemberCandidate,
   sanitizeOrganizationMemberForList,
+  searchMemberCandidates,
   updateOrganizationMember,
 } from "./organizationMembers.js";
 
@@ -752,4 +760,240 @@ test("identical patch returns no-op metadata", async () => {
 
   assert.equal(result.updated, false);
   assert.equal(collection.rows.find((row) => row.id === "target").updated_at, undefined);
+});
+
+// ---------------------------------------------------------------------------
+// S2-31: safe user lookup helpers + searchMemberCandidates.
+// ---------------------------------------------------------------------------
+
+// Users fake returning all seeded rows regardless of the rich Mongo query, so
+// the service's JS-level filter/sanitize logic is exercised deterministically.
+function makeUsersFake(rows = []) {
+  return {
+    rows,
+    find() {
+      return {
+        limit() {
+          return {
+            async toArray() {
+              return rows.map((row) => structuredClone(row));
+            },
+          };
+        },
+      };
+    },
+    async findOne() {
+      return rows[0] ? structuredClone(rows[0]) : null;
+    },
+  };
+}
+
+test("maskEmail masks the local part and rejects malformed emails", () => {
+  assert.equal(maskEmail("john@company.com"), "j***@company.com");
+  assert.equal(maskEmail("  Jane@Example.com  "), "J***@Example.com");
+  assert.equal(maskEmail(""), null);
+  assert.equal(maskEmail(null), null);
+  assert.equal(maskEmail("not-an-email"), null);
+  assert.equal(maskEmail("@nolocal.com"), null);
+  assert.equal(maskEmail("nodomain@"), null);
+});
+
+test("deriveUserDisplayName prefers full_name then name then short id, never the email", () => {
+  assert.equal(deriveUserDisplayName({ full_name: "Jane Doe", email: "jane@x.com" }), "Jane Doe");
+  assert.equal(deriveUserDisplayName({ name: "Joe", email: "joe@x.com" }), "Joe");
+  assert.equal(deriveUserDisplayName({ email: "john@company.com" }), "Unknown user");
+  assert.equal(deriveUserDisplayName({ id: "abcdef12345", email: "john@company.com" }), "User abcdef12");
+  assert.equal(deriveUserDisplayName({ id: "abcdefgh1234" }), "User abcdefgh");
+  assert.equal(deriveUserDisplayName({}), "Unknown user");
+});
+
+test("buildUserPublicProfile for a nameless user cannot be combined to rebuild the raw email", () => {
+  const profile = buildUserPublicProfile({ id: "u_nameless_1", email: "john.smith@company.com" });
+  assert.deepEqual(profile, { display_name: "User u_namele", email_masked: "j***@company.com" });
+  assert.equal(JSON.stringify(profile).includes("john.smith"), false);
+});
+
+test("buildUserPublicProfile returns only safe display fields", () => {
+  assert.equal(buildUserPublicProfile(null), null);
+  assert.equal(buildUserPublicProfile({ email: "x@y.com" }), null);
+  assert.deepEqual(
+    buildUserPublicProfile({ id: "u1", full_name: "Jane Doe", email: "jane@company.com", password: "secret" }),
+    { display_name: "Jane Doe", email_masked: "j***@company.com" },
+  );
+});
+
+test("normalizeCandidateLimit defaults and clamps", () => {
+  assert.equal(normalizeCandidateLimit(undefined), 10);
+  assert.equal(normalizeCandidateLimit(0), 10);
+  assert.equal(normalizeCandidateLimit(-3), 10);
+  assert.equal(normalizeCandidateLimit(5), 5);
+  assert.equal(normalizeCandidateLimit(999), 25);
+});
+
+test("buildMemberCandidateQuery excludes disabled/deleted and requires min length for fuzzy", () => {
+  const longQuery = buildMemberCandidateQuery("jane");
+  assert.deepEqual(longQuery.deleted, { $ne: true });
+  assert.deepEqual(longQuery.disabled, { $ne: true });
+  assert.ok(Array.isArray(longQuery.status.$nin));
+  assert.ok(longQuery.status.$nin.includes("disabled"));
+  assert.ok(Array.isArray(longQuery.$or));
+
+  const shortQuery = buildMemberCandidateQuery("a");
+  assert.equal(shortQuery.id, "a");
+  assert.equal(shortQuery.$or, undefined);
+
+  const emptyQuery = buildMemberCandidateQuery("");
+  assert.equal(emptyQuery.id, "__never_matches__");
+});
+
+test("sanitizeMemberCandidate returns only safe fields and never raw email", () => {
+  const memberships = new Map([["u1", { user_id: "u1", role: "manager", status: "active" }]]);
+  const row = sanitizeMemberCandidate(
+    { _id: "mongo", id: "u1", email: "jane@company.com", full_name: "Jane Doe", password: "secret" },
+    memberships,
+  );
+  assert.deepEqual(row, {
+    user_id: "u1",
+    display_name: "Jane Doe",
+    email_masked: "j***@company.com",
+    already_member: true,
+    membership_role: "manager",
+  });
+  const serialized = JSON.stringify(row);
+  assert.equal(serialized.includes("jane@company.com"), false);
+  assert.equal(serialized.includes("secret"), false);
+});
+
+test("searchMemberCandidates returns sanitized rows with correct already_member flags", async () => {
+  const users = makeUsersFake([
+    { _id: "m1", id: "user_existing", email: "jane@company.com", full_name: "Jane Doe", password: "secret", status: "active" },
+    { _id: "m2", id: "user_new", email: "john@company.com", full_name: "John Smith", status: "active" },
+  ]);
+  const organizationMembers = makeCollection([
+    { id: "mem_1", organization_id: "org_1", user_id: "user_existing", role: "viewer", status: "active" },
+  ]);
+
+  const result = await searchMemberCandidates(
+    { organizationId: "org_1", search: "company", limit: 10 },
+    { users, collection: organizationMembers },
+  );
+
+  assert.equal(result.length, 2);
+  const existing = result.find((u) => u.user_id === "user_existing");
+  const fresh = result.find((u) => u.user_id === "user_new");
+  assert.equal(existing.already_member, true);
+  assert.equal(existing.membership_role, "viewer");
+  assert.equal(existing.email_masked, "j***@company.com");
+  assert.equal(fresh.already_member, false);
+  assert.equal(fresh.membership_role, null);
+
+  const serialized = JSON.stringify(result);
+  assert.equal(serialized.includes("jane@company.com"), false);
+  assert.equal(serialized.includes("secret"), false);
+  assert.equal(serialized.includes("m1"), false);
+});
+
+test("searchMemberCandidates honors min-length unless searching an exact user id", async () => {
+  const users = makeUsersFake([
+    { id: "AB", email: "zzz@company.com", status: "active" },
+    { id: "other", email: "person@company.com", status: "active" },
+  ]);
+  const organizationMembers = makeCollection([]);
+
+  const exact = await searchMemberCandidates(
+    { organizationId: "org_1", search: "AB" },
+    { users, collection: organizationMembers },
+  );
+  assert.ok(exact.some((u) => u.user_id === "AB"));
+
+  const tooShort = await searchMemberCandidates(
+    { organizationId: "org_1", search: "z" },
+    { users, collection: organizationMembers },
+  );
+  assert.deepEqual(tooShort, []);
+});
+
+test("searchMemberCandidates excludes disabled and deleted users", async () => {
+  const users = makeUsersFake([
+    { id: "user_active", email: "active@company.com", status: "active" },
+    { id: "user_disabled", email: "disabled@company.com", status: "disabled" },
+    { id: "user_deleted", email: "deleted@company.com", deleted: true },
+    { id: "user_flag_disabled", email: "flag@company.com", disabled: true },
+  ]);
+  const organizationMembers = makeCollection([]);
+
+  const result = await searchMemberCandidates(
+    { organizationId: "org_1", search: "company" },
+    { users, collection: organizationMembers },
+  );
+  assert.deepEqual(result.map((u) => u.user_id), ["user_active"]);
+});
+
+test("searchMemberCandidates rejects an empty search", async () => {
+  const users = makeUsersFake([{ id: "u", email: "u@company.com", status: "active" }]);
+  const organizationMembers = makeCollection([]);
+
+  await assert.rejects(
+    () => searchMemberCandidates(
+      { organizationId: "org_1", search: "" },
+      { users, collection: organizationMembers },
+    ),
+    (err) => err.status === 400 && err.code === "bad_request",
+  );
+});
+
+// ---------------------------------------------------------------------------
+// S2-31-fix: target-user existence/active validation on create.
+// ---------------------------------------------------------------------------
+
+test("isActiveUserAccount excludes deleted/disabled/non-active and allows a missing status", () => {
+  assert.equal(isActiveUserAccount({ id: "u", status: "active" }), true);
+  assert.equal(isActiveUserAccount({ id: "u" }), true);
+  assert.equal(isActiveUserAccount({ id: "u", status: "disabled" }), false);
+  assert.equal(isActiveUserAccount({ id: "u", deleted: true }), false);
+  assert.equal(isActiveUserAccount({ id: "u", disabled: true }), false);
+  assert.equal(isActiveUserAccount(null), false);
+});
+
+test("createOrganizationMember validates the target user when a users collection is provided", async () => {
+  const organizationMembers = makeCollection([
+    { id: "req", organization_id: "org_1", user_id: "owner_user", role: "owner", status: "active" },
+  ]);
+  const users = makeCollection([{ id: "real_user", status: "active" }]);
+
+  await assert.rejects(
+    () => createOrganizationMember(
+      { organizationId: "org_1", requesterUserId: "owner_user", targetUserId: "ghost", role: "viewer" },
+      { collection: organizationMembers, users },
+    ),
+    (err) => err.status === 404 && err.code === "user_not_found",
+  );
+
+  await assert.rejects(
+    () => createOrganizationMember(
+      { organizationId: "org_1", requesterUserId: "owner_user", targetUserId: "real_user", role: "viewer" },
+      { collection: organizationMembers, users: makeCollection([{ id: "real_user", status: "disabled" }]) },
+    ),
+    (err) => err.status === 400 && err.code === "invalid_user_id",
+  );
+
+  const ok = await createOrganizationMember(
+    { organizationId: "org_1", requesterUserId: "owner_user", targetUserId: "real_user", role: "viewer" },
+    { collection: organizationMembers, users, idFactory: () => "m_ok" },
+  );
+  assert.equal(ok.created, true);
+  assert.equal(ok.member.user_id, "real_user");
+});
+
+test("createOrganizationMember skips user validation when no users collection is provided", async () => {
+  const organizationMembers = makeCollection([
+    { id: "req", organization_id: "org_1", user_id: "owner_user", role: "owner", status: "active" },
+  ]);
+
+  const ok = await createOrganizationMember(
+    { organizationId: "org_1", requesterUserId: "owner_user", targetUserId: "legacy_user", role: "viewer" },
+    { collection: organizationMembers, idFactory: () => "m_legacy" },
+  );
+  assert.equal(ok.created, true);
+  assert.equal(ok.member.user_id, "legacy_user");
 });

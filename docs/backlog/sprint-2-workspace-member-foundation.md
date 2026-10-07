@@ -42,3 +42,30 @@ Before any implementation task starts:
 - Existing single-user owner behavior must stay green.
 - No task may auto-bind imported Google locations.
 - No task may make `location_org_map` canonical.
+
+## S2-31 Member Lookup Usability Repair
+
+S2-31 is complete. It repaired the Organization Members UI usability gap by adding a read-only owner/admin-only `GET /api/v1/orgs/:orgId/member-candidates` search endpoint over the `users` collection (sanitized `{ user_id, display_name, email_masked, already_member, membership_role }` rows; min-length 2 unless exact `user_id`; disabled/deleted excluded), enriching `GET /api/v1/orgs/:orgId/members` with an optional safe `user: { display_name, email_masked }`, and replacing the manual-`user_id`-first frontend flow with a search-first flow (manual entry kept as a labeled fallback). It did not implement email invitations, change the create/update/disable contracts, change auth/JWT or Google provider auth, add Phase 2 providers, change report APIs, or install dependencies. Proof: `docs/proof/s2-31-organization-members-usability-repair.md`.
+
+S2-31-fix follow-up (pending GPT verification):
+
+- **Live 404:** caused by a stale, un-restarted API process; the route is mounted correctly. Registration, shadowing, and unauthenticated-401 HTTP tests were added.
+- **Create path:** rejects non-existent or inactive target users (`404 user_not_found` / `400 invalid_user_id`) and creates no row.
+- **Add flow:** requires a selected candidate; manual `user_id` is behind an Advanced toggle.
+- **Layout:** search and button rows aligned.
+- **Assigned fields:** gated to manager/viewer, with optional-scope helper copy.
+- **Member rows:** lead with display_name, with labeled technical IDs.
+- **Checks:** API 231/231, web 72/72, build OK.
+- **Live smoke:** passed on port 5051 against local MongoDB. A 200 against the real org is pending until the configured Atlas host resolves.
+
+S2-31.1 follow-up (pending GPT verification):
+
+- **Add flow:** four explicit steps (search → select → role → add). Candidate rows are selectable; Advanced manual `user_id` is collapsed by default.
+- **Scope fields:** client/location fields show only for manager/viewer, in an "Optional advanced scope" panel. Other roles are told no assignments are needed.
+- **Feedback:** button heights are consistent, and success/error states are unambiguous. Success names the member and role.
+- **Member rows:** lead with display name and masked email. Technical IDs are collapsed. The disable confirm reads "Disable membership for <name>? This does not delete the user."
+- **Privacy fix:** the display name no longer derives from the email local part.
+- **Checks:** API 232/232, web 74/74, build OK.
+- **Playwright browser pass:** 32/32 against local MongoDB fixtures.
+- **Still pending:** a real-org check until the configured Atlas host resolves.
+- **Follow-up candidate:** PATCH re-activation does not re-check that the user account is active.

@@ -2,23 +2,60 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import AppShell from "../components/AppShell";
 import {
+  MEMBER_CANDIDATE_MIN_SEARCH,
   MEMBER_CREATE_STATUSES,
   MEMBER_ROLES,
   MEMBER_STATUSES_ALL,
+  buildCreateMemberPayload,
+  buildDisableConfirmMessage,
+  canSubmitMemberCreate,
+  clearSelectedCandidate,
   createOrgMember,
   describeBackendError,
   disableOrgMember,
+  editCandidateQuery,
+  editManualUserId,
   formatAssignmentIds,
   formatDate,
+  initialAddSelection,
   listOrgMembers,
   listOrganizations,
+  buildMemberAddedMessage,
+  memberDisplayLabel,
   parseAssignmentIdsInput,
   roleSupportsAssignments,
+  searchMemberCandidates,
+  selectCandidateForAdd,
+  toggleManualUserIdMode,
   updateOrgMember,
 } from "../lib/memberManagement";
 
+const ASSIGNMENT_HELP =
+  "Leave blank unless this member should only access specific clients or locations.";
+const NO_ASSIGNMENT_NEEDED =
+  "Owner, admin, and member roles do not need client or location assignments.";
+const BTN_BASE =
+  "inline-flex h-10 shrink-0 items-center justify-center rounded-lg text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed";
+const BTN_PRIMARY = `${BTN_BASE} px-4 bg-gray-900 text-white hover:bg-black`;
+const BTN_SECONDARY = `${BTN_BASE} px-3 border bg-white text-gray-800 hover:bg-gray-100`;
+const BTN_SMALL = BTN_SECONDARY;
+const INPUT = "h-10 w-full px-3 border rounded-lg";
+
+function StepHeading({ n, title, hint }) {
+  return (
+    <div className="flex items-start gap-3">
+      <span className="mt-0.5 inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-gray-900 text-xs font-semibold text-white">
+        {n}
+      </span>
+      <div>
+        <h3 className="text-sm font-semibold text-gray-900">{title}</h3>
+        {hint ? <p className="text-xs text-gray-500">{hint}</p> : null}
+      </div>
+    </div>
+  );
+}
+
 const emptyCreateForm = Object.freeze({
-  user_id: "",
   role: "viewer",
   status: "active",
   assigned_client_ids_csv: "",
@@ -73,9 +110,16 @@ export default function OrganizationMembers({ onLogout }) {
   const [membersLoading, setMembersLoading] = useState(false);
   const [membersError, setMembersError] = useState("");
 
+  const [addSelection, setAddSelection] = useState(initialAddSelection);
+  const [candidates, setCandidates] = useState([]);
+  const [candidatesLoading, setCandidatesLoading] = useState(false);
+  const [candidatesError, setCandidatesError] = useState("");
+  const [candidatesSearched, setCandidatesSearched] = useState(false);
+
   const [createForm, setCreateForm] = useState(emptyCreateForm);
   const [createBusy, setCreateBusy] = useState(false);
-  const [createMessage, setCreateMessage] = useState("");
+  const [createError, setCreateError] = useState("");
+  const [createSuccess, setCreateSuccess] = useState("");
 
   const [editingMemberId, setEditingMemberId] = useState("");
   const [editForm, setEditForm] = useState(null);
@@ -126,6 +170,18 @@ export default function OrganizationMembers({ onLogout }) {
     }
   }, []);
 
+  function resetCandidateSearch() {
+    setAddSelection(initialAddSelection);
+    setCandidates([]);
+    setCandidatesError("");
+    setCandidatesSearched(false);
+  }
+
+  function clearCreateMessages() {
+    setCreateError("");
+    setCreateSuccess("");
+  }
+
   useEffect(() => {
     loadOrgs();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -134,11 +190,11 @@ export default function OrganizationMembers({ onLogout }) {
   useEffect(() => {
     if (selectedOrgId) loadMembers(selectedOrgId);
     else setMembers([]);
-  }, [selectedOrgId, loadMembers]);
-
-  function resetCreateForm() {
+    resetCandidateSearch();
     setCreateForm(emptyCreateForm);
-  }
+    clearCreateMessages();
+    setActionMessage("");
+  }, [selectedOrgId, loadMembers]);
 
   function startEdit(member) {
     setEditingMemberId(member.id || "");
@@ -157,35 +213,66 @@ export default function OrganizationMembers({ onLogout }) {
     setEditMessage("");
   }
 
-  async function onCreateSubmit(event) {
+  async function onCandidateSearch(event) {
     event.preventDefault();
     if (!selectedOrgId) return;
-    if (!createForm.user_id.trim()) {
-      setCreateMessage("user_id is required.");
+    const term = addSelection.query.trim();
+    clearCreateMessages();
+    setAddSelection((prev) => clearSelectedCandidate(prev));
+    if (!term) {
+      setCandidatesError("Enter a name, email, or user id to search.");
       return;
     }
-    setCreateBusy(true);
-    setCreateMessage("");
+    setCandidatesLoading(true);
+    setCandidatesError("");
+    setCandidatesSearched(true);
     try {
-      const body = {
-        user_id: createForm.user_id.trim(),
-        role: createForm.role,
-        status: createForm.status,
-      };
-      if (roleSupportsAssignments(createForm.role)) {
-        body.assigned_client_ids = parseAssignmentIdsInput(createForm.assigned_client_ids_csv);
-        body.assigned_location_ids = parseAssignmentIdsInput(createForm.assigned_location_ids_csv);
-      }
-      const out = await createOrgMember(selectedOrgId, body);
-      setCreateMessage(
-        out?.created === false
-          ? `Member already exists (returned unchanged: ${out?.member?.role}/${out?.member?.status}).`
-          : "Member created.",
+      const rows = await searchMemberCandidates(selectedOrgId, term);
+      setCandidates(rows);
+    } catch (err) {
+      setCandidates([]);
+      setCandidatesError(describeBackendError(err));
+    } finally {
+      setCandidatesLoading(false);
+    }
+  }
+
+  function selectCandidate(candidate) {
+    clearCreateMessages();
+    setAddSelection((prev) => selectCandidateForAdd(prev, candidate));
+  }
+
+  async function onCreateSubmit(event) {
+    event.preventDefault();
+    clearCreateMessages();
+    if (!canSubmitMemberCreate(addSelection, { orgId: selectedOrgId, busy: createBusy })) {
+      setCreateError(
+        "Select a user from the search results first (or use Advanced manual entry).",
       );
-      resetCreateForm();
+      return;
+    }
+    const body = buildCreateMemberPayload(addSelection, createForm);
+    if (!body) return;
+    const label = addSelection.manualMode
+      ? `User ${body.user_id}`
+      : addSelection.selectedCandidate?.display_name || `User ${body.user_id}`;
+    setCreateBusy(true);
+    try {
+      const out = await createOrgMember(selectedOrgId, body);
+      if (out?.created === false) {
+        setCreateSuccess(
+          `${label} is already a member (${out?.member?.role || "-"}/${out?.member?.status || "-"}). No changes made.`,
+        );
+      } else if (out?.member) {
+        setCreateSuccess(buildMemberAddedMessage({ name: label, role: out.member.role || body.role }));
+      } else {
+        setCreateError("Unexpected response from server; member list refreshed.");
+      }
+      setCreateForm(emptyCreateForm);
+      resetCandidateSearch();
       await loadMembers(selectedOrgId);
     } catch (err) {
-      setCreateMessage(describeBackendError(err));
+      setCreateError(describeBackendError(err));
     } finally {
       setCreateBusy(false);
     }
@@ -220,9 +307,9 @@ export default function OrganizationMembers({ onLogout }) {
 
   async function onDisable(member) {
     if (!selectedOrgId || !member?.id) return;
-    const ok = window.confirm(
-      `Disable member ${member.user_id}? This sets status=disabled and does not delete the membership.`,
-    );
+    if (member.status === "disabled") return;
+    const label = memberDisplayLabel(member);
+    const ok = window.confirm(buildDisableConfirmMessage(member));
     if (!ok) return;
     setDisableBusyId(member.id);
     setActionMessage("");
@@ -230,8 +317,8 @@ export default function OrganizationMembers({ onLogout }) {
       const out = await disableOrgMember(selectedOrgId, member.id);
       setActionMessage(
         out?.disabled === false
-          ? `Member ${member.user_id} was already disabled.`
-          : `Member ${member.user_id} disabled.`,
+          ? `Member ${label} was already disabled.`
+          : `Member ${label} disabled.`,
       );
       if (editingMemberId === member.id) cancelEdit();
       await loadMembers(selectedOrgId);
@@ -242,25 +329,31 @@ export default function OrganizationMembers({ onLogout }) {
     }
   }
 
+  const createCanSubmit = canSubmitMemberCreate(addSelection, {
+    orgId: selectedOrgId,
+    busy: createBusy,
+  });
+  const selectedCandidate = addSelection.selectedCandidate;
+
   return (
     <AppShell
       title="Organization Members"
-      subtitle="Direct user_id-based workspace membership. Email invitations are not available yet."
+      subtitle="Search for an existing user to add them to this workspace. Email invitations are not available yet."
       onLogout={onLogout}
     >
       <div className="space-y-6">
         <div className="bg-white border rounded-xl p-5 space-y-3">
-          <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
-            <div className="flex-1">
-              <label htmlFor="org-select" className="block text-sm font-medium text-gray-700">
-                Organization
-              </label>
+          <div className="space-y-1">
+            <label htmlFor="org-select" className="block text-sm font-medium text-gray-700">
+              Organization
+            </label>
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
               <select
                 id="org-select"
                 value={selectedOrgId}
                 onChange={(event) => setSelectedOrgId(event.target.value)}
                 disabled={orgsLoading || !orgs.length}
-                className="mt-1 w-full px-3 py-2 border rounded-lg disabled:opacity-60"
+                className={`${INPUT} bg-white sm:flex-1 min-w-0 disabled:opacity-60`}
               >
                 {!orgs.length ? (
                   <option value="">No organizations available</option>
@@ -272,28 +365,30 @@ export default function OrganizationMembers({ onLogout }) {
                   ))
                 )}
               </select>
-              {selectedOrg ? (
-                <p className="mt-1 text-xs text-gray-500">id: {selectedOrg.id}</p>
-              ) : null}
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={loadOrgs}
+                  disabled={orgsLoading}
+                  className={BTN_SECONDARY}
+                >
+                  {orgsLoading ? "Loading…" : "Refresh orgs"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => selectedOrgId && loadMembers(selectedOrgId)}
+                  disabled={!selectedOrgId || membersLoading}
+                  className={BTN_SECONDARY}
+                >
+                  {membersLoading ? "Loading…" : "Refresh members"}
+                </button>
+              </div>
             </div>
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={loadOrgs}
-                disabled={orgsLoading}
-                className="px-3 py-2 rounded-lg border bg-white text-sm hover:bg-gray-100 disabled:opacity-50"
-              >
-                {orgsLoading ? "Loading…" : "Refresh orgs"}
-              </button>
-              <button
-                type="button"
-                onClick={() => selectedOrgId && loadMembers(selectedOrgId)}
-                disabled={!selectedOrgId || membersLoading}
-                className="px-3 py-2 rounded-lg border bg-white text-sm hover:bg-gray-100 disabled:opacity-50"
-              >
-                {membersLoading ? "Loading…" : "Refresh members"}
-              </button>
-            </div>
+            {selectedOrg ? (
+              <p className="text-[11px] text-gray-400">
+                Organization ID (technical): <span className="font-mono">{selectedOrg.id}</span>
+              </p>
+            ) : null}
           </div>
           {orgsError ? (
             <div role="alert" className="rounded-lg border bg-amber-50 p-3 text-sm text-amber-900">
@@ -302,129 +397,334 @@ export default function OrganizationMembers({ onLogout }) {
           ) : null}
         </div>
 
-        <div className="bg-white border rounded-xl p-5 space-y-4">
-          <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
-            <h2 className="text-lg font-semibold">Add direct member</h2>
-            <p className="text-xs text-gray-500">
-              Direct membership by existing app user_id only. Backend role rules apply.
+        <div className="bg-white border rounded-xl p-5 space-y-5" data-testid="add-member-card">
+          <div>
+            <h2 className="text-lg font-semibold">Add a member</h2>
+            <p className="text-sm text-gray-500">
+              Add someone who already has a ParaMetrics account. Owners and admins only.
             </p>
           </div>
-          <form onSubmit={onCreateSubmit} className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            <div>
-              <label htmlFor="create-user-id" className="block text-sm font-medium text-gray-700">
-                Target user_id
+
+          <section className="space-y-2" data-testid="add-step-1">
+            <StepHeading
+              n={1}
+              title="Search existing user"
+              hint={`Search by name or email (at least ${MEMBER_CANDIDATE_MIN_SEARCH} characters).`}
+            />
+            <form onSubmit={onCandidateSearch} className="flex items-center gap-2 sm:pl-9">
+              <label htmlFor="candidate-search" className="sr-only">
+                Search existing user
               </label>
               <input
-                id="create-user-id"
+                id="candidate-search"
                 type="text"
-                value={createForm.user_id}
-                onChange={(event) =>
-                  setCreateForm((prev) => ({ ...prev, user_id: event.target.value }))
-                }
-                required
+                value={addSelection.query}
+                onChange={(event) => {
+                  const value = event.target.value;
+                  setAddSelection((prev) => editCandidateQuery(prev, value));
+                  clearCreateMessages();
+                }}
                 autoComplete="off"
-                className="mt-1 w-full px-3 py-2 border rounded-lg"
-                placeholder="e.g. user_abc123"
+                className={`${INPUT} flex-1 min-w-0`}
+                placeholder="e.g. Jane or jane@company.com"
               />
-            </div>
-            <div>
-              <label htmlFor="create-role" className="block text-sm font-medium text-gray-700">
-                Role
-              </label>
-              <select
-                id="create-role"
-                value={createForm.role}
-                onChange={(event) =>
-                  setCreateForm((prev) => ({ ...prev, role: event.target.value }))
-                }
-                className="mt-1 w-full px-3 py-2 border rounded-lg"
-              >
-                {MEMBER_ROLES.map((r) => (
-                  <option key={r} value={r}>
-                    {r}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <label htmlFor="create-status" className="block text-sm font-medium text-gray-700">
-                Status
-              </label>
-              <select
-                id="create-status"
-                value={createForm.status}
-                onChange={(event) =>
-                  setCreateForm((prev) => ({ ...prev, status: event.target.value }))
-                }
-                className="mt-1 w-full px-3 py-2 border rounded-lg"
-              >
-                {MEMBER_CREATE_STATUSES.map((s) => (
-                  <option key={s} value={s}>
-                    {s}
-                  </option>
-                ))}
-              </select>
-              <p className="mt-1 text-xs text-gray-500">
-                Direct create supports active or disabled only. Invited status requires an
-                invitation flow that is not implemented yet.
-              </p>
-            </div>
-            {roleSupportsAssignments(createForm.role) ? (
-              <>
-                <div>
-                  <label htmlFor="create-clients" className="block text-sm font-medium text-gray-700">
-                    Assigned client ids (comma separated)
-                  </label>
-                  <input
-                    id="create-clients"
-                    type="text"
-                    value={createForm.assigned_client_ids_csv}
-                    onChange={(event) =>
-                      setCreateForm((prev) => ({
-                        ...prev,
-                        assigned_client_ids_csv: event.target.value,
-                      }))
-                    }
-                    autoComplete="off"
-                    className="mt-1 w-full px-3 py-2 border rounded-lg"
-                    placeholder="client_a, client_b"
-                  />
-                </div>
-                <div>
-                  <label htmlFor="create-locations" className="block text-sm font-medium text-gray-700">
-                    Assigned location ids (comma separated)
-                  </label>
-                  <input
-                    id="create-locations"
-                    type="text"
-                    value={createForm.assigned_location_ids_csv}
-                    onChange={(event) =>
-                      setCreateForm((prev) => ({
-                        ...prev,
-                        assigned_location_ids_csv: event.target.value,
-                      }))
-                    }
-                    autoComplete="off"
-                    className="mt-1 w-full px-3 py-2 border rounded-lg"
-                    placeholder="loc_a, loc_b"
-                  />
-                </div>
-              </>
-            ) : null}
-            <div className="md:col-span-2 flex items-center gap-3">
               <button
                 type="submit"
-                disabled={!selectedOrgId || createBusy}
-                className="px-4 py-2 rounded-lg bg-gray-900 text-white text-sm hover:bg-black disabled:opacity-50"
+                disabled={!selectedOrgId || candidatesLoading}
+                className={BTN_PRIMARY}
+                data-testid="candidate-search-submit"
               >
-                {createBusy ? "Adding…" : "Add member"}
+                {candidatesLoading ? "Searching…" : "Search"}
               </button>
-              {createMessage ? (
-                <span role="status" className="text-sm text-gray-700">
-                  {createMessage}
-                </span>
+            </form>
+            {candidatesError ? (
+              <div
+                role="alert"
+                data-testid="candidate-search-error"
+                className="sm:ml-9 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900"
+              >
+                Search failed: {candidatesError}
+              </div>
+            ) : null}
+          </section>
+
+          <section className="space-y-2" data-testid="add-step-2">
+            <StepHeading n={2} title="Select user" hint="Click a person in the results to select them." />
+            <div className="sm:pl-9 space-y-2">
+              {candidatesLoading ? (
+                <div className="text-sm text-gray-600">Searching users…</div>
+              ) : candidatesSearched && !candidates.length && !candidatesError ? (
+                <div
+                  data-testid="candidate-empty"
+                  className="rounded-lg border bg-gray-50 p-3 text-sm text-gray-600"
+                >
+                  No matching users found. The person must sign in to ParaMetrics at least once before
+                  they can be added.
+                </div>
+              ) : candidates.length ? (
+                <ul className="space-y-2" data-testid="candidate-results">
+                  {candidates.map((candidate) => {
+                    const isSelected = selectedCandidate?.user_id === candidate.user_id;
+                    const unavailable = candidate.already_member;
+                    return (
+                      <li key={candidate.user_id}>
+                        <button
+                          type="button"
+                          data-testid="candidate-row"
+                          aria-pressed={isSelected}
+                          disabled={unavailable}
+                          onClick={() => selectCandidate(candidate)}
+                          className={`w-full rounded-lg border p-3 text-left flex items-center justify-between gap-3 transition ${
+                            unavailable
+                              ? "bg-gray-50 opacity-60 cursor-not-allowed"
+                              : isSelected
+                              ? "border-blue-500 bg-blue-50 ring-1 ring-blue-500"
+                              : "bg-white hover:border-gray-400 hover:bg-gray-50 cursor-pointer"
+                          }`}
+                        >
+                          <span className="min-w-0">
+                            <span className="block text-sm font-medium break-all">
+                              {candidate.display_name}
+                            </span>
+                            {candidate.email_masked ? (
+                              <span className="block text-xs text-gray-600 break-all">
+                                {candidate.email_masked}
+                              </span>
+                            ) : null}
+                          </span>
+                          <span
+                            className={`shrink-0 rounded-md px-2 py-1 text-xs font-medium ${
+                              unavailable
+                                ? "bg-gray-200 text-gray-700"
+                                : isSelected
+                                ? "bg-blue-600 text-white"
+                                : "border bg-white text-gray-700"
+                            }`}
+                          >
+                            {unavailable
+                              ? `Already a member${candidate.membership_role ? ` · ${candidate.membership_role}` : ""}`
+                              : isSelected
+                              ? "Selected"
+                              : "Select"}
+                          </span>
+                        </button>
+                      </li>
+                    );
+                  })}
+                </ul>
+              ) : (
+                <div className="text-sm text-gray-500">Search above to see matching people.</div>
+              )}
+
+              {!addSelection.manualMode && selectedCandidate ? (
+                <div
+                  data-testid="selected-candidate"
+                  className="flex items-center justify-between gap-3 rounded-lg border border-blue-200 bg-blue-50 p-3"
+                >
+                  <div className="min-w-0 text-sm">
+                    <span className="text-gray-600">Selected: </span>
+                    <span className="font-medium break-all">{selectedCandidate.display_name}</span>
+                    {selectedCandidate.email_masked ? (
+                      <span className="text-gray-600 break-all"> · {selectedCandidate.email_masked}</span>
+                    ) : null}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setAddSelection((prev) => clearSelectedCandidate(prev))}
+                    className={BTN_SMALL}
+                  >
+                    Clear
+                  </button>
+                </div>
               ) : null}
+
+              <div className="rounded-lg border border-dashed">
+                <button
+                  type="button"
+                  data-testid="advanced-manual-toggle"
+                  aria-expanded={addSelection.manualMode}
+                  onClick={() => {
+                    clearCreateMessages();
+                    setAddSelection((prev) => toggleManualUserIdMode(prev));
+                  }}
+                  className="w-full px-3 py-2 text-left text-xs text-gray-600 hover:text-gray-900"
+                >
+                  {addSelection.manualMode ? "▾" : "▸"} Advanced: enter user_id manually
+                </button>
+                {addSelection.manualMode ? (
+                  <div className="border-t bg-amber-50 p-3 space-y-1" data-testid="advanced-manual-panel">
+                    <label htmlFor="create-user-id" className="block text-sm font-medium text-gray-700">
+                      Exact user_id
+                    </label>
+                    <input
+                      id="create-user-id"
+                      type="text"
+                      value={addSelection.manualUserId}
+                      onChange={(event) => {
+                        const value = event.target.value;
+                        setAddSelection((prev) => editManualUserId(prev, value));
+                      }}
+                      autoComplete="off"
+                      className={`${INPUT} bg-white font-mono text-sm`}
+                      placeholder="exact existing app user_id"
+                    />
+                    <p className="text-xs text-amber-900">
+                      Use only if you know the exact existing app user_id. The server checks that this
+                      user exists and is active; unknown ids are rejected.
+                    </p>
+                  </div>
+                ) : null}
+              </div>
             </div>
+          </section>
+
+          <form onSubmit={onCreateSubmit} className="space-y-5">
+            <section className="space-y-2" data-testid="add-step-3">
+              <StepHeading n={3} title="Choose role" />
+              <div className="sm:pl-9 grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div>
+                  <label htmlFor="create-role" className="block text-sm font-medium text-gray-700">
+                    Role
+                  </label>
+                  <select
+                    id="create-role"
+                    value={createForm.role}
+                    onChange={(event) =>
+                      setCreateForm((prev) => ({ ...prev, role: event.target.value }))
+                    }
+                    className={`mt-1 ${INPUT} bg-white`}
+                  >
+                    {MEMBER_ROLES.map((r) => (
+                      <option key={r} value={r}>
+                        {r}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label htmlFor="create-status" className="block text-sm font-medium text-gray-700">
+                    Status
+                  </label>
+                  <select
+                    id="create-status"
+                    value={createForm.status}
+                    onChange={(event) =>
+                      setCreateForm((prev) => ({ ...prev, status: event.target.value }))
+                    }
+                    className={`mt-1 ${INPUT} bg-white`}
+                  >
+                    {MEMBER_CREATE_STATUSES.map((s) => (
+                      <option key={s} value={s}>
+                        {s}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {roleSupportsAssignments(createForm.role) ? (
+                  <fieldset
+                    data-testid="advanced-scope"
+                    className="md:col-span-2 rounded-lg border bg-gray-50 p-3 space-y-3"
+                  >
+                    <legend className="px-1 text-sm font-medium text-gray-700">
+                      Optional advanced scope
+                    </legend>
+                    <p className="text-xs text-gray-600">{ASSIGNMENT_HELP}</p>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                      <div>
+                        <label htmlFor="create-clients" className="block text-sm font-medium text-gray-700">
+                          Client IDs (comma separated)
+                        </label>
+                        <input
+                          id="create-clients"
+                          type="text"
+                          value={createForm.assigned_client_ids_csv}
+                          onChange={(event) =>
+                            setCreateForm((prev) => ({
+                              ...prev,
+                              assigned_client_ids_csv: event.target.value,
+                            }))
+                          }
+                          autoComplete="off"
+                          className={`mt-1 ${INPUT} bg-white`}
+                          placeholder="Leave blank for full access"
+                        />
+                      </div>
+                      <div>
+                        <label htmlFor="create-locations" className="block text-sm font-medium text-gray-700">
+                          Location IDs (comma separated)
+                        </label>
+                        <input
+                          id="create-locations"
+                          type="text"
+                          value={createForm.assigned_location_ids_csv}
+                          onChange={(event) =>
+                            setCreateForm((prev) => ({
+                              ...prev,
+                              assigned_location_ids_csv: event.target.value,
+                            }))
+                          }
+                          autoComplete="off"
+                          className={`mt-1 ${INPUT} bg-white`}
+                          placeholder="Leave blank for full access"
+                        />
+                      </div>
+                    </div>
+                  </fieldset>
+                ) : (
+                  <p data-testid="scope-not-needed" className="md:col-span-2 text-xs text-gray-500">
+                    {NO_ASSIGNMENT_NEEDED}
+                  </p>
+                )}
+              </div>
+            </section>
+
+            <section className="space-y-2" data-testid="add-step-4">
+              <StepHeading n={4} title="Add member" />
+              <div className="sm:pl-9 space-y-3">
+                <div className="flex flex-wrap items-center gap-3">
+                  <button
+                    type="submit"
+                    disabled={!createCanSubmit}
+                    className={BTN_PRIMARY}
+                    data-testid="add-member-submit"
+                  >
+                    {createBusy ? "Adding…" : "Add member"}
+                  </button>
+                  <span className="text-sm text-gray-600" data-testid="add-member-hint">
+                    {createCanSubmit
+                      ? `Adds ${
+                          addSelection.manualMode
+                            ? "the entered user_id"
+                            : selectedCandidate?.display_name || "the selected user"
+                        } as ${createForm.role}.`
+                      : selectedCandidate?.already_member
+                      ? "This person is already a member. Edit them in the list below."
+                      : addSelection.manualMode
+                      ? "Enter an exact user_id to enable Add member."
+                      : "Select a user in step 2 to enable Add member."}
+                  </span>
+                </div>
+                {createError ? (
+                  <div
+                    role="alert"
+                    data-testid="create-error"
+                    className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900"
+                  >
+                    Not added: {createError}
+                  </div>
+                ) : null}
+                {createSuccess ? (
+                  <div
+                    role="status"
+                    data-testid="create-success"
+                    className="rounded-lg border border-green-200 bg-green-50 p-3 text-sm text-green-800"
+                  >
+                    {createSuccess}
+                  </div>
+                ) : null}
+              </div>
+            </section>
           </form>
         </div>
 
@@ -432,7 +732,7 @@ export default function OrganizationMembers({ onLogout }) {
           <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
             <h2 className="text-lg font-semibold">Members</h2>
             <p className="text-xs text-gray-500">
-              Sanitized rows only. Emails and raw user records are not displayed.
+              Names and masked emails only. Raw emails and raw user records are not displayed.
             </p>
           </div>
 
@@ -454,32 +754,35 @@ export default function OrganizationMembers({ onLogout }) {
           ) : !members.length ? (
             <div className="text-sm text-gray-600">No members to show for this organization.</div>
           ) : (
-            <ul className="divide-y rounded-lg border">
+            <ul className="divide-y rounded-lg border" data-testid="member-list">
               {members.map((m) => {
                 const isEditing = editingMemberId === m.id;
                 return (
-                  <li key={m.id} className="p-3 space-y-2">
-                    <div className="flex flex-wrap items-center gap-2 justify-between">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className="text-sm font-medium break-all">{m.user_id}</span>
-                        {roleBadge(m.role)}
-                        {statusBadge(m.status)}
+                  <li key={m.id} className="p-3 space-y-2" data-testid="member-row">
+                    <div className="flex flex-wrap items-start gap-3 justify-between">
+                      <div className="min-w-0 space-y-0.5">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="text-sm font-semibold break-all" data-testid="member-name">
+                            {memberDisplayLabel(m)}
+                          </span>
+                          {roleBadge(m.role)}
+                          {statusBadge(m.status)}
+                        </div>
+                        {m.email_masked ? (
+                          <div className="text-xs text-gray-600 break-all" data-testid="member-email">
+                            {m.email_masked}
+                          </div>
+                        ) : (
+                          <div className="text-xs text-gray-400">No profile email on file</div>
+                        )}
                       </div>
                       <div className="flex items-center gap-2">
                         {isEditing ? (
-                          <button
-                            type="button"
-                            onClick={cancelEdit}
-                            className="px-3 py-1.5 rounded-lg border bg-white text-sm hover:bg-gray-100"
-                          >
+                          <button type="button" onClick={cancelEdit} className={BTN_SMALL}>
                             Cancel
                           </button>
                         ) : (
-                          <button
-                            type="button"
-                            onClick={() => startEdit(m)}
-                            className="px-3 py-1.5 rounded-lg border bg-white text-sm hover:bg-gray-100"
-                          >
+                          <button type="button" onClick={() => startEdit(m)} className={BTN_SMALL}>
                             Edit
                           </button>
                         )}
@@ -487,32 +790,40 @@ export default function OrganizationMembers({ onLogout }) {
                           type="button"
                           onClick={() => onDisable(m)}
                           disabled={disableBusyId === m.id || m.status === "disabled"}
-                          className="px-3 py-1.5 rounded-lg border bg-white text-sm hover:bg-gray-100 disabled:opacity-50"
+                          title={m.status === "disabled" ? "Already disabled" : "Disable this membership"}
+                          data-testid="member-disable"
+                          className={`${BTN_SMALL} ${m.status === "disabled" ? "text-gray-500" : "text-red-700"}`}
                         >
-                          {disableBusyId === m.id ? "Disabling…" : "Disable"}
+                          {disableBusyId === m.id
+                            ? "Disabling…"
+                            : m.status === "disabled"
+                            ? "Disabled"
+                            : "Disable"}
                         </button>
                       </div>
                     </div>
-                    <div className="text-xs text-gray-600 grid grid-cols-1 sm:grid-cols-2 gap-1">
-                      <div>
-                        <span className="font-medium text-gray-700">id:</span>{" "}
-                        <span className="break-all font-mono">{m.id}</span>
-                      </div>
-                      <div>
-                        <span className="font-medium text-gray-700">created:</span>{" "}
-                        {formatDate(m.created_at)}
-                      </div>
-                      <div>
-                        <span className="font-medium text-gray-700">updated:</span>{" "}
-                        {formatDate(m.updated_at)}
-                      </div>
-                      <div>
-                        <span className="font-medium text-gray-700">assignments:</span>{" "}
-                        clients {Array.isArray(m.assigned_client_ids) ? m.assigned_client_ids.length : 0}
+                    <div className="text-xs text-gray-600 flex flex-wrap gap-x-4 gap-y-1">
+                      <span>Added: {formatDate(m.created_at)}</span>
+                      <span>Updated: {formatDate(m.updated_at)}</span>
+                      <span>
+                        Scope: clients {Array.isArray(m.assigned_client_ids) ? m.assigned_client_ids.length : 0}
                         {" · "}
                         locations {Array.isArray(m.assigned_location_ids) ? m.assigned_location_ids.length : 0}
-                      </div>
+                      </span>
                     </div>
+                    <details className="text-[11px] text-gray-400" data-testid="member-tech-details">
+                      <summary className="cursor-pointer select-none hover:text-gray-600">
+                        Technical details
+                      </summary>
+                      <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1">
+                        <span>
+                          User ID: <span className="font-mono break-all">{m.user_id}</span>
+                        </span>
+                        <span>
+                          Membership ID: <span className="font-mono break-all">{m.id}</span>
+                        </span>
+                      </div>
+                    </details>
                     {isEditing && editForm ? (
                       <form
                         onSubmit={onEditSubmit}
@@ -531,7 +842,7 @@ export default function OrganizationMembers({ onLogout }) {
                             onChange={(event) =>
                               setEditForm((prev) => ({ ...prev, role: event.target.value }))
                             }
-                            className="mt-1 w-full px-3 py-2 border rounded-lg"
+                            className={`mt-1 ${INPUT} bg-white`}
                           >
                             {MEMBER_ROLES.map((r) => (
                               <option key={r} value={r}>
@@ -553,7 +864,7 @@ export default function OrganizationMembers({ onLogout }) {
                             onChange={(event) =>
                               setEditForm((prev) => ({ ...prev, status: event.target.value }))
                             }
-                            className="mt-1 w-full px-3 py-2 border rounded-lg"
+                            className={`mt-1 ${INPUT} bg-white`}
                           >
                             {MEMBER_STATUSES_ALL.map((s) => (
                               <option key={s} value={s}>
@@ -564,12 +875,16 @@ export default function OrganizationMembers({ onLogout }) {
                         </div>
                         {roleSupportsAssignments(editForm.role) ? (
                           <>
+                            <p className="md:col-span-2 text-xs text-gray-600">
+                              <span className="font-medium text-gray-700">Optional advanced scope.</span>{" "}
+                              {ASSIGNMENT_HELP}
+                            </p>
                             <div>
                               <label
                                 htmlFor={`edit-clients-${m.id}`}
                                 className="block text-sm font-medium text-gray-700"
                               >
-                                Assigned client ids (comma separated)
+                                Client IDs (comma separated)
                               </label>
                               <input
                                 id={`edit-clients-${m.id}`}
@@ -582,7 +897,7 @@ export default function OrganizationMembers({ onLogout }) {
                                   }))
                                 }
                                 autoComplete="off"
-                                className="mt-1 w-full px-3 py-2 border rounded-lg"
+                                className={`mt-1 ${INPUT} bg-white`}
                               />
                             </div>
                             <div>
@@ -590,7 +905,7 @@ export default function OrganizationMembers({ onLogout }) {
                                 htmlFor={`edit-locations-${m.id}`}
                                 className="block text-sm font-medium text-gray-700"
                               >
-                                Assigned location ids (comma separated)
+                                Location IDs (comma separated)
                               </label>
                               <input
                                 id={`edit-locations-${m.id}`}
@@ -603,21 +918,20 @@ export default function OrganizationMembers({ onLogout }) {
                                   }))
                                 }
                                 autoComplete="off"
-                                className="mt-1 w-full px-3 py-2 border rounded-lg"
+                                className={`mt-1 ${INPUT} bg-white`}
                               />
                             </div>
                           </>
                         ) : (
                           <div className="md:col-span-2 text-xs text-gray-600">
-                            Assignments are not used for role {editForm.role}; existing assignments
-                            will be cleared on save.
+                            {NO_ASSIGNMENT_NEEDED} Any existing assignments are cleared on save.
                           </div>
                         )}
                         <div className="md:col-span-2 flex items-center gap-3">
                           <button
                             type="submit"
                             disabled={editBusy}
-                            className="px-4 py-2 rounded-lg bg-gray-900 text-white text-sm hover:bg-black disabled:opacity-50"
+                            className={BTN_PRIMARY}
                           >
                             {editBusy ? "Saving…" : "Save changes"}
                           </button>

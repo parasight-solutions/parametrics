@@ -8,10 +8,12 @@ import { normalizeLocationBinding } from "../services/locationBinding.js";
 import { auditSuccess } from "../services/auditLog.js";
 import { requireOrganizationRole } from "../services/organizationAccess.js";
 import {
+  buildUserPublicProfile,
   createOrganizationMember,
   disableOrganizationMember,
   ensureOwnerMembershipForOrganization,
   listOrganizationMembers,
+  searchMemberCandidates,
   updateOrganizationMember,
 } from "../services/organizationMembers.js";
 
@@ -109,6 +111,19 @@ async function resolveOrgManagementCollections(options = {}) {
     clients: await col("clients"),
     locations: await col("locations"),
   };
+}
+
+// Resolve the users collection for safe display enrichment / candidate search.
+// Returns null when explicit test collections are provided without a users
+// collection so member listing enrichment is simply skipped and existing
+// callers/tests keep their current behavior. Falls back to the real collection
+// only when no explicit collections/db are injected (runtime path).
+async function resolveUsersCollectionOptional(options = {}) {
+  if (options.collections?.users) return options.collections.users;
+  if (options.users) return options.users;
+  if (options.db?.collection) return options.db.collection("users");
+  if (!options.collections && !options.db) return col("users");
+  return null;
 }
 
 function dedupeById(rows = []) {
@@ -225,7 +240,84 @@ export async function listOrganizationMembersForUser(
     { collection: organizationMembers },
   );
 
-  return { org, membership, members };
+  const enrichedMembers = await enrichMembersWithUserProfiles(members, options);
+
+  return { org, membership, members: enrichedMembers };
+}
+
+// Attach an optional sanitized `user: { display_name, email_masked }` to each
+// member row when the user document is available. The original member fields are
+// preserved for backward compatibility; raw emails are never attached.
+async function enrichMembersWithUserProfiles(members = [], options = {}) {
+  if (!Array.isArray(members) || members.length === 0) return members;
+  const users = await resolveUsersCollectionOptional(options);
+  if (!users) return members;
+
+  const ids = [...new Set(members.map((m) => cleanStr(m.user_id, 200)).filter(Boolean))];
+  if (ids.length === 0) return members;
+
+  const userDocs = await users
+    .find(
+      { id: { $in: ids } },
+      { projection: { _id: 0, id: 1, full_name: 1, name: 1, email: 1 } },
+    )
+    .toArray();
+
+  const byId = new Map();
+  for (const doc of userDocs) {
+    const id = cleanStr(doc.id, 200);
+    if (id) byId.set(id, doc);
+  }
+
+  return members.map((member) => {
+    const doc = byId.get(cleanStr(member.user_id, 200));
+    const profile = doc ? buildUserPublicProfile(doc) : null;
+    return profile ? { ...member, user: profile } : member;
+  });
+}
+
+export async function listMemberCandidatesForUser(
+  { userId, organizationId, search, limit } = {},
+  options = {},
+) {
+  const uid = cleanStr(userId, 200);
+  const orgId = cleanStr(organizationId, 200);
+  if (!uid || !orgId) {
+    throw makeRouteError(400, "bad_request", "userId and organizationId are required");
+  }
+
+  const { orgs, organizationMembers } = await resolveOrgCollections(options);
+  const requireRole = options.requireOrganizationRole || requireOrganizationRole;
+  const membership = await requireRole({
+    organizationId: orgId,
+    userId: uid,
+    allowedRoles: ORGANIZATION_MUTATION_ROLES,
+  }, {
+    collection: organizationMembers,
+    ...(options.organizationAccessOptions || {}),
+  });
+
+  const org = await orgs.findOne(
+    { id: orgId },
+    { projection: { _id: 0, id: 1 } },
+  );
+
+  if (!org) {
+    throw makeRouteError(404, "not_found", "org not found");
+  }
+
+  const users = await resolveUsersCollectionOptional(options);
+  if (!users) {
+    throw makeRouteError(500, "server_error", "users collection unavailable");
+  }
+
+  const search_ = options.searchMemberCandidates || searchMemberCandidates;
+  const candidates = await search_(
+    { organizationId: orgId, search, limit },
+    { collection: organizationMembers, users },
+  );
+
+  return { org, membership, users: candidates };
 }
 
 async function requireOrgExists(orgs, orgId) {
@@ -280,6 +372,7 @@ export async function createOrganizationMemberForUser(
 
   const collections = await resolveOrgManagementCollections(options);
   const org = await requireOrgExists(collections.orgs, orgId);
+  const users = await resolveUsersCollectionOptional(options);
   const createMember = options.createOrganizationMember || createOrganizationMember;
   const result = await createMember({
     organizationId: orgId,
@@ -293,6 +386,7 @@ export async function createOrganizationMemberForUser(
     collection: collections.organizationMembers,
     clients: collections.clients,
     locations: collections.locations,
+    users,
     idFactory: options.memberIdFactory,
     now: options.now,
   });
@@ -503,6 +597,20 @@ router.post("/", authenticate, async (req, res) => {
   try {
     const result = await saveOrganizationForUser({ userId, body });
     return res.json({ org: result.org });
+  } catch (error) {
+    return sendRouteError(res, error);
+  }
+});
+
+router.get("/:orgId/member-candidates", authenticate, async (req, res) => {
+  try {
+    const result = await listMemberCandidatesForUser({
+      userId: req.user.user_id,
+      organizationId: req.params.orgId,
+      search: req.query?.search,
+      limit: req.query?.limit,
+    });
+    return res.json({ users: result.users });
   } catch (error) {
     return sendRouteError(res, error);
   }
