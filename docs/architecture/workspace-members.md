@@ -458,9 +458,9 @@ On the frontend, the add flow is built from pure helpers in `apps/web/src/lib/me
 
 Router tests guard the `member-candidates` endpoint in three ways: it must be registered, no earlier GET route may shadow it, and an unauthenticated request must return `401` rather than Express `Cannot GET`.
 
-Current state: implemented in the working tree, pending GPT verification. No invitation or email flow exists.
+Current state: S2-31, S2-31-fix, and S2-31.1 are committed (`f271b02`); the S2-31.2/S2-31.3 follow-up is described below. No invitation or email flow exists.
 
-### Product UX Lessons (S2-31 / S2-31.1)
+### Product UX Lessons (S2-31 through S2-31.3)
 
 S2-31 first shipped an admin screen built around raw internal `user_id`s. People
 could not tell who they were adding, and typed text looked addable. These rules
@@ -484,3 +484,17 @@ apply to all future admin and management UI in ParaMetrics:
 - **Verify with a browser before acceptance.** Unit tests and a build did not
   catch the S2-31 usability problems. S2-31.1 added a scripted Playwright pass
   over the real page.
+- **Local UX review must include auth-compatible seed data and verified login,
+  not only isolated component/API tests.** (S2-31.2) A hand-rolled seed put the
+  review org in the wrong collection and nobody verified a real login, so the
+  reviewer hit "Login failed." Use the local-guarded, idempotent
+  `apps/api/src/scripts/seed.local-review.s2-31.js` (`--apply` / `--cleanup`).
+  It refuses non-local MongoDB and `NODE_ENV=production`. Fixtures must match
+  what the code reads: `users.password` (bcrypt) plus `normalized_email`, orgs in
+  `orgs`, and memberships in `organization_members`. Then log in through
+  `/login` in a browser before handing a build to a reviewer.
+- **Know which database a login hits, and never pre-fill credentials.** (S2-31.3)
+  The API authenticates against whatever `MONGODB_URI` it was started with. Real
+  accounts live in the real database and cannot log in to an API pointed at local
+  MongoDB; local review accounts do not exist in the real database. State the DB
+  mode in every review and proof. The login form starts empty.

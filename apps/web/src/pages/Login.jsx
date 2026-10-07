@@ -4,9 +4,14 @@ import { api } from "../apiClient";
 import GoogleLoginButton from "../components/GoogleLoginButton";
 import { setAuthSession } from "../session";
 
+// Fields start empty. They used to be pre-filled with a non-existent default
+// account (admin@example.com), and the masked password made it easy to submit
+// the wrong credentials during local review (S2-31.3).
+export const LOGIN_INITIAL_FORM = Object.freeze({ email: "", password: "" });
+
 export default function Login({ onAuthed }) {
-  const [email, setEmail] = useState("admin@example.com");
-  const [password, setPassword] = useState("Admin@123456");
+  const [email, setEmail] = useState(LOGIN_INITIAL_FORM.email);
+  const [password, setPassword] = useState(LOGIN_INITIAL_FORM.password);
   const [err, setErr] = useState("");
   const navigate = useNavigate();
   const location = useLocation();
@@ -50,6 +55,8 @@ export default function Login({ onAuthed }) {
         <input
           className="w-full border rounded px-3 py-2"
           placeholder="Email"
+          type="email"
+          autoComplete="username"
           value={email}
           onChange={(e) => setEmail(e.target.value)}
         />
@@ -57,6 +64,7 @@ export default function Login({ onAuthed }) {
           className="w-full border rounded px-3 py-2"
           placeholder="Password"
           type="password"
+          autoComplete="current-password"
           value={password}
           onChange={(e) => setPassword(e.target.value)}
         />

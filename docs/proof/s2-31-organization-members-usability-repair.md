@@ -759,6 +759,559 @@ Outcomes:
 - **No `aria-current` on nav.** `AppShell.jsx` is not in the allowed file list,
   so the active nav state is asserted by its CSS class.
 
+## S2-31.2 Addendum (Local Review Login Fix + UX Challenge)
+
+S2-31.1 was committed as `f271b02`. The user then tried a local browser review:
+
+- API on 5051 with local MongoDB, web on 5175.
+- They logged in at `/login` as the hand-seeded `review-owner@example.com`.
+- They got "Login failed."
+
+### Diagnosis (evidence, no secrets printed)
+
+Running processes, inspected but not modified:
+
+| Process | PID | cwd | Relevant env |
+| --- | --- | --- | --- |
+| API `node src/server.js` | 344544 | `/var/www/html/parametrics/apps/api` | `PORT=5051`, `MONGODB_URI=mongodb://127.0.0.1:27017/parametrics` |
+| Vite | 356988 | `/var/www/html/parametrics/apps/web` | `VITE_API_BASE_URL=http://127.0.0.1:5051` |
+
+Other listeners on 5173/5174 belong to `/var/www/html/calm-pm/frontend` and were
+left alone. The API started after the last API code change, so it was not stale.
+
+1. **Web → API wiring was correct.** In a Playwright capture, the login form
+   POSTs to `http://127.0.0.1:5051/api/v1/auth/login`. CORS returns
+   `access-control-allow-origin: http://127.0.0.1:5175`.
+2. **The API login works for the seeded user.** A direct
+   `curl -X POST :5051/api/v1/auth/login` with the UI's payload
+   (`{email, password}`) returned `200` with keys `token, user` (token not
+   printed). A browser login through the form then redirected to `/`.
+3. **`auth.js` expectations.** `POST /api/v1/auth/login`, body `{ email, password }`.
+   - Lookup: `normalized_email` first, then a case-insensitive `email` match.
+   - Requires a `password` field and runs `bcrypt.compare(password, user.password)`.
+   - No status check.
+   - The seeded user matches exactly: `normalized_email` set, `password` is a
+     60-char `$2a$` bcrypt hash that matches `Review123!`, and `password_hash` is
+     identical. **No auth.js bug.**
+4. **Audit log for `auth.login`** (reasons and booleans only):
+   - 09:22:52Z and 09:23:27Z: `invalid_credentials`, user not found. The email
+     was the login form's **prefilled default `admin@example.com`**, and no such
+     local user exists.
+   - 09:23:20Z: `invalid_credentials`, user not found (a different, non-local
+     email).
+   - 10:25:56Z: the review owner **was found** (`target_id` set), but bcrypt
+     compare failed. The user doc was created at 10:25:34Z and never updated
+     afterwards, and its hash matches `Review123!`. So the password submitted at
+     10:25:56Z was not `Review123!`.
+   - `Login.jsx` pre-fills a masked default password (`Admin@123456`). The most
+     likely cause is that the prefilled password was left in place or typed into.
+     It cannot be proven exactly, because the submitted password is never logged
+     (correctly).
+5. **Second, independent blocker.** The hand seed wrote the review org to an
+   **`organizations`** collection. The app reads **`orgs`**, which was empty. So
+   even a successful login would have shown "No organizations available", and
+   members/candidates would have returned `404 org not found`. There were also no
+   "Mahesh" candidates beyond one hand-seeded user.
+6. **Related latent issue (not changed).** `apps/api/src/scripts/seed.mongo.js`
+   writes only `password_hash`, but `auth.js` reads `password`, so users created
+   by that script can never log in with a password. This is a plausible origin
+   for hand-rolled seeds getting the shape wrong.
+
+### Root cause
+
+- **Not an app auth bug.** The local review setup was not auth- and app-compatible:
+  the org was in the wrong collection, no reliable fixture existed, and no login
+  had been verified.
+- **The specific "Login failed."** It is explained by a password mismatch at
+  submit time. The login form's prefilled default credentials (`Login.jsx`) are
+  the likely trap.
+- **Login.jsx untouched.** It is outside this task's allowed files, so it was not
+  changed; it is recommended as a follow-up (remove the prefilled credentials).
+
+### Fix made (setup only; no auth code change)
+
+New **`apps/api/src/scripts/seed.local-review.s2-31.js`** (local/dev review only,
+no new dependencies; uses the existing `bcryptjs`, `lib/mongo.js`, and
+`startup/env.js`).
+
+- **Modes:** dry run by default, `--apply` (create or reset), `--cleanup`
+  (remove).
+- **Guards:**
+  - Refuses `NODE_ENV=production`.
+  - Refuses any non-local Mongo host. Verified: with the default `.env` Atlas URI
+    it prints "refusing to run against non-local MongoDB host ((srv))" and writes
+    nothing.
+  - Touches only `s2-31-review-*` ids.
+  - Aborts if a fixture email belongs to another user id.
+  - Never prints hashes, tokens, or raw docs.
+- **Creates or resets:**
+  - Owner `review-owner@example.com` (`password` and `password_hash` = bcrypt of
+    the fixture password, `status: active`).
+  - Org `s2-31-review-org` in **`orgs`**.
+  - Memberships: owner (Review Owner), manager (Priya Manager), viewer (Mahesh
+    Existing).
+  - Candidates Mahesh Kumar and Maheshwari Rao.
+  - A `disabled: true` "Mahesh Disabled", which must never be offered.
+  - It removes the stray `organizations` doc with that exact id.
+- **Idempotent.** A re-apply resets the review org to the fixture membership set,
+  removing rows added during a review. Verified: running `--apply` twice gave
+  identical state.
+- A pre-existing hand-seeded `s2-31-review-candidate` ("Mahesh Review User") is
+  left in place by `--apply` and removed by `--cleanup` (prefix match).
+
+Usage, from `apps/api`:
+
+```bash
+MONGODB_URI=mongodb://127.0.0.1:27017/parametrics node src/scripts/seed.local-review.s2-31.js           # dry run
+MONGODB_URI=mongodb://127.0.0.1:27017/parametrics node src/scripts/seed.local-review.s2-31.js --apply   # create/reset
+MONGODB_URI=mongodb://127.0.0.1:27017/parametrics node src/scripts/seed.local-review.s2-31.js --cleanup # remove
+```
+
+**Local review login.** Email `review-owner@example.com`, password `Review123!`.
+This is a fixture-only credential on the reserved `example.com` domain, created
+only by the local-guarded seed. It is not a secret; never reuse it outside local
+review. **Clear the prefilled fields on `/login` before typing.**
+
+### UX challenge (after login worked)
+
+| Question | Finding | Change (allowed files only) |
+| --- | --- | --- |
+| Is the add flow obvious without internal IDs? | Mostly, but roles had no meaning attached. | Plain-language role hint under the role picker (`describeRole`). It describes only behavior the backend enforces today. |
+| Are assignment fields hidden except manager/viewer? | Yes, but the default role `viewer` showed the ID inputs expanded on first load, and the placeholder "Leave blank for full access" asserted an unverified access semantic. | The scope panel is now a collapsed `<details>` "Optional advanced scope (not needed for most members)" containing the required helper copy. It shows "(IDs entered)" when values exist. The placeholder is now "Optional". |
+| Are technical IDs secondary? | Yes (collapsed "Technical details"). Member rows still showed "Scope: clients 0 · locations 0" on owner/admin/member, where scope doesn't apply. The list header was developer copy. | The scope line appears only for manager/viewer ("No client/location limits set" or "Limited to N clients and M locations"). The header now shows the member count. |
+| Are errors/success clear? Any trap? | The owner's own row offered **Disable**, which is self-lockout bait; the backend only blocks the *last* owner. | A **You** badge on your own row. Disable on your own row is disabled ("You can't disable your own membership"), and the handler also guards it. The current user id comes from the stored login user or the JWT `user_id` claim; it is a UI hint only, and the API still enforces access. |
+| Is the search button aligned? Is mobile OK? | Aligned (y and height identical). On mobile the search placeholder truncated ("jane@comp…"). | The placeholder is now "Name or email". Mobile reviewed: no overflow or truncation. |
+| Out of scope (reported, not changed) | `Login.jsx` prefilled credentials. AppShell nav is `hidden md:flex`, so mobile has no Members link. AppShell has no `aria-current`. | Recommended follow-ups. |
+
+New helpers in `memberManagement.js`, all unit-tested:
+
+- `describeRole`
+- `memberScopeSummary` (never lists raw ids)
+- `decodeJwtUserId` (unverified, UI-only)
+- `resolveCurrentUserId`
+- `isCurrentUserMember`
+
+### Browser verification (Playwright through the real login form)
+
+Playwright 1.63.0 from the existing npx cache; nothing installed. It ran against
+**the user's own running stack** (API 5051 PID 344544, Vite 5175 PID 356988),
+which is exactly what the user reviews. Vite HMR served the working-tree page.
+No token injection was used: the browser logs in through `/login`.
+
+The first pass, before the UX changes, scored 25/25. One of those lines was an
+informational placeholder, which was replaced with real assertions. The final
+pass, after the UX changes and a seed reset, scored **31/31**:
+
+- **Login and navigation:**
+  - Login works through the form, calls `http://127.0.0.1:5051/api/v1/auth/login`,
+    and redirects.
+  - `/organization-members` loads via the nav, Members nav is active, and the
+    review org is selected.
+- **Member list:**
+  - It shows Review Owner / Priya Manager / Mahesh Existing.
+  - The own row has the **You** badge, with Disable blocked.
+  - The scope line appears only on manager/viewer rows.
+- **Add form initial state:**
+  - Add member is disabled before selection.
+  - Advanced manual entry is hidden.
+  - Search input and button are aligned (y 458.5/458.5, h 40/40).
+- **Search and select:**
+  - "Mahesh" returns 4 rows. The disabled account is not offered, and the
+    already-member row is disabled.
+  - Add stays disabled after a search without selection.
+  - Selecting Mahesh Kumar enables Add.
+- **Role and scope:**
+  - The scope panel is collapsed by default, with ID inputs hidden.
+  - It expands to show the exact helper text.
+  - Role help is shown and updates per role.
+  - Scope fields appear only for manager/viewer (`{"owner":false,"admin":false,"member":false,"manager":true,"viewer":true}`).
+- **Add and reject:**
+  - Add shows "Mahesh Kumar was added as viewer." and exactly one row is
+    created.
+  - Fake manual `definitely-not-real-s2-31-user` shows "Not added:
+    user_not_found: target user does not exist", and no row is created.
+- **Disable:**
+  - The confirm text is exactly "Disable membership for Mahesh Kumar? This does
+    not delete the user."
+  - Cancel leaves the member active. Accept shows the Disabled state.
+- **Hygiene:**
+  - No raw fixture email appears in the page HTML.
+  - The only failed API call was the intentional fake-add `404`.
+- **Note:** the login form is prefilled with default credentials
+  (`Login.jsx`, out of scope).
+
+Screenshots were reviewed for desktop (1280 px, search results and full page)
+and mobile (390 px full page). They are stored in the session scratchpad, not the
+repo. Afterwards `--apply` was re-run, so the review org is back to its clean
+fixture state (3 memberships) for the user's own review.
+
+### Commands / checks (S2-31.2)
+
+```bash
+ss -ltnp | grep -E ':5050|:5051|:5173|:5174|:5175|:5176' || true
+ps aux | grep -E 'node src/server.js|vite|npm run.*dev' | grep -v grep || true
+curl -s -X POST -H 'Content-Type: application/json' http://127.0.0.1:5051/api/v1/auth/login -d '{...}'   # 200, keys token,user (token not printed)
+node --check apps/api/src/scripts/seed.local-review.s2-31.js
+node --check apps/web/src/lib/memberManagement.js
+node --check apps/web/src/lib/memberManagement.test.js
+cd apps/api && npm test
+cd apps/web && npm test -- --run
+cd apps/web && npm run build
+git diff --name-only -- apps/api/package.json apps/web/package.json package-lock.json
+git diff --check
+```
+
+Outcomes:
+
+- `node --check` OK on all three JS files; the `.jsx` page is verified by the
+  build.
+- API: `tests 232 / pass 232 / fail 0 / skipped 0` (unchanged; no API runtime
+  code changed).
+- Web: `Test Files 5 passed (5) / Tests 81 passed (81)` (was 74; +7).
+- Build: `288 modules transformed`, success; the Browserslist warning is
+  unchanged.
+- Package diff: empty. `git diff --check`: clean.
+- `git status --short` before these doc edits: `M memberManagement.js`,
+  `M memberManagement.test.js`, `M OrganizationMembers.jsx`,
+  `?? seed.local-review.s2-31.js`.
+
+### Processes and cleanup
+
+- **No processes started or stopped.** All verification used the user's
+  already-running API (5051) and Vite (5175). calm-pm processes were untouched.
+- **Review fixtures intentionally left in place** (reset to the clean state) so
+  the user can review immediately. Remove them with `--cleanup` when done.
+
+### Remaining risks (S2-31.2)
+
+- **`Login.jsx` pre-fills `admin@example.com` / `Admin@123456`.** This is the
+  likely trap behind the reported failure, and it is out of scope here.
+  Recommended follow-up: empty defaults.
+- **`seed.mongo.js` writes only `password_hash`,** so its users cannot log in via
+  `auth.js`. Out of scope; recommended follow-up.
+- **Mobile has no Members nav link,** and AppShell has no `aria-current`
+  (`AppShell.jsx` is out of scope).
+- **The "You" detection is a UI hint.** If no stored user exists and the JWT has
+  no `user_id`, the badge and self-guard simply don't show. The backend
+  `last_owner_required` still protects the last owner.
+- **Real Atlas data is still unverified,** because the SRV host does not resolve
+  from this machine.
+- **No script-specific test.** The seed script has no unit test: adding one to
+  `npm test` would require a `package.json` change. It was verified by running
+  dry-run, guard refusal, double `--apply`, and a real browser login.
+
+## S2-31.3 Addendum (Existing-Account Login Diagnosis + Login Prefill Fix)
+
+The user wanted to log in with their existing real account instead of the local
+review account.
+
+### Current DB mode
+
+The running review API (PID 344544, cwd `/var/www/html/parametrics/apps/api`,
+started by the user, not modified) runs with `PORT=5051` and
+`MONGODB_URI=mongodb://127.0.0.1:27017/parametrics`. That is **local MongoDB**,
+not Atlas. The Vite dev server (PID 356988, port 5175) has
+`VITE_API_BASE_URL=http://127.0.0.1:5051`. The calm-pm listeners on 5173/5174
+were left alone.
+
+`startup/env.js` only fills env vars that are missing or blank. It loads
+`apps/api/.env.local`, then `.env`, then `apps/api/.env`. So the explicit local
+`MONGODB_URI` overrides the Atlas URI configured in `.env` / `apps/api/.env`.
+
+### Does the existing account exist locally?
+
+No. Local `users` has 8 documents, all on `example.com`: 7 `s2-31-review-*`
+fixtures plus 1 older local test user with no password. No user with the account
+owner's email exists locally, and no `gmail.com` or `parasightsolutions.com` user
+does either. These were checked as booleans and counts only; no addresses were
+printed.
+
+`auth.js` looks users up in whatever database the API is connected to. A real
+account, with its orgs and memberships, exists only in the configured Atlas
+database, so it **cannot** log in against local MongoDB unless it is copied
+there. Copying the real password hash or real data locally is out of scope and
+was not done.
+
+### Atlas reachability
+
+The configured Atlas URI (`mongodb+srv`, host `cluster0.<redacted>.mongodb.net`,
+the only database host referenced in any env file) does not resolve. The cluster
+id segment is redacted in this proof:
+
+| Test | Result |
+| --- | --- |
+| System resolver A/AAAA (`getent hosts`) | not found |
+| `dig SRV _mongodb._tcp.<host>` via system resolver | empty |
+| same via `8.8.8.8` and `1.1.1.1` | empty; `8.8.8.8` returns **`status: NXDOMAIN`** |
+| `dig NS mongodb.net @8.8.8.8` (parent zone) | resolves (awsdns) |
+| general DNS / HTTPS from this machine | OK |
+
+Likely cause:
+
+- Public DNS returns NXDOMAIN for the cluster's SRV name while the parent zone
+  resolves. So this is **not** a local DNS/network problem and **not** an IP
+  allowlist issue: an allowlist blocks connections, not DNS.
+- The most consistent explanations are that the cluster was **deleted or
+  terminated**, or that the configured **hostname is wrong**, for example from a
+  re-created cluster with a new id.
+- A paused cluster normally keeps its DNS records, so a pause is less likely, but
+  only the Atlas UI can confirm this.
+- No connection was attempted beyond DNS, and no DB changes were made.
+
+There is no staging or production API: every API/app URL in env files and docs
+is localhost (`API_URL`, `APP_PUBLIC_API_BASE`, `APP_URL`, `CORS_ORIGIN*`), and
+no deployed host is documented. No URL was invented.
+
+Google sign-in is not a workaround either. `auth.google.js` finds or inserts the
+user in the connected (local) DB, so it would create a new, empty local user,
+not reach real data. Its redirect URI defaults to
+`http://localhost:<API port>/api/v1/auth/google/callback`, which must be
+registered in Google Cloud for the chosen port. It was not attempted.
+
+### Is existing-account login possible locally right now?
+
+**No.** The real account's data is in an Atlas cluster that does not resolve from
+this machine, and there is no other deployed API. Local review login
+(`review-owner@example.com`) keeps working.
+
+### Recommended path (exact fix needed)
+
+1. In MongoDB Atlas, check the project for the cluster:
+   - If it still exists, copy its **current** connection string ("Connect →
+     Drivers").
+   - If it is paused, resume it.
+   - If it was deleted, restore from a backup or point the app at the
+     replacement cluster.
+2. Put the new `mongodb+srv://…` value in `apps/api/.env` (git-ignored), or pass
+   it as `MONGODB_URI=…` when starting the API. Then confirm DNS from this
+   machine: `dig +short SRV _mongodb._tcp.<new-host>` must return records.
+3. Ensure this machine's public IP is in the Atlas Network Access allowlist.
+4. Start the API against Atlas on a free port, e.g. `PORT=5052 node
+   src/server.js` from `apps/api` (API only). Start the web with
+   `VITE_API_BASE_URL=http://127.0.0.1:5052 npx vite --host 127.0.0.1 --port
+   5176 --strictPort`. Then log in at `http://127.0.0.1:5176/login` with the real
+   email and password, typed by the user.
+5. Until then, review with the local account
+   (`review-owner@example.com` / `Review123!`, seeded by
+   `seed.local-review.s2-31.js --apply`).
+
+### Login UX issue (fixed)
+
+- **Problem:** `apps/web/src/pages/Login.jsx` initialised the form with
+  `admin@example.com` / `Admin@123456`, a default account that does not exist
+  locally, with the masked password field already filled. The S2-31.2 audit log
+  showed attempts with that default email, and the reported "Login failed." most
+  likely came from this prefill.
+- **Fix:** the form starts empty via an exported frozen
+  `LOGIN_INITIAL_FORM = { email: "", password: "" }`. The email field is
+  `type="email"` with `autoComplete="username"`; the password field has
+  `autoComplete="current-password"` so password managers fill the real account.
+  No auth logic changed.
+- **Tests:** new `apps/web/src/pages/Login.test.js` (3 tests):
+  - the initial form is empty and frozen;
+  - the source contains no `Admin@123456` and no email literal passed to
+    `useState`;
+  - the autocomplete hints are present.
+- **Browser:** the Playwright review pass on the user's 5175 now asserts that the
+  login form starts empty and carries the autocomplete hints. **33/33 passed**,
+  including login → Organization Members → search/select/add → fake-id rejection
+  → disable confirm. The review org was reset with `--apply` afterwards.
+
+### Secret-handling incident during this diagnosis (disclosure)
+
+Twice, while inspecting env files, a redaction filter did not handle a quoted
+value or a commented-out line. The full Atlas `MONGODB_URI`, including the DB
+user's password, was echoed into the assistant's local tool output.
+
+- It was **not** written to any file, doc, commit, or external service.
+- The env files are git-ignored and were never committed (`git ls-files` and
+  `git log` checked).
+- Because the value appeared in a session transcript, and the password is weak,
+  **rotate that Atlas database user's password** when the cluster is
+  fixed or replaced.
+- Env-file inspection now reads key names and booleans only.
+
+### Security note (S2-31-finalize)
+
+- **Exposure scope.** The Atlas credential was exposed only in the assistant's
+  local tool output during S2-31.3. A later verification grep also had the
+  password literal typed into its command text. Both are session-transcript
+  exposures only.
+- **No secret in tracked files or committed docs.** A finalize-time scan loaded
+  every secret-like value from the local env files in-process. It printed only
+  key names and file locations, never values, and checked them against all
+  changed and new files and the full `git diff`.
+  - **Not found anywhere:** the Atlas password, the full Atlas URI,
+    `APP_ENC_KEY`, `JWT_SECRET`, `OPENAI_API_KEY`, the Google client secrets, and
+    the encryption keys.
+  - **Two false positives:** the Atlas DB username is the project name
+    `parametrics`, so every hit is a path or the DB name. The local Postgres URL's
+    password is a 3-letter word that occurs inside ordinary words such as
+    `apps/`. Neither ever appears in a `user:pass@` credential position.
+  - **Generic patterns found nothing:** credentialed `mongodb(+srv)://` strings,
+    JWTs, `sk-` keys, Google `ya29.` / `1//0` tokens, private-key blocks, and
+    `KEY=`/`SECRET=` assignments.
+  - **Redacted:** the Atlas cluster hostname id is redacted in this proof.
+- **Rotation required.** The Atlas DB user password **must be rotated before
+  that cluster is used again** (resumed, restored, or replaced with a new
+  connection string).
+- **This proof never contains the password or the URI.**
+
+## S2-31-finalize Addendum
+
+### Accuracy statements (current state)
+
+- **Local review account.** `review-owner@example.com` exists only in **local
+  MongoDB** (`mongodb://127.0.0.1:27017/parametrics`). It is created by
+  `apps/api/src/scripts/seed.local-review.s2-31.js --apply` and does not exist in
+  Atlas or any deployed environment.
+- **Real-account login** requires an API connected to the real database (Atlas).
+  It cannot work against local MongoDB, which holds only `example.com` fixture
+  users.
+- **Atlas.** The configured Atlas SRV hostname currently returns **NXDOMAIN**
+  from public DNS (8.8.8.8) while `mongodb.net` resolves. The owner must resume,
+  restore, or replace the cluster and update the git-ignored connection string,
+  then rotate the DB user password first (see Security note).
+- **Login page.** `apps/web/src/pages/Login.jsx` no longer pre-fills
+  `admin@example.com` / `Admin@123456`. The form starts empty
+  (`LOGIN_INITIAL_FORM`), with `username` / `current-password` autocomplete. This
+  is covered by `apps/web/src/pages/Login.test.js` (3 tests).
+- **Browser verification passed.** A Playwright run through the real `/login`
+  form on the user's running API 5051 + Vite 5175 (local MongoDB) scored 33/33:
+  - an empty login form, login, the Organization Members page, a "Mahesh" search,
+    Add disabled until selection, a successful add;
+  - fake `user_id` → `user_not_found` with no row;
+  - assignment fields only for manager/viewer, the exact disable confirmation,
+    the self row protected;
+  - no raw emails.
+- **The seed script is local/dev only.** `assertLocalReviewEnvironment()` throws
+  when `NODE_ENV=production` or when the Mongo host is not `127.0.0.1` /
+  `localhost` / `::1`; any `mongodb+srv` URI counts as non-local. It only touches
+  `s2-31-review-*` ids and aborts on email conflicts. Re-verified at finalize
+  time, each run exiting `1` before any write:
+  - **Default env (Atlas URI):** "refusing to run against non-local MongoDB host
+    ((srv))".
+  - **`mongodb+srv://example.invalid/x`:** the same refusal.
+  - **`NODE_ENV=production` with a local URI:** the shared env loader's JWT
+    strength check (`assertSafeJwtConfig`) refuses first.
+  - **The same, plus a dummy 40-character test `JWT_SECRET`, so the script's own
+    guard is reached:** "refusing to run with NODE_ENV=production".
+  - **Data check:** review-org memberships stayed at 3, unchanged.
+
+### Docs integrity incident (disclosure + correction)
+
+While re-checking the diff at finalize time, `git diff --stat` showed
+`docs/architecture/workspace-members.md` (−485) and
+`docs/backlog/sprint-2-workspace-member-foundation.md` (−70) **emptied to a
+single newline** in the working tree.
+
+- **Cause:** a trailing-newline cleanup one-liner used in S2-31.2 and S2-31.3,
+  `open(p,'w').write(open(p).read()…)`. It truncates the file before reading it.
+- **Effect:** the S2-31.2/S2-31.3 reports were **wrong** to say those two docs
+  were updated. Their additions (the S2-31.2 "local UX review needs
+  auth-compatible seed + browser login" lesson, the S2-31.3 "know which DB a
+  login hits / never pre-fill credentials" lesson, and the S2-31.2/.3 backlog
+  follow-ups) are not in the working tree.
+- **Committed state is intact.** HEAD `f271b02` still has the full committed
+  versions of both files, including the S2-31.1 "Product UX Lessons".
+- **Detected before commit; nothing emptied was ever committed.**
+- **Restored (S2-31.4).** With explicit user authorization,
+  `git restore docs/architecture/workspace-members.md
+  docs/backlog/sprint-2-workspace-member-foundation.md` returned both files to
+  HEAD. The result was byte-identical to HEAD: 486 and 71 lines, and an empty
+  `git diff` for both.
+- **Required notes re-applied safely**, with targeted Edit-tool insertions only
+  and no rewrite or newline-trim commands:
+  - The architecture lessons gained the "Local UX review must include
+    auth-compatible seed data and verified login" and "Know which database a
+    login hits, never pre-fill credentials" bullets. The stale "implemented in
+    the working tree" line was corrected to cite `f271b02`.
+  - The backlog gained an S2-31.2/S2-31.3 status block covering usability, the
+    login prefill removal, the seed script, real-DB reachability, Atlas
+    credential rotation, and the remaining follow-ups.
+- **Final line-count and heading checks passed.** They are recorded in
+  "S2-31.4 final checks" below.
+- **Guardrails and proof** were edited by insertion only and were never
+  affected.
+
+### Commands / checks (S2-31.3)
+
+- `ss -ltnp …` / `ps aux …` port and PID inspection.
+- `/proc/<pid>/environ` for the running API/web: redacted keys only.
+- `dig` / `getent` DNS tests against the Atlas host only.
+- Local `users` lookups returning booleans and counts.
+- `node --check` OK on: `seed.local-review.s2-31.js`, `memberManagement.js`,
+  `memberManagement.test.js`, `Login.test.js`. The `.jsx` files are verified by
+  the build.
+- `cd apps/api && npm test`: `tests 232 / pass 232 / fail 0 / skipped 0`.
+- `cd apps/web && npm test -- --run`: `Test Files 6 passed (6) / Tests 84 passed (84)`
+  (was 81; +3 Login tests).
+- `cd apps/web && npm run build`: `288 modules transformed`, success.
+- Package diff: empty. `git diff --check`: clean.
+- `git status --short`, all uncommitted:
+  - From S2-31.2: `M memberManagement.js`, `M memberManagement.test.js`,
+    `M OrganizationMembers.jsx`, `?? seed.local-review.s2-31.js`, and the doc
+    edits.
+  - New in S2-31.3: `M Login.jsx`, `?? Login.test.js`.
+
+### Remaining risks (S2-31.3)
+
+- **Real-account login is blocked.** It stays blocked until the Atlas cluster or
+  hostname is fixed or replaced (owner action in the Atlas UI); this cannot be
+  fixed from code.
+- **Atlas credential rotation is recommended.** See the disclosure above.
+- **Weak plaintext DB credentials.** `apps/api/.env` and `.env` hold plaintext,
+  weak DB credentials; they are git-ignored. A secrets manager or at least a
+  stronger password is recommended.
+- **Native email validation.** `type="email"` adds browser email validation to
+  the login field, which is harmless for valid emails.
+- **Out of scope, still open:** `seed.mongo.js` writes only `password_hash`, and
+  there is no Members link in the mobile nav.
+
+## S2-31.4 final checks (restore + follow-up commit)
+
+Docs restore:
+
+- `git restore` of both truncated docs succeeded, bringing back the HEAD
+  versions (486 / 71 lines).
+- Notes were then re-applied with targeted edits only.
+- **Final line counts:** `docs/architecture/workspace-members.md` 500
+  (`+16 / −2` vs HEAD; the two removed lines are the edited "Current state" and
+  "Product UX Lessons" heading lines). `docs/backlog/sprint-2-workspace-member-foundation.md`
+  83 (`+12 / −0`).
+- **Expected headings present:** the architecture doc has `## S2-31 Member
+  Lookup And Safe Display` and `### Product UX Lessons (S2-31 through S2-31.3)`,
+  including the "Local UX review must include auth-compatible seed data and
+  verified login" lesson. The backlog has `## S2-31 Member Lookup Usability
+  Repair` and the `S2-31.2 / S2-31.3 follow-up status` block.
+
+Secret scan over the 10 changed or new files plus the full `git diff`:
+
+- **Patterns checked:** `mongodb+srv://`, `://user:pass@`, `APP_ENC_KEY`,
+  `JWT_SECRET`, `OPENAI_API_KEY`, `GOOGLE_*CLIENT_SECRET`, `refresh_token`,
+  `access_token`, private-key markers, and env-file dumps.
+- **13 hits, all classified as mentions without values.** These are key names
+  and the `mongodb+srv` scheme or host mentioned without credentials.
+- **2 env-dump flags:** both are the seed script's documented usage lines, which
+  use the credential-free local `mongodb://127.0.0.1:27017/parametrics`.
+- **Value-based scan:** real env values were loaded in-process and only labels
+  were printed. The Atlas password, Atlas URI, and all key/secret values were
+  not found. The only credential-adjacent matches were the project name and a
+  3-letter word, never in a credential position.
+- **Result: PASS**, 0 real secrets.
+
+Checks:
+
+- `node --check` OK on 4 JS files.
+- API `232/232`.
+- Web `Test Files 6 / Tests 84 passed`.
+- Build `288 modules transformed`.
+- Package/lock diff empty.
+- `git diff --check` clean.
+
+This is committed as a follow-up on top of `f271b02`. There is no amend and no
+history rewrite.
+
 ## GPT Verification
 
 GPT decision: Pending.

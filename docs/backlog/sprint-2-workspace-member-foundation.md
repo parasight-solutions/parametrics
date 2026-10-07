@@ -69,3 +69,15 @@ S2-31.1 follow-up (pending GPT verification):
 - **Playwright browser pass:** 32/32 against local MongoDB fixtures.
 - **Still pending:** a real-org check until the configured Atlas host resolves.
 - **Follow-up candidate:** PATCH re-activation does not re-check that the user account is active.
+
+S2-31.2 / S2-31.3 follow-up status (S2-31 through S2-31.1 committed in `f271b02`; this follow-up is the next commit):
+
+- **Organization Members search/select usability:** repaired. Steps are search → select → role → add. Role hints were added, the optional scope panel is collapsed, scope lines appear only on manager/viewer rows, and the "You" badge blocks self-disable. Browser-verified through the real login (Playwright, 33/33).
+- **Login page:** prefilled credentials removed. The `/login` form starts empty, with password-manager autocomplete hints (`Login.test.js`).
+- **Local review seed:** `apps/api/src/scripts/seed.local-review.s2-31.js` added. It is local/dev only, idempotent, and supports `--apply` / `--cleanup`.
+- **Real-account login:** requires a reachable real DB/API. Local MongoDB holds only `example.com` fixture users. The configured Atlas SRV host currently returns NXDOMAIN, and no staging API exists.
+- **Security:** the Atlas connection string, including the DB password, was exposed in local tool output during S2-31.3. It must be rotated before that cluster is reused. No secret is stored in tracked files.
+- **Remaining follow-ups:**
+  - a real Atlas/staging smoke once the cluster and credentials are fixed;
+  - `seed.mongo.js` writes only `password_hash`, while `auth.js` reads `password`;
+  - a Members link in the mobile nav.

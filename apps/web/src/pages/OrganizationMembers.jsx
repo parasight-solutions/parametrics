@@ -1,6 +1,7 @@
 // apps/web/src/pages/OrganizationMembers.jsx
 import { useCallback, useEffect, useMemo, useState } from "react";
 import AppShell from "../components/AppShell";
+import { getToken } from "../session";
 import {
   MEMBER_CANDIDATE_MIN_SEARCH,
   MEMBER_CREATE_STATUSES,
@@ -21,8 +22,12 @@ import {
   listOrgMembers,
   listOrganizations,
   buildMemberAddedMessage,
+  describeRole,
+  isCurrentUserMember,
   memberDisplayLabel,
+  memberScopeSummary,
   parseAssignmentIdsInput,
+  resolveCurrentUserId,
   roleSupportsAssignments,
   searchMemberCandidates,
   selectCandidateForAdd,
@@ -53,6 +58,16 @@ function StepHeading({ n, title, hint }) {
       </div>
     </div>
   );
+}
+
+function readCurrentUserId() {
+  let storedUser = null;
+  try {
+    storedUser = JSON.parse(localStorage.getItem("pm_auth_user") || "null");
+  } catch {
+    storedUser = null;
+  }
+  return resolveCurrentUserId({ storedUser, token: getToken() });
 }
 
 const emptyCreateForm = Object.freeze({
@@ -128,6 +143,9 @@ export default function OrganizationMembers({ onLogout }) {
 
   const [disableBusyId, setDisableBusyId] = useState("");
   const [actionMessage, setActionMessage] = useState("");
+
+  // UI hint only (badge + self-disable guard); the API enforces real access.
+  const currentUserId = useMemo(() => readCurrentUserId(), []);
 
   const selectedOrg = useMemo(
     () => orgs.find((o) => o.id === selectedOrgId) || null,
@@ -307,7 +325,7 @@ export default function OrganizationMembers({ onLogout }) {
 
   async function onDisable(member) {
     if (!selectedOrgId || !member?.id) return;
-    if (member.status === "disabled") return;
+    if (member.status === "disabled" || isCurrentUserMember(member, currentUserId)) return;
     const label = memberDisplayLabel(member);
     const ok = window.confirm(buildDisableConfirmMessage(member));
     if (!ok) return;
@@ -426,7 +444,7 @@ export default function OrganizationMembers({ onLogout }) {
                 }}
                 autoComplete="off"
                 className={`${INPUT} flex-1 min-w-0`}
-                placeholder="e.g. Jane or jane@company.com"
+                placeholder="Name or email"
               />
               <button
                 type="submit"
@@ -600,6 +618,9 @@ export default function OrganizationMembers({ onLogout }) {
                       </option>
                     ))}
                   </select>
+                  <p className="mt-1 text-xs text-gray-600" data-testid="role-help">
+                    {describeRole(createForm.role)}
+                  </p>
                 </div>
                 <div>
                   <label htmlFor="create-status" className="block text-sm font-medium text-gray-700">
@@ -622,55 +643,64 @@ export default function OrganizationMembers({ onLogout }) {
                 </div>
 
                 {roleSupportsAssignments(createForm.role) ? (
-                  <fieldset
+                  <details
                     data-testid="advanced-scope"
-                    className="md:col-span-2 rounded-lg border bg-gray-50 p-3 space-y-3"
+                    className="md:col-span-2 rounded-lg border bg-gray-50"
                   >
-                    <legend className="px-1 text-sm font-medium text-gray-700">
+                    <summary className="cursor-pointer select-none px-3 py-2 text-sm font-medium text-gray-700">
                       Optional advanced scope
-                    </legend>
-                    <p className="text-xs text-gray-600">{ASSIGNMENT_HELP}</p>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                      <div>
-                        <label htmlFor="create-clients" className="block text-sm font-medium text-gray-700">
-                          Client IDs (comma separated)
-                        </label>
-                        <input
-                          id="create-clients"
-                          type="text"
-                          value={createForm.assigned_client_ids_csv}
-                          onChange={(event) =>
-                            setCreateForm((prev) => ({
-                              ...prev,
-                              assigned_client_ids_csv: event.target.value,
-                            }))
-                          }
-                          autoComplete="off"
-                          className={`mt-1 ${INPUT} bg-white`}
-                          placeholder="Leave blank for full access"
-                        />
-                      </div>
-                      <div>
-                        <label htmlFor="create-locations" className="block text-sm font-medium text-gray-700">
-                          Location IDs (comma separated)
-                        </label>
-                        <input
-                          id="create-locations"
-                          type="text"
-                          value={createForm.assigned_location_ids_csv}
-                          onChange={(event) =>
-                            setCreateForm((prev) => ({
-                              ...prev,
-                              assigned_location_ids_csv: event.target.value,
-                            }))
-                          }
-                          autoComplete="off"
-                          className={`mt-1 ${INPUT} bg-white`}
-                          placeholder="Leave blank for full access"
-                        />
+                      {parseAssignmentIdsInput(createForm.assigned_client_ids_csv).length +
+                        parseAssignmentIdsInput(createForm.assigned_location_ids_csv).length >
+                      0 ? (
+                        <span className="ml-2 text-xs font-normal text-blue-700">(IDs entered)</span>
+                      ) : (
+                        <span className="ml-2 text-xs font-normal text-gray-500">(not needed for most members)</span>
+                      )}
+                    </summary>
+                    <div className="border-t p-3 space-y-3">
+                      <p className="text-xs text-gray-600">{ASSIGNMENT_HELP}</p>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        <div>
+                          <label htmlFor="create-clients" className="block text-sm font-medium text-gray-700">
+                            Client IDs (comma separated)
+                          </label>
+                          <input
+                            id="create-clients"
+                            type="text"
+                            value={createForm.assigned_client_ids_csv}
+                            onChange={(event) =>
+                              setCreateForm((prev) => ({
+                                ...prev,
+                                assigned_client_ids_csv: event.target.value,
+                              }))
+                            }
+                            autoComplete="off"
+                            className={`mt-1 ${INPUT} bg-white`}
+                            placeholder="Optional"
+                          />
+                        </div>
+                        <div>
+                          <label htmlFor="create-locations" className="block text-sm font-medium text-gray-700">
+                            Location IDs (comma separated)
+                          </label>
+                          <input
+                            id="create-locations"
+                            type="text"
+                            value={createForm.assigned_location_ids_csv}
+                            onChange={(event) =>
+                              setCreateForm((prev) => ({
+                                ...prev,
+                                assigned_location_ids_csv: event.target.value,
+                              }))
+                            }
+                            autoComplete="off"
+                            className={`mt-1 ${INPUT} bg-white`}
+                            placeholder="Optional"
+                          />
+                        </div>
                       </div>
                     </div>
-                  </fieldset>
+                  </details>
                 ) : (
                   <p data-testid="scope-not-needed" className="md:col-span-2 text-xs text-gray-500">
                     {NO_ASSIGNMENT_NEEDED}
@@ -732,7 +762,9 @@ export default function OrganizationMembers({ onLogout }) {
           <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
             <h2 className="text-lg font-semibold">Members</h2>
             <p className="text-xs text-gray-500">
-              Names and masked emails only. Raw emails and raw user records are not displayed.
+              {selectedOrgId && !membersLoading
+                ? `${members.length} member${members.length === 1 ? "" : "s"}`
+                : ""}
             </p>
           </div>
 
@@ -757,6 +789,8 @@ export default function OrganizationMembers({ onLogout }) {
             <ul className="divide-y rounded-lg border" data-testid="member-list">
               {members.map((m) => {
                 const isEditing = editingMemberId === m.id;
+                const isSelf = isCurrentUserMember(m, currentUserId);
+                const scopeSummary = memberScopeSummary(m);
                 return (
                   <li key={m.id} className="p-3 space-y-2" data-testid="member-row">
                     <div className="flex flex-wrap items-start gap-3 justify-between">
@@ -765,6 +799,14 @@ export default function OrganizationMembers({ onLogout }) {
                           <span className="text-sm font-semibold break-all" data-testid="member-name">
                             {memberDisplayLabel(m)}
                           </span>
+                          {isSelf ? (
+                            <span
+                              data-testid="member-you"
+                              className="inline-flex px-2 py-1 rounded-md text-xs font-medium bg-gray-900 text-white"
+                            >
+                              You
+                            </span>
+                          ) : null}
                           {roleBadge(m.role)}
                           {statusBadge(m.status)}
                         </div>
@@ -789,10 +831,18 @@ export default function OrganizationMembers({ onLogout }) {
                         <button
                           type="button"
                           onClick={() => onDisable(m)}
-                          disabled={disableBusyId === m.id || m.status === "disabled"}
-                          title={m.status === "disabled" ? "Already disabled" : "Disable this membership"}
+                          disabled={disableBusyId === m.id || m.status === "disabled" || isSelf}
+                          title={
+                            m.status === "disabled"
+                              ? "Already disabled"
+                              : isSelf
+                              ? "You can't disable your own membership"
+                              : "Disable this membership"
+                          }
                           data-testid="member-disable"
-                          className={`${BTN_SMALL} ${m.status === "disabled" ? "text-gray-500" : "text-red-700"}`}
+                          className={`${BTN_SMALL} ${
+                            m.status === "disabled" || isSelf ? "text-gray-500" : "text-red-700"
+                          }`}
                         >
                           {disableBusyId === m.id
                             ? "Disabling…"
@@ -805,11 +855,7 @@ export default function OrganizationMembers({ onLogout }) {
                     <div className="text-xs text-gray-600 flex flex-wrap gap-x-4 gap-y-1">
                       <span>Added: {formatDate(m.created_at)}</span>
                       <span>Updated: {formatDate(m.updated_at)}</span>
-                      <span>
-                        Scope: clients {Array.isArray(m.assigned_client_ids) ? m.assigned_client_ids.length : 0}
-                        {" · "}
-                        locations {Array.isArray(m.assigned_location_ids) ? m.assigned_location_ids.length : 0}
-                      </span>
+                      {scopeSummary ? <span data-testid="member-scope">{scopeSummary}</span> : null}
                     </div>
                     <details className="text-[11px] text-gray-400" data-testid="member-tech-details">
                       <summary className="cursor-pointer select-none hover:text-gray-600">

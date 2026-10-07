@@ -12,6 +12,11 @@ import {
   buildMemberAddedMessage,
   canSubmitMemberCreate,
   clampCandidateLimit,
+  decodeJwtUserId,
+  describeRole,
+  isCurrentUserMember,
+  memberScopeSummary,
+  resolveCurrentUserId,
   clearSelectedCandidate,
   describeBackendError,
   editCandidateQuery,
@@ -362,5 +367,60 @@ describe("member display + disable confirmation", () => {
     });
     const msg = buildDisableConfirmMessage(row);
     expect(msg).not.toContain("@");
+  });
+});
+
+describe("role descriptions (S2-31.2)", () => {
+  it("describes every role and nothing else", () => {
+    for (const role of MEMBER_ROLES) expect(describeRole(role).length).toBeGreaterThan(10);
+    expect(describeRole("Manager")).toBe(describeRole("manager"));
+    expect(describeRole("superuser")).toBe("");
+    expect(describeRole(undefined)).toBe("");
+  });
+
+  it("mentions optional scope only for manager and viewer", () => {
+    for (const role of MEMBER_ROLES) {
+      expect(describeRole(role).includes("clients or locations")).toBe(roleSupportsAssignments(role));
+    }
+  });
+});
+
+describe("memberScopeSummary", () => {
+  it("is empty for roles without assignments", () => {
+    for (const role of ["owner", "admin", "member"]) {
+      expect(memberScopeSummary({ role, assigned_client_ids: ["c1"] })).toBe("");
+    }
+  });
+
+  it("summarizes manager/viewer scope without listing raw ids", () => {
+    expect(memberScopeSummary({ role: "viewer" })).toBe("No client/location limits set");
+    expect(memberScopeSummary({ role: "manager", assigned_client_ids: ["c1"], assigned_location_ids: ["l1", "l2"] }))
+      .toBe("Limited to 1 client and 2 locations");
+    expect(memberScopeSummary({ role: "viewer", assigned_location_ids: ["l1"] })).toBe("Limited to 1 location");
+    expect(memberScopeSummary({ role: "manager", assigned_client_ids: ["secret_c1"] })).not.toContain("secret_c1");
+  });
+});
+
+describe("current user resolution (UI hint only)", () => {
+  const encode = (obj) => btoa(JSON.stringify(obj)).replace(/=+$/, "").replace(/\+/g, "-").replace(/\//g, "_");
+  const token = `${encode({ alg: "HS256" })}.${encode({ user_id: "u_owner", role: "individual" })}.sig`;
+
+  it("reads user_id from a JWT payload without verifying it", () => {
+    expect(decodeJwtUserId(token)).toBe("u_owner");
+    expect(decodeJwtUserId("not-a-jwt")).toBe("");
+    expect(decodeJwtUserId("")).toBe("");
+    expect(decodeJwtUserId("a.%%%.c")).toBe("");
+  });
+
+  it("prefers the stored login user id, then the token", () => {
+    expect(resolveCurrentUserId({ storedUser: { id: "u_stored" }, token })).toBe("u_stored");
+    expect(resolveCurrentUserId({ storedUser: null, token })).toBe("u_owner");
+    expect(resolveCurrentUserId({})).toBe("");
+  });
+
+  it("matches a member row to the current user", () => {
+    expect(isCurrentUserMember({ user_id: "u_owner" }, "u_owner")).toBe(true);
+    expect(isCurrentUserMember({ user_id: "u_other" }, "u_owner")).toBe(false);
+    expect(isCurrentUserMember({ user_id: "" }, "")).toBe(false);
   });
 });

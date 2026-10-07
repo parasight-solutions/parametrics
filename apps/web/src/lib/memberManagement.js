@@ -179,6 +179,57 @@ export function buildMemberAddedMessage({ name, role } = {}) {
   return r ? `${who} was added as ${r}.` : `${who} was added.`;
 }
 
+// Plain-language role hints shown under the role picker. They describe only
+// behavior the backend enforces today (owner/admin manage members, manager can
+// list members, manager/viewer can carry optional client/location scope).
+const ROLE_DESCRIPTIONS = Object.freeze({
+  owner: "Full control of this organization, including members and other owners.",
+  admin: "Can add and manage managers, members, and viewers.",
+  manager: "Can view the member list. Can optionally be limited to specific clients or locations.",
+  member: "Standard workspace access. Cannot manage members.",
+  viewer: "Limited access. Can optionally be limited to specific clients or locations.",
+});
+
+export function describeRole(role) {
+  return ROLE_DESCRIPTIONS[String(role || "").toLowerCase()] || "";
+}
+
+// Scope summary for a member row; only meaningful for manager/viewer.
+export function memberScopeSummary(member) {
+  if (!roleSupportsAssignments(member?.role)) return "";
+  const clients = Array.isArray(member?.assigned_client_ids) ? member.assigned_client_ids.length : 0;
+  const locations = Array.isArray(member?.assigned_location_ids) ? member.assigned_location_ids.length : 0;
+  if (!clients && !locations) return "No client/location limits set";
+  const parts = [];
+  if (clients) parts.push(`${clients} client${clients === 1 ? "" : "s"}`);
+  if (locations) parts.push(`${locations} location${locations === 1 ? "" : "s"}`);
+  return `Limited to ${parts.join(" and ")}`;
+}
+
+// UI-only hint for "is this row me?". Reads the stored login user, or the
+// unverified JWT payload. Never used for authorization; the API enforces access.
+export function decodeJwtUserId(token) {
+  try {
+    const part = String(token || "").split(".")[1];
+    if (!part) return "";
+    const json = atob(part.replace(/-/g, "+").replace(/_/g, "/"));
+    const payload = JSON.parse(json);
+    return String(payload?.user_id ?? "").trim();
+  } catch {
+    return "";
+  }
+}
+
+export function resolveCurrentUserId({ storedUser, token } = {}) {
+  const fromUser = String(storedUser?.id ?? "").trim();
+  return fromUser || decodeJwtUserId(token);
+}
+
+export function isCurrentUserMember(member, currentUserId) {
+  const uid = String(currentUserId || "").trim();
+  return Boolean(uid) && String(member?.user_id || "").trim() === uid;
+}
+
 export function describeBackendError(err) {
   if (!err) return "Unknown error.";
   const code = err.code || err.error?.code || "";
