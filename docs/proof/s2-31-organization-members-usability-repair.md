@@ -21,7 +21,7 @@ Claude Code is the execution tool. Claude Code did not commit or push.
 
 ### GPT Decision
 
-Pending.
+Pass. See "GPT Verification" at the end of this proof.
 
 ## 2. Docs Read
 
@@ -1314,4 +1314,16 @@ history rewrite.
 
 ## GPT Verification
 
-GPT decision: Pending.
+GPT decision: Pass.
+
+GPT verified S2-31/S2-31.1/S2-31.2/S2-31.3/S2-31.4 after the restored-doc guard,
+secret scan, API tests, web tests, web build, no package/lock diff, clean diff
+check, and pushed follow-up commit e22e3be. Atlas credential rotation remains a
+required external security action before using Atlas again.
+
+Commit provenance:
+
+- `f271b02` (S2-31 through S2-31.1) was committed by the human.
+- `e22e3be` (the S2-31.2 through S2-31.4 follow-up) was committed and pushed by
+  Claude Code under explicit S2-31.4 user authorization.
+- Neither commit was amended or rewritten.
