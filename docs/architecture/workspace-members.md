@@ -498,3 +498,15 @@ apply to all future admin and management UI in ParaMetrics:
   accounts live in the real database and cannot log in to an API pointed at local
   MongoDB; local review accounts do not exist in the real database. State the DB
   mode in every review and proof. The login form starts empty.
+
+## S2-32 Real-Environment Members Smoke (Planned, Not Run)
+
+Every Organization Members verification so far (S2-16.1, S2-17.1, S2-31-fix through S2-31.3) ran against local MongoDB fixtures. The member flow has never run against real accounts or real org data. `docs/proof/s2-32-deployment-readiness.md` section 7 defines the real-environment checklist:
+
+- Load the page directly and from the nav, including at mobile width (S2-31.2 found no Members link in the mobile nav).
+- Search, then add the **selected** candidate only.
+- Confirm a made-up manual `user_id` is rejected with `user_not_found` and the row count is unchanged.
+- Check the disable confirmation copy and the self-row protection.
+- Confirm `location_org_map` is unchanged (counts only).
+
+It runs only after the Atlas gate in section 3 passes: rotated credential, resolving hostname, tight IP allowlist. The local review seed (`seed.local-review.s2-31.js`) refuses non-local MongoDB and must never be pointed at a deployed database. Record display names or short ids in the proof, never emails. No member code changed in S2-32.

@@ -334,6 +334,21 @@ This task verifies:
 - The scheduler entrypoint currently registers the scheduled publish poller only.
 - Runtime documentation captures the scheduler startup contract, dependencies, cron frequency, enqueue behavior, shutdown behavior, and hardening gaps.
 
+## Deployment Readiness (S2-32)
+
+The full checklist and smoke plan is in `docs/proof/s2-32-deployment-readiness.md`. Runtime rules found there that apply to every deployed environment:
+
+- Set `NODE_ENV=production` on staging as well. The app only distinguishes `development`/`test` from everything else. Express shows stack traces in error responses for any value other than `production`; S2-32 observed this for an unknown CORS origin under `NODE_ENV=staging`.
+- Do not leave `.env*` files inside the deployed checkout. `startup/env.js` fills any missing or blank variable from `apps/api/.env.local`, `<repo>/.env`, and `apps/api/.env`; `config.js` and `lib/mongo.js` also load `.env` files. Inject the environment from a process-manager env file outside the repo (mode `0600`) and set every required variable explicitly.
+- `REDIS_URL` is ignored by `lib/queues.js`. Only `REDIS_HOST`/`REDIS_PORT`/`REDIS_TLS` are read, and there is no password support, so Redis must sit on a private network.
+- Rate-limit client identity uses the first `X-Forwarded-For` value, which is client-controlled. `trust proxy` is not set. Run one API process (fork mode) and treat login rate limiting as bypassable until a follow-up fixes the identity key.
+- `/api/v1/debug/*` routes are mounted in every environment; block them at the reverse proxy.
+- `/uploads` is served from `process.cwd()/uploads` (`apps/api/uploads` with the package command). Point it at persistent disk.
+- The web bundle bakes `VITE_API_BASE_URL` at build time, and Vite loads `apps/web/.env.local` during `vite build`. Build on a clean checkout with `VITE_API_BASE_URL` exported in the shell. It is required even behind a same-origin proxy, because `GoogleConnect.jsx` falls back to `http://localhost:5050`.
+- Start order: Redis/Mongo → API → workers → scheduler. Stop order for incidents: scheduler → workers → API.
+- `GET /api/v1/health` is liveness only; it does not check Mongo or Redis.
+- `lib/mongo.js` logs the Mongo host on connect with credentials masked. S2-32 fixed a fallback that printed the raw URI, password included, for multi-host (non-SRV) connection strings.
+
 ## Remaining Work
 
 Remaining runtime work includes:

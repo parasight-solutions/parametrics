@@ -1,6 +1,16 @@
 node_modules
+# Env files and env backups: never commit (S2-32.1). Real config lives outside
+# the repo. `.env*` also covers `.env_bak`, `.env.bak`, `.env-old`, etc.
 .env
 .env.*
+.env*
+.env_bak
+.env*.bak
+*.env
+*.env.*
+*.env_bak
+*_env
+*_env_bak*
 dist
 logs
 *.log

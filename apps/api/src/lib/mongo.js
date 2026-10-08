@@ -36,16 +36,24 @@ const dbName =
   process.env.MONGODB_DB ||
   "parametrics";
 
-function maskMongoUri(u) {
+export function maskMongoUri(u) {
   try {
     const x = new URL(u.replace("mongodb+srv://", "http://").replace("mongodb://", "http://"));
+    if (x.protocol !== "http:") throw new Error("unexpected scheme");
     if (x.username) x.username = "***";
     if (x.password) x.password = "***";
     return u.startsWith("mongodb+srv://")
       ? x.toString().replace("http://", "mongodb+srv://")
       : x.toString().replace("http://", "mongodb://");
   } catch {
-    return u;
+    // Multi-host URIs (h1:27017,h2:27017,...) do not parse as URLs. Never fall
+    // back to the raw value: redact everything up to the last "@" instead,
+    // keeping only the scheme (if any) and the host part.
+    const s = String(u);
+    const at = s.lastIndexOf("@");
+    if (at === -1) return s;
+    const scheme = s.match(/^\s*([a-z][a-z0-9+.-]*:\/\/)/i);
+    return `${scheme ? scheme[1] : ""}***:***@${s.slice(at + 1)}`;
   }
 }
 

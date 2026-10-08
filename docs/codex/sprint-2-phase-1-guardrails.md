@@ -70,6 +70,27 @@ Current Sprint 2 task:
 
 - S2-31.3 existing-account login diagnosis + login prefill fix implemented, pending GPT verification. **Diagnosis:** the review API runs on local MongoDB, which holds only `example.com` users, so a real account cannot log in locally. The configured Atlas SRV host returns NXDOMAIN from public DNS (8.8.8.8) while `mongodb.net` resolves, so the likely cause is a deleted cluster or wrong hostname, not local DNS or the IP allowlist. No staging or production API is configured. **Fix:** `Login.jsx` no longer pre-fills `admin@example.com` / `Admin@123456`. The form starts empty, with `username`/`current-password` autocomplete hints. A new `Login.test.js` adds 3 tests. **Checks:** web 84/84, API 232/232, build OK, Playwright review pass 33/33. **Secret handling:** the Atlas credential was echoed twice in assistant tool output (a redaction bug). It was never written to files or the repo; rotation is recommended. Proof: S2-31.3 Addendum.
 
+- S2-32 deployment readiness + real environment smoke plan implemented, pending GPT verification. Docs plus one small fix. `docs/proof/s2-32-deployment-readiness.md` records env requirements, the Atlas gate, runtime/storage checklists, login/members/report/security smoke checklists with no-secret commands, and a rollback plan. **Nothing was deployed and Atlas was not contacted.** **P0 blockers:**
+  - `apps/api/.env_bak` is tracked in the **public** GitHub repo since the Initial Commit. It holds a Google OAuth client secret plus an encryption key and JWT secret that still match current local env values. Owner rotation and untracking are required.
+  - Atlas needs credential rotation and a resolving hostname.
+  - No deploy target exists.
+
+  **Fix:** `lib/mongo.js` `maskMongoUri` printed the raw URI, password included, for multi-host Mongo URIs; it now redacts on parse failure.
+
+  **P1 findings (documented, not fixed):** spoofable `X-Forwarded-For` rate-limit key; stack traces under `NODE_ENV=staging`; CORS rejection returns `500`; debug routes mounted in production; no Redis auth support; build-time localhost API URL; app JWT in the Google Connect URL; env-file fallback on deploy hosts.
+
+  **Checks:** API `232/232`, web `84/84`, build OK, no package diff. Phase 2 integrations remain blocked.
+
+- S2-32.1 secret containment. `apps/api/.env_bak` is deleted from the repository, and `.gitignore` now covers env files and env backups (`.env*`, `*.env`, `*.env.*`, `*.env_bak`, `*_env`, `*_env_bak*`). `maskMongoUri` is hardened to fail closed for no-scheme, leading-whitespace, and newline inputs. **Git history is not rewritten. The exposed values are still public and rotation remains mandatory:** the Google OAuth client secret (or delete the client), fresh `JWT_SECRET`/`APP_ENC_KEY`/`ENCRYPTION_KEY` for every deployed environment, and the Atlas DB password before any Atlas use. Purging history or making the repo private is a management/security decision. Proof: `docs/proof/s2-32-deployment-readiness.md` ("S2-32.1 Secret Containment").
+
+Deployment lessons (S2-32), apply to all future deployment work:
+
+- **Check what git tracks, not only what `.gitignore` says.** `.env.*` did not match `.env_bak`. Run `git ls-files | grep -i env` before any release, and keep the repo's visibility in mind.
+- **A redaction helper must fail closed.** `maskMongoUri` returned the raw input when parsing failed. Any masking or sanitizing helper must return a redacted placeholder on error, never the original value.
+- **Probe failure paths under the real `NODE_ENV`.** Happy-path tests passed while `NODE_ENV=staging` leaked stack traces and unknown origins returned `500`.
+- **Build artifacts carry environment.** A Vite build silently picks up `.env.local`; check the built bundle for `localhost` before shipping.
+- **A proof that never touched the real environment is not a deployment proof.** Local smokes cannot verify real-account login, real org data, OAuth redirects, CORS from the real origin, or durable storage. Record the DB mode and host type in every proof.
+
 Near follow-up tasks:
 
 - Report queue/worker/storage/history UI wiring only after the persistence and runtime boundaries are intentionally designed.

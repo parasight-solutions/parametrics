@@ -107,6 +107,19 @@ S2-28 adds a startup-time validation step for `REPORT_STORAGE_LOCAL_DIR` so prod
 
 Out of scope for S2-28: cloud storage adapters, signed URLs, retention/cleanup, listing/download API contract changes, queue/worker/scheduler changes, frontend changes, dependency installation.
 
+### S2-32 Deployment Note
+
+S2-32 (`docs/proof/s2-32-deployment-readiness.md`, sections 5 and 8) separates what startup enforces from what the deployer must verify by hand:
+
+- **Enforced at startup:** absolute path, outside the repo, not `/`/`/tmp`/`/var/tmp`, a directory, and writable.
+- **Not enforced, check by hand:**
+  - Durability: not `tmpfs`, not a container's ephemeral overlay unless it is a mounted volume, and included in backups.
+  - Ownership and `0750` mode.
+  - The directory survives redeploys.
+  - Single-host only: multiple API hosts do not share local storage.
+
+The real-environment report smoke covers generate, list, and download in a browser. It also checks for recent files server-side (counts and sizes only), confirms no storage path in `/api/v1/reports/runs` responses, and re-downloads after an API restart. Browser-only gap: the API does not expose `Content-Disposition` to cross-origin reads, so a cross-origin web app saves files under the `report-<runId>.<format>` fallback name. No storage code changed in S2-32.
+
 ### S2-26 Closeout
 
 S2-26 is the Sprint 2 report foundation closeout audit. It records the final Pass decision for the report-foundation sequence S2-01..S2-06.1, S2-20, and S2-22..S2-25.1, summarizes the security/tenancy posture (`organization_members`-only authorization, no JWT-role / `location_org_map` authorization, no raw buffers/base64 in Mongo, no absolute paths exposed, `storage_key` treated as durable metadata only and never rendered, no secrets/tokens/raw records in proofs), and proposes the next conservative follow-ups (`S2-27` optional manual browser click smoke, `S2-28` persistent storage env/deployment hardening, `S2-29` report audit/rate-limit hardening, `S2-30` optional report detail/regenerate contract). Phase 2 provider adapters remain blocked until this closeout is explicitly accepted. Proof: `docs/proof/sprint-2-report-foundation-proof-pack.md`. No backend, frontend, API tests, web `package.json`, or `package-lock.json` change.
