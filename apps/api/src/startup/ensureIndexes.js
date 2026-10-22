@@ -483,4 +483,28 @@ export async function ensureIndexes() {
   await ensureIndex(auditLogs, { location_id: 1, created_at: -1 }, {
     name: "idx_audit_logs_location_created_at",
   });
+
+  // ---------------------------------------------------------------------------
+  // google_connect_states (S2-33 single-use OAuth initiation records)
+  // ---------------------------------------------------------------------------
+  const connectStates = await col("google_connect_states");
+
+  await ensureIndex(connectStates, { handoff_hash: 1 }, {
+    name: "uniq_google_connect_states_handoff_hash",
+    unique: true,
+    partialFilterExpression: { handoff_hash: { $type: "string" } },
+  });
+
+  await ensureIndex(connectStates, { state_hash: 1 }, {
+    name: "uniq_google_connect_states_state_hash",
+    unique: true,
+    partialFilterExpression: { state_hash: { $type: "string" } },
+  });
+
+  // TTL cleanup only; consume queries also check expires_at because the TTL
+  // monitor runs about once a minute.
+  await ensureIndex(connectStates, { expires_at: 1 }, {
+    name: "ttl_google_connect_states_expires_at",
+    expireAfterSeconds: 0,
+  });
 }

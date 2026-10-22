@@ -14,7 +14,7 @@ if (!rows.length) {
   const id = crypto.randomUUID()
   const hash = await bcrypt.hash(adminPass, 10)
   await query('insert into users (id, email, password_hash, name, role) values ($1,$2,$3,$4,$5)', [id, adminEmail, hash, 'Admin', 'super_admin'])
-  console.log('Seeded admin:', adminEmail, adminPass)
+  console.log('Seeded admin user')
 } else {
   console.log('Admin already exists')
 }

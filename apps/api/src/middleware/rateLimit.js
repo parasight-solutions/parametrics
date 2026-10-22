@@ -59,17 +59,13 @@ export function resolveRateLimitConfig(env = process.env) {
   };
 }
 
+// X-Forwarded-For is never read directly. req.ip already honours it only for
+// hops trusted through the Express `trust proxy` setting (TRUST_PROXY).
 export function getClientIdentity(req) {
   const userId = cleanStr(req?.user?.user_id || req?.user?.id, 200);
   if (userId) return `user:${userId}`;
 
-  const forwarded = cleanStr(req?.headers?.["x-forwarded-for"], 500)
-    .split(",")
-    .map((item) => item.trim())
-    .filter(Boolean)[0];
-
   const ip =
-    forwarded ||
     cleanStr(req?.ip, 200) ||
     cleanStr(req?.socket?.remoteAddress, 200) ||
     "unknown";

@@ -38,7 +38,7 @@ test("sanitizeAuditMetadata limits strings, arrays, keys, and depth", () => {
   assert.equal(Object.keys(out.many).length, 30);
 });
 
-test("getAuditContextFromReq prefers forwarded ip and authenticated actor", () => {
+test("getAuditContextFromReq uses trusted req.ip, not raw X-Forwarded-For", () => {
   const out = getAuditContextFromReq({
     user: { user_id: "user_1", role: "admin" },
     headers: {
@@ -51,7 +51,7 @@ test("getAuditContextFromReq prefers forwarded ip and authenticated actor", () =
   assert.deepEqual(out, {
     actor_user_id: "user_1",
     actor_role: "admin",
-    ip: "203.0.113.9",
+    ip: "127.0.0.1",
     user_agent: "test-agent",
   });
 });

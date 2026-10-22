@@ -99,8 +99,10 @@ async function parseResponseBody(res) {
 
 export async function api(path, { method = "GET", body, auth = true, signal } = {}) {
   const headers = {};
+  // FormData bodies (file uploads) keep the browser-generated multipart header.
+  const isFormData = typeof FormData !== "undefined" && body instanceof FormData;
 
-  if (body) {
+  if (body && !isFormData) {
     headers["Content-Type"] = "application/json";
   }
 
@@ -116,7 +118,7 @@ export async function api(path, { method = "GET", body, auth = true, signal } = 
   const res = await fetch(`${API_BASE}${path}`, {
     method,
     headers,
-    body: body ? JSON.stringify(body) : undefined,
+    body: body ? (isFormData ? body : JSON.stringify(body)) : undefined,
     signal,
   });
 

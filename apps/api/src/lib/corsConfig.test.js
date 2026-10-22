@@ -84,6 +84,9 @@ test("production rejects unknown origin", async () => {
       const out = await callOrigin(corsOptions, "https://evil.example.com");
 
       assert.match(out.err?.message || "", /CORS origin not allowed/);
+      assert.equal(out.err?.code, "cors_origin_not_allowed");
+      assert.equal(out.err?.status, 403);
+      assert.ok(!out.err.message.includes("evil.example.com"), "rejected origin must not be echoed into the error");
       assert.equal(out.allowed, false);
     }
   );

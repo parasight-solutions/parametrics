@@ -14,14 +14,9 @@ function cleanStr(value, max = MAX_STRING_LENGTH) {
   return v.length > max ? v.slice(0, max) : v;
 }
 
+// Same trusted-proxy rule as the rate limiter: req.ip only, never raw XFF.
 function getIp(req) {
-  const forwarded = cleanStr(req?.headers?.["x-forwarded-for"], 500)
-    .split(",")
-    .map((item) => item.trim())
-    .filter(Boolean)[0];
-
   return (
-    forwarded ||
     cleanStr(req?.ip, 200) ||
     cleanStr(req?.socket?.remoteAddress, 200) ||
     null

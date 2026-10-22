@@ -83,6 +83,16 @@ Current Sprint 2 task:
 
 - S2-32.1 secret containment. `apps/api/.env_bak` is deleted from the repository, and `.gitignore` now covers env files and env backups (`.env*`, `*.env`, `*.env.*`, `*.env_bak`, `*_env`, `*_env_bak*`). `maskMongoUri` is hardened to fail closed for no-scheme, leading-whitespace, and newline inputs. **Git history is not rewritten. The exposed values are still public and rotation remains mandatory:** the Google OAuth client secret (or delete the client), fresh `JWT_SECRET`/`APP_ENC_KEY`/`ENCRYPTION_KEY` for every deployed environment, and the Atlas DB password before any Atlas use. Purging history or making the repo private is a management/security decision. Proof: `docs/proof/s2-32-deployment-readiness.md` ("S2-32.1 Secret Containment").
 
+- S2-33 security hardening batch (Phase 0), pending GPT verification. It fixes S2-32 findings D2, D3, D4, D5 and D8, plus upload security and the seed/login mismatch:
+  - `/api/v1/debug/*` is mounted only in `development`/`test` with `ENABLE_DEBUG_ROUTES=true`, and no longer discloses token material.
+  - Rate-limit and audit IPs use `req.ip` with an explicit `TRUST_PROXY` (`true` is refused).
+  - Unknown CORS origins get a bounded `403`, and a final JSON error handler means no stack trace reaches a client.
+  - Google Connect no longer puts the app JWT in a URL. It uses `POST /connect/start` (Bearer), then a single-use 60 s handoff, then `/connect/go`, which sets an HttpOnly browser-nonce cookie. The callback atomically consumes a random state that is user- and browser-bound. `authenticate` accepts only Bearer and requires `user_id`.
+  - Uploads require auth plus operate access to the target location, JPEG/PNG by magic bytes, 5 MB, random names, and an external `UPLOAD_DIR` (required in production). Legacy in-checkout files are served read-only at the same URLs, raster images only.
+  - The local admin seed writes the `password` field login reads, takes `SEED_ADMIN_PASSWORD` (never printed), and refuses non-local `NODE_ENV` and non-localhost Mongo.
+
+  Not changed: Google sign-in `?gjwt=` redirect, login email regex, PKCE, and the in-memory limiter (see `docs/backlog/security-hardening.md`). Contract: `docs/architecture/api-security-perimeter.md`. Proof: `docs/proof/s2-33-security-hardening.md`. Deployment remains blocked on the S2-32 external items.
+
 Deployment lessons (S2-32), apply to all future deployment work:
 
 - **Check what git tracks, not only what `.gitignore` says.** `.env.*` did not match `.env_bak`. Run `git ls-files | grep -i env` before any release, and keep the repo's visibility in mind.

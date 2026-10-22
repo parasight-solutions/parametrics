@@ -16,3 +16,7 @@ logs
 *.log
 coverage
 .DS_Store
+
+# Runtime uploads (S2-33): new uploads go to UPLOAD_DIR outside the checkout.
+/uploads/
+/apps/api/uploads/

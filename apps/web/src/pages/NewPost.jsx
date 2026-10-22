@@ -16,13 +16,26 @@ export default function NewPost({ onLogout }) {
   const [err, setErr] = useState('')
   const nav = useNavigate()
 
+  // Authenticated upload bound to the selected location (JPEG/PNG, 5 MB max).
   async function uploadFile(file) {
+    setErr('')
+    if (!locationId) {
+      setErr('Please choose a location before uploading an image')
+      return
+    }
     const fd = new FormData()
     fd.append('file', file)
-    const res = await fetch('/api/v1/uploads', { method: 'POST', body: fd })
-    if (!res.ok) throw new Error('Upload failed')
-    const d = await res.json()
-    setImageUrl(d.url)
+    try {
+      const d = await api(`/uploads?locationId=${encodeURIComponent(locationId)}`, { method: 'POST', body: fd })
+      setImageUrl(d.url)
+    } catch (e) {
+      const code = e?.code
+      setErr(
+        code === 'file_too_large' ? 'Image is larger than 5 MB'
+          : code === 'unsupported_media_type' ? 'Only JPEG or PNG images can be uploaded'
+            : 'Upload failed'
+      )
+    }
   }
 
   async function submit(e) {
@@ -95,7 +108,8 @@ export default function NewPost({ onLogout }) {
               <span className="text-gray-700">…or Upload (dev)</span>
               <input
                 type="file"
-                accept="image/*"
+                accept="image/jpeg,image/png"
+                disabled={!locationId}
                 onChange={e => e.target.files?.[0] && uploadFile(e.target.files[0])}
                 className="mt-1 w-full"
               />

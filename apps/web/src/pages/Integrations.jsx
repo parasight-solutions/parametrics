@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation } from "react-router-dom";
 import AppShell from "../components/AppShell";
 import { api } from "../apiClient";
+import { startGoogleConnect } from "../lib/googleConnect";
 
 function fmtDate(d) {
   try {
@@ -116,7 +117,7 @@ export default function Integrations({ onLogout }) {
     }
   }, [location.search]);
 
-  function connectGoogle() {
+  async function connectGoogle() {
     const token = localStorage.getItem("token") || "";
     if (!token) {
       setMsg("Login required. Please login again.");
@@ -131,7 +132,11 @@ export default function Integrations({ onLogout }) {
     } catch {}
     setReauth(null);
 
-    window.location.href = `/api/v1/integrations/google/start?t=${encodeURIComponent(token)}`;
+    try {
+      await startGoogleConnect({ api, assign: (url) => window.location.assign(url) });
+    } catch (e) {
+      setMsg(e?.message || "Could not start Google connect.");
+    }
   }
 
   async function activateConnection(id) {

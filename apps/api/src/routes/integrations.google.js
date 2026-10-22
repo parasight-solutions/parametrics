@@ -1,7 +1,6 @@
 // apps/api/src/routes/integrations.google.js
 import { Router } from 'express'
 import crypto from 'crypto'
-import { signJwt, verifyJwt } from '../lib/jwt.js'
 import { col } from '../lib/mongo.js'
 import { encJson, decJson } from '../lib/crypto.js'
 import {
@@ -24,6 +23,16 @@ import { mutationRateLimit, oauthRateLimit, syncRateLimit } from '../middleware/
 import { ensureGoogleIntegrationIndexes } from "../integrations/google.indexes.js";
 import { auditFailure, auditSuccess } from "../services/auditLog.js";
 import { requireOwnedOrganizationLocationAccess } from "../services/organizationAccess.js";
+import {
+  CONNECT_STATE_COLLECTION,
+  issueConnectHandoff,
+  redeemConnectHandoff,
+  consumeConnectState,
+  connectGoUrl,
+  buildNonceCookie,
+  clearNonceCookie,
+  readNonceCookie,
+} from "../services/googleConnectState.js";
 
 const router = Router()
 const LOCATION_READ_ROLES = Object.freeze(["owner", "admin", "manager", "viewer"]);
@@ -157,33 +166,6 @@ function normalizeAccountResourceName(v) {
   throw e;
 }
 
-// Accept JWT from Authorization: Bearer ... OR ?t=...
-function userFromReq(req) {
-  const header = req.headers.authorization || ''
-  const m = header.match(/^Bearer\s+(.+)$/i)
-  const q = (req.query?.t || '').toString()
-
-  if (m) {
-    try {
-      const tok = verifyJwt(m[1])
-      return { user_id: tok.user_id, role: tok.role }
-    } catch (e) {
-      console.warn('[integrations.google/start] header token verify failed:', e?.message || e)
-    }
-  }
-
-  if (q) {
-    try {
-      const tok = verifyJwt(q)
-      return { user_id: tok.user_id, role: tok.role }
-    } catch (e) {
-      console.warn('[integrations.google/start] query token verify failed:', e?.message || e)
-    }
-  }
-
-  return null
-}
-
 // Map accountName ("accounts/..") -> integration doc (for multi-connection support)
 const ACCOUNT_TO_INTEG_CACHE = new Map(); // userId -> { ts, map: Map(accountName -> integrationId) }
 const ACCOUNT_TO_INTEG_TTL_MS = 60_000;
@@ -227,9 +209,22 @@ async function pickIntegrationForAccount(userId, accountName) {
 }
 
 // ----------------------
-// 1) START (no auth mw)
+// 1) START
 // ----------------------
-router.get('/start', oauthRateLimit, (req, res) => {
+// The app JWT is never accepted in a URL. The legacy GET /start?t=<jwt>
+// entry point is retired; clients use POST /connect/start with Bearer auth.
+router.get('/start', (_req, res) => {
+  res.set('Cache-Control', 'no-store');
+  return res.status(410).json({
+    error: { code: 'connect_start_moved', message: 'Use POST /api/v1/integrations/google/connect/start' },
+  });
+});
+
+async function connectStates() {
+  return col(CONNECT_STATE_COLLECTION);
+}
+
+router.post('/connect/start', authenticate, oauthRateLimit, async (req, res) => {
   const clientId = process.env.GOOGLE_CLIENT_ID || '';
   if (!clientId) {
     auditFailure(req, "google.oauth.start", {
@@ -237,44 +232,76 @@ router.get('/start', oauthRateLimit, (req, res) => {
       provider: "google",
       metadata: { reason: "missing_client_id" },
     });
-    return res.status(500).json({ error: { code: 'config', message: 'GOOGLE_CLIENT_ID missing in .env' } });
+    return res.status(500).json({ error: { code: 'config', message: 'GOOGLE_CLIENT_ID missing' } });
   }
 
-  const u = userFromReq(req);
-  if (!u?.user_id) {
-    console.error('[integrations.google/start] unauthorized: missing/invalid jwt. header=', !!req.headers.authorization, 'tParam=', !!req.query?.t);
+  try {
+    const ru = computeRedirectUri(req);
+    const { handoff } = await issueConnectHandoff({
+      collection: await connectStates(),
+      userId: req.user.user_id,
+      redirectUri: ru,
+    });
+    const url = connectGoUrl(ru, handoff);
+    res.set('Cache-Control', 'no-store');
+    return res.json({ url });
+  } catch (e) {
+    const code = e?.code === 'config' ? 'config' : 'connect_start_failed';
+    console.error('[integrations.google/connect/start] failed:', code);
     auditFailure(req, "google.oauth.start", {
       target_type: "integration",
       provider: "google",
-      metadata: { reason: "unauthorized" },
+      metadata: { reason: code },
     });
-    return res.status(401).json({ error: { code: 'unauthorized', message: 'pass JWT as Bearer or ?t=' } });
+    return res.status(500).json({ error: { code, message: 'Could not start Google connect' } });
+  }
+});
+
+// Top-level navigation: redeem the single-use handoff, bind this browser with
+// an HttpOnly nonce cookie, then redirect to Google.
+router.get('/connect/go', oauthRateLimit, async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  const clientId = process.env.GOOGLE_CLIENT_ID || '';
+  let redeemed = null;
+  try {
+    if (clientId) {
+      redeemed = await redeemConnectHandoff({
+        collection: await connectStates(),
+        handoff: typeof req.query?.h === 'string' ? req.query.h : '',
+      });
+    }
+  } catch {
+    redeemed = null;
   }
 
-  const ru = computeRedirectUri(req);
-
-  // Put redirect_uri inside state so callback uses the same value (prevents port/host mismatch)
-  const state = signJwt({ uid: u.user_id, ru, at: Date.now() }, { expiresIn: '10m' });
+  if (!redeemed) {
+    auditFailure(req, "google.oauth.start", {
+      target_type: "integration",
+      provider: "google",
+      metadata: { reason: clientId ? "handoff_invalid" : "missing_client_id" },
+    });
+    return res.redirect(`${postConnectRedirect()}?google=fail&reason=handoff_invalid`);
+  }
 
   const params = new URLSearchParams({
     client_id: clientId,
-    redirect_uri: ru,
+    redirect_uri: redeemed.redirectUri,
     response_type: 'code',
     scope: SCOPES,
     access_type: 'offline',
     prompt: 'consent',
     include_granted_scopes: 'true',
-    state,
+    state: redeemed.state,
   });
 
   auditSuccess(req, "google.oauth.start", {
-    actor_user_id: u.user_id,
-    actor_role: u.role,
+    actor_user_id: redeemed.userId,
     target_type: "integration",
     provider: "google",
   });
 
-  res.redirect(`${AUTH_BASE}?${params.toString()}`);
+  res.append('Set-Cookie', buildNonceCookie(redeemed.nonce, redeemed.redirectUri));
+  return res.redirect(`${AUTH_BASE}?${params.toString()}`);
 });
 
 // -------------------------
@@ -293,19 +320,24 @@ router.get('/callback', oauthRateLimit, async (req, res) => {
       return res.status(400).send('Missing code/state');
     }
 
-    let ru;
-    try {
-      const st = verifyJwt(String(state));
-      uid = st?.uid;
-      ru = st?.ru;
-    } catch {
+    // Single-use, unexpired, and bound to the browser that started the flow.
+    // The user id comes from the stored record, not from the request.
+    res.append('Set-Cookie', clearNonceCookie(computeRedirectUri(req)));
+    const consumed = await consumeConnectState({
+      collection: await connectStates(),
+      state: typeof state === 'string' ? state : '',
+      nonce: readNonceCookie(req),
+    });
+    if (!consumed.ok) {
       await auditFailure(req, "google.oauth.callback", {
         target_type: "integration",
         provider: "google",
-        metadata: { reason: "bad_state" },
+        metadata: { reason: consumed.reason },
       });
       return res.status(400).send('Bad state');
     }
+    uid = consumed.userId;
+    const ru = consumed.redirectUri;
 
     if (!uid) {
       await auditFailure(req, "google.oauth.callback", {
@@ -340,8 +372,8 @@ router.get('/callback', oauthRateLimit, async (req, res) => {
     }, 15000);
 
     if (!tokRes.ok) {
-      const msg = await tokRes.text().catch(() => '');
-      console.error('[integrations.google/callback] token exchange failed:', tokRes.status, msg);
+      // Status only: the provider error body is not logged.
+      console.error('[integrations.google/callback] token exchange failed:', tokRes.status);
       await auditFailure(req, "google.oauth.callback", {
         actor_user_id: uid,
         target_type: "integration",
@@ -447,12 +479,12 @@ router.get('/callback', oauthRateLimit, async (req, res) => {
 
     return res.redirect(`${postConnectRedirect()}?google=ok`);
   } catch (e) {
-    console.error('[integrations.google/callback] fatal error:', e);
+    console.error('[integrations.google/callback] fatal error:', e?.name || 'Error', e?.code || '');
     await auditFailure(req, "google.oauth.callback", {
       actor_user_id: uid,
       target_type: "integration",
       provider: "google",
-      metadata: { reason: e?.message || "server_error" },
+      metadata: { reason: "server_error" },
     });
     return res.redirect(`${postConnectRedirect()}?google=fail&reason=server_error`);
   }

@@ -1,5 +1,16 @@
 const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "::1"]);
 
+export const CORS_ORIGIN_NOT_ALLOWED = "cors_origin_not_allowed";
+
+// The rejected origin is attacker-supplied; it is not embedded in the error.
+// lib/errorHandler.js turns this into a bounded 403.
+export function createCorsRejectionError() {
+  const err = new Error("CORS origin not allowed");
+  err.code = CORS_ORIGIN_NOT_ALLOWED;
+  err.status = 403;
+  return err;
+}
+
 function cleanStr(value, max = 1000) {
   const v = String(value ?? "").trim();
   if (!v) return "";
@@ -91,7 +102,7 @@ export function createCorsOptions(env = process.env) {
 
       if (allowed) return cb(null, normalized);
 
-      return cb(new Error(`CORS origin not allowed: ${origin}`), false);
+      return cb(createCorsRejectionError(), false);
     },
     credentials: true,
     allowedHeaders: ["Content-Type", "Authorization"],

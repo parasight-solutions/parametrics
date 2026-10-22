@@ -154,6 +154,17 @@ API startup currently expects:
 - `CORS_ORIGINS`: comma-separated browser origins allowed to call the API with credentials. Required outside `NODE_ENV=development` or `NODE_ENV=test`. Example: `https://app.parametrics.example`.
 - `RATE_LIMIT_WINDOW_SECONDS`: shared rate-limit window in seconds. Defaults to `600`.
 - `RATE_LIMIT_AUTH_MAX`: login attempts per window per IP. Defaults to `10`.
+- `TRUST_PROXY` (S2-33): Express `trust proxy` setting used to derive `req.ip` for rate limiting and audit logs. Default off: `req.ip` is the socket peer and `X-Forwarded-For` is ignored.
+  - Behind a reverse proxy, set it to the number of proxy hops in front of the API (usually `1`) or to the proxy addresses (`loopback`, `uniquelocal`, IPs, or CIDRs, comma-separated).
+  - `true` is refused at startup (`trust_proxy_config_invalid`) because it trusts every hop and makes `X-Forwarded-For` client-controlled again.
+  - If the API sits behind a proxy and `TRUST_PROXY` is unset, every client shares the proxy's IP. The login limit then becomes one global bucket, so set it correctly before going live.
+- `UPLOAD_DIR` (S2-33): absolute directory where new post-image uploads are written.
+  - Required outside `NODE_ENV=development` or `NODE_ENV=test` (`upload_config_missing_dir`).
+  - Must be outside the project root (`upload_config_inside_repo`) and not `/`, `/tmp`, or `/var/tmp` in production (`upload_config_blocked_dir`). It is created if missing and must be writable.
+  - Unset locally, it falls back to `<os.tmpdir()>/parametrics/uploads` (non-durable).
+  - Recommended deployment value: `/var/lib/parametrics/uploads`, `chmod 0750`, owned by the API user, on persistent disk.
+  - Legacy files in `<repo>/uploads` and `<repo>/apps/api/uploads` are still served read-only at the same `/uploads/<name>` URLs. They are never moved or deleted automatically.
+- `ENABLE_DEBUG_ROUTES` (S2-33): `true` mounts `/api/v1/debug/*`, and only when `NODE_ENV` is `development` or `test`. In any other environment the routes are never mounted, even with the flag set.
 - `RATE_LIMIT_OAUTH_MAX`: OAuth start/callback attempts per window per IP. Defaults to `20`.
 - `RATE_LIMIT_UPLOAD_MAX`: upload attempts per window per user/IP. Defaults to `30`.
 - `RATE_LIMIT_SYNC_MAX`: Google/GBP/review sync trigger attempts per window per user/IP. Defaults to `10`.
@@ -338,13 +349,15 @@ This task verifies:
 
 The full checklist and smoke plan is in `docs/proof/s2-32-deployment-readiness.md`. Runtime rules found there that apply to every deployed environment:
 
-- Set `NODE_ENV=production` on staging as well. The app only distinguishes `development`/`test` from everything else. Express shows stack traces in error responses for any value other than `production`; S2-32 observed this for an unknown CORS origin under `NODE_ENV=staging`.
+- Set `NODE_ENV=production` on staging as well. The app only distinguishes `development`/`test` from everything else. S2-33 added a final JSON error handler, so stack traces no longer reach clients under any `NODE_ENV`. The rule still stands because other libraries key off `production`.
 - Do not leave `.env*` files inside the deployed checkout. `startup/env.js` fills any missing or blank variable from `apps/api/.env.local`, `<repo>/.env`, and `apps/api/.env`; `config.js` and `lib/mongo.js` also load `.env` files. Inject the environment from a process-manager env file outside the repo (mode `0600`) and set every required variable explicitly.
 - `REDIS_URL` is ignored by `lib/queues.js`. Only `REDIS_HOST`/`REDIS_PORT`/`REDIS_TLS` are read, and there is no password support, so Redis must sit on a private network.
-- Rate-limit client identity uses the first `X-Forwarded-For` value, which is client-controlled. `trust proxy` is not set. Run one API process (fork mode) and treat login rate limiting as bypassable until a follow-up fixes the identity key.
-- `/api/v1/debug/*` routes are mounted in every environment; block them at the reverse proxy.
-- `/uploads` is served from `process.cwd()/uploads` (`apps/api/uploads` with the package command). Point it at persistent disk.
-- The web bundle bakes `VITE_API_BASE_URL` at build time, and Vite loads `apps/web/.env.local` during `vite build`. Build on a clean checkout with `VITE_API_BASE_URL` exported in the shell. It is required even behind a same-origin proxy, because `GoogleConnect.jsx` falls back to `http://localhost:5050`.
+- Rate limiting and audit IPs use Express `req.ip` (S2-33). `X-Forwarded-For` is honoured only for hops trusted through `TRUST_PROXY`. Set `TRUST_PROXY` to the real hop count behind the reverse proxy. The limiter is still in-memory, so run one API process (fork mode).
+- `/api/v1/debug/*` is not mounted outside `development`/`test` (S2-33). A reverse-proxy block is still a reasonable extra layer.
+- Unknown CORS origins get `403 {"error":{"code":"cors_origin_not_allowed"}}` (S2-33). They used to get a `500`. CORS is a browser control, not an authentication boundary.
+- New uploads go to `UPLOAD_DIR` and need authentication plus operate access to the target location (S2-33). Only JPEG and PNG are accepted (5 MB max, checked by magic bytes), and files get random names. `/uploads/*` serves raster images only, with `nosniff` and a sandbox CSP. Copy legacy in-checkout files into `UPLOAD_DIR` by hand when convenient; nothing is migrated automatically.
+- Google Connect no longer puts the app JWT in a URL (S2-33). `GOOGLE_REDIRECT_URI` must be set explicitly in deployed environments, and its path must end in `/callback`. The `/connect/go` hop and the browser-binding cookie are served from the same origin as the callback.
+- The web bundle bakes `VITE_API_BASE_URL` at build time, and Vite loads `apps/web/.env.local` during `vite build`. Build on a clean checkout with `VITE_API_BASE_URL` exported in the shell. (S2-33 removed the dead `GoogleConnect.jsx` that fell back to `http://localhost:5050`. Build on a clean checkout anyway.)
 - Start order: Redis/Mongo → API → workers → scheduler. Stop order for incidents: scheduler → workers → API.
 - `GET /api/v1/health` is liveness only; it does not check Mongo or Redis.
 - `lib/mongo.js` logs the Mongo host on connect with credentials masked. S2-32 fixed a fallback that printed the raw URI, password included, for multi-host (non-SRV) connection strings.

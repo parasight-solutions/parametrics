@@ -101,3 +101,39 @@ describe("apiClient location-bound errors", () => {
     expect(window.location.href).toBe("/integrations?reauth=google");
   });
 });
+
+describe("apiClient FormData uploads (S2-33)", () => {
+  it("sends FormData unchanged with Bearer auth and no JSON content type", async () => {
+    const { api } = await loadApiClient();
+    localStorage.setItem("token", "fresh-app-token");
+
+    fetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      text: () => Promise.resolve(JSON.stringify({ url: "http://localhost:5050/uploads/a.png", filename: "a.png" })),
+    });
+
+    const fd = new FormData();
+    fd.append("file", new Blob(["x"]), "x.png");
+    const out = await api("/uploads?locationId=loc_1", { method: "POST", body: fd });
+
+    expect(out.filename).toBe("a.png");
+    const [url, init] = fetch.mock.calls[0];
+    expect(url).toBe("/api/v1/uploads?locationId=loc_1");
+    expect(init.body).toBe(fd);
+    expect(init.headers.Authorization).toBe("Bearer fresh-app-token");
+    expect(init.headers["Content-Type"]).toBeUndefined();
+  });
+
+  it("still JSON-encodes plain object bodies", async () => {
+    const { api } = await loadApiClient();
+    localStorage.setItem("token", "fresh-app-token");
+    fetch.mockResolvedValueOnce({ ok: true, status: 200, text: () => Promise.resolve("{}") });
+
+    await api("/posts", { method: "POST", body: { a: 1 } });
+
+    const [, init] = fetch.mock.calls[0];
+    expect(init.body).toBe('{"a":1}');
+    expect(init.headers["Content-Type"]).toBe("application/json");
+  });
+});
