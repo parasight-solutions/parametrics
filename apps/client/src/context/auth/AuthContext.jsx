@@ -1,45 +1,44 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
-import { restoreAuthenticatedUser } from "./authState";
-import { clearSession } from "../../session";
-import { AUTH_EXPIRED_EVENT } from "../../services/authFailure";
 import { authEndpoints } from "../../services/auth.service";
+import { AUTH_EXPIRED_EVENT } from "../../services/authFailure";
+
+import { clearSession } from "../../session";
+
+import useApi from "../../hooks/useApi";
 import { AuthContext } from "./useAuth";
 
 export const AuthProvider = ({ children }) => {
+  const { loading, callApi } = useApi({ authLoading: true });
+
   const [user, setUser] = useState(null);
-  const [authLoading, setAuthLoading] = useState(true);
+  const authLoading = loading?.authLoading;
 
   const login = useCallback((userData) => {
     setUser(userData);
   }, []);
 
   const logout = useCallback(async () => {
-    try {
-      await authEndpoints.logout();
-    } finally {
-      clearSession();
-      setUser(null);
-    }
-  }, []);
+    await callApi("loggingOut", authEndpoints.logout, {
+      onSuccess: () => {
+        clearSession();
+        setUser(null);
+      },
+    });
+  }, [callApi]);
 
   useEffect(() => {
-    let active = true;
-
-    restoreAuthenticatedUser(authEndpoints.session)
-      .then((restoredUser) => {
-        if (active) setUser(restoredUser);
-      })
-      .catch(() => {
-        if (active) setUser(null);
-      })
-      .finally(() => {
-        if (active) setAuthLoading(false);
-      });
-    return () => {
-      active = false;
-    };
-  }, []);
+    callApi("authLoading", authEndpoints.session, {
+      onSuccess: (res) => {
+        const user = res?.data?.user ?? res?.user ?? null;
+        setUser(user);
+      },
+      onError: (error) => {
+        if (error?.response?.status === 401 || error?.status === 401)
+          setUser(null);
+      },
+    });
+  }, [callApi]);
 
   useEffect(() => {
     const handleAuthExpired = () => {
