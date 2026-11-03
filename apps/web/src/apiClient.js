@@ -1,31 +1,9 @@
 // apps/web/src/apiClient.js
-import {
-  clearActiveLocationId,
-  clearAuthSession,
-  clearToken as clearStoredToken,
-  getToken as getStoredToken,
-  setToken as setStoredToken,
-} from "./session";
+import { clearActiveLocationId } from "./session";
 
-export function getToken() {
-  return getStoredToken();
-}
-
-export function setToken(token) {
-  setStoredToken(token);
-}
-
-export function clearToken() {
-  clearStoredToken();
-}
+export const AUTH_EXPIRED_EVENT = "pm:auth-expired";
 
 const API_BASE = `${(import.meta.env.VITE_API_BASE_URL || "").replace(/\/$/, "")}/api/v1`;
-
-function redirectToLogin() {
-  if (window.location.pathname !== "/login") {
-    window.location.href = "/login";
-  }
-}
 
 function triggerGoogleReauth(err) {
   const onIntegrations = window.location.pathname.startsWith("/integrations");
@@ -42,7 +20,7 @@ function triggerGoogleReauth(err) {
         message,
         at: Date.now(),
         from: window.location.pathname + window.location.search,
-      })
+      }),
     );
   } catch {
     // Reauth banners are helpful but should not block request handling.
@@ -72,7 +50,9 @@ function isGoogleReauthError(payload) {
 function isRealAppAuthFailure(status, payload) {
   if (status !== 401) return false;
 
-  const code = String(payload?.code || payload?.error?.code || "").toLowerCase();
+  const code = String(
+    payload?.code || payload?.error?.code || "",
+  ).toLowerCase();
 
   return code === "unauthorized" || code === "invalid";
 }
@@ -97,25 +77,20 @@ async function parseResponseBody(res) {
   }
 }
 
-export async function api(path, { method = "GET", body, auth = true, signal } = {}) {
+export async function api(
+  path,
+  { method = "GET", body, auth = true, signal } = {},
+) {
   const headers = {};
 
   if (body) {
     headers["Content-Type"] = "application/json";
   }
 
-  if (auth) {
-    const t = getToken();
-    if (!t) {
-      redirectToLogin();
-      throw { code: "unauthorized", message: "JWT missing" };
-    }
-    headers["Authorization"] = `Bearer ${t}`;
-  }
-
   const res = await fetch(`${API_BASE}${path}`, {
     method,
     headers,
+    credentials: "include",
     body: body ? JSON.stringify(body) : undefined,
     signal,
   });
@@ -123,11 +98,12 @@ export async function api(path, { method = "GET", body, auth = true, signal } = 
   const parsed = await parseResponseBody(res);
 
   if (!res.ok) {
-    const err = parsed?.error || parsed || {
-      code: "http_error",
-      status: res.status,
-      message: `HTTP ${res.status}`,
-    };
+    const err = parsed?.error ||
+      parsed || {
+        code: "http_error",
+        status: res.status,
+        message: `HTTP ${res.status}`,
+      };
 
     if (typeof err.status !== "number") {
       err.status = res.status;
@@ -144,14 +120,11 @@ export async function api(path, { method = "GET", body, auth = true, signal } = 
     }
 
     if (auth && isRealAppAuthFailure(res.status, err)) {
-      clearAuthSession();
-
       if (!sessionStorage.getItem("auth_expired_alerted")) {
         sessionStorage.setItem("auth_expired_alerted", "1");
         window.alert("Session expired. Please log in again.");
       }
-
-      redirectToLogin();
+      globalThis.dispatchEvent?.(new Event(AUTH_EXPIRED_EVENT));
       throw err;
     }
 

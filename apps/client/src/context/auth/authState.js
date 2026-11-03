@@ -1,18 +1,9 @@
-import {
-  clearSession,
-  getStoredUser,
-  getToken,
-  isTokenExpired,
-} from "../../session";
-
-export function restoreAuthState(now = Date.now()) {
-  const token = getToken();
-  const user = getStoredUser();
-
-  if (token && user && !isTokenExpired(token, now)) {
-    return { user, token };
+export async function restoreAuthenticatedUser(requestSession) {
+  try {
+    const response = await requestSession();
+    return response?.data?.user ?? response?.user ?? null;
+  } catch (error) {
+    if (error?.response?.status === 401 || error?.status === 401) return null;
+    throw error;
   }
-
-  clearSession();
-  return { user: null, token: null };
 }

@@ -308,7 +308,8 @@ describe("downloadReportOutput", () => {
       "http://127.0.0.1:5050/api/v1/reports/runs/run%20with%20space/outputs/pdf",
     );
     expect(calledInit.method).toBe("GET");
-    expect(calledInit.headers.Authorization).toBe("Bearer tkn");
+    expect(calledInit.credentials).toBe("include");
+    expect(calledInit.headers?.Authorization).toBeUndefined();
     expect(out.filename).toBe("s2-22-1-smoke-dashboard-abc.pdf");
     expect(out.contentType).toBe("application/pdf");
     expect(out.size).toBe(4);

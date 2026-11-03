@@ -3,7 +3,9 @@ export const openapiSpec = {
   info: { title: "Parametrics API", version: "1.0.0" },
   servers: [{ url: "http://localhost:5050" }],
   components: {
-    securitySchemes: { bearerAuth: { type: "http", scheme: "bearer", bearerFormat: "JWT" } }
+    securitySchemes: {
+      cookieAuth: { type: "apiKey", in: "cookie", name: "pm_session" }
+    }
   },
   paths: {
     "/api/v1/health": {
@@ -30,13 +32,26 @@ export const openapiSpec = {
             }
           }
         },
-        responses: { 200: { description: "JWT issued" }, 401: { description: "Invalid credentials" } }
+        responses: { 200: { description: "Session cookie set and user returned" }, 401: { description: "Invalid credentials" } }
+      }
+    },
+    "/api/v1/auth/session": {
+      get: {
+        summary: "Restore the authenticated user",
+        security: [{ cookieAuth: [] }],
+        responses: { 200: { description: "Current user" }, 401: { description: "Unauthorized" } }
+      }
+    },
+    "/api/v1/auth/logout": {
+      post: {
+        summary: "Revoke the current session and clear its cookie",
+        responses: { 204: { description: "Logged out" } }
       }
     },
     "/api/v1/demo/enqueue/publish": {
       post: {
         summary: "Enqueue post publish",
-        security: [{ bearerAuth: [] }],
+        security: [{ cookieAuth: [] }],
         requestBody: {
           required: true,
           content: { "application/json": { schema: {

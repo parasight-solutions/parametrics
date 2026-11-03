@@ -23,6 +23,7 @@ import recurrenceRouter from "./routes/recurrence.js";
 import googleAuthRouter from "./routes/auth.google.js";
 import reportsRouter from "./routes/reports.js";
 import { validateReportStorageConfig } from "./services/reportStorage.js";
+import { validateRequestOrigin } from "./middleware/validateRequestOrigin.js";
 
 
 const locationsRoutes = locationsMod.default || locationsMod.locations
@@ -39,6 +40,7 @@ app.use(cors(createCorsOptions()))
 
 app.use(helmet())
 app.use(express.json())
+app.use("/api", validateRequestOrigin)
 
 app.use("/uploads", express.static(path.resolve(process.cwd(), "uploads")))
 

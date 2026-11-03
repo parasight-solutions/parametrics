@@ -1,25 +1,22 @@
 // apps/web/src/pages/integrations/GoogleConnect.jsx
 import { useEffect, useRef, useState } from "react";
-import { useAuth } from "@/lib/auth";
 const API_BASE =
   import.meta.env.VITE_API_BASE_URL ||
   import.meta.env.VITE_API_BASE ||
   "http://localhost:5050";
 
 export default function GoogleConnectPage() {
-  const { token } = useAuth();
   const [accounts, setAccounts] = useState([]);
   const [error, setError] = useState("");
   const fetching = useRef(false);
 
   const connect = () => {
-    if (!token) return;
-    window.location.href = `${API_BASE}/api/v1/integrations/google/start?t=${encodeURIComponent(token)}`;
+    window.location.href = `${API_BASE}/api/v1/integrations/google/start`;
   };
 
   // fetch once per minute max
   useEffect(() => {
-    if (!token || fetching.current) return;
+    if (fetching.current) return;
 
     // 60s local cache to avoid rapid re-fetch on re-render
     const key = "gbp.accounts.cache";
@@ -31,11 +28,11 @@ export default function GoogleConnectPage() {
 
     fetching.current = true;
     fetch(`${API_BASE}/api/v1/integrations/google/accounts`, {
-      headers: { Authorization: `Bearer ${token}` },
+      credentials: "include",
     })
       .then(async (r) => {
         if (r.status === 429) {
-          const j = await r.json().catch(() => ({}));
+          await r.json().catch(() => ({}));
           setError("Google quota cooldown. Try again in ~1 min.");
           return;
         }
@@ -50,7 +47,7 @@ export default function GoogleConnectPage() {
       })
       .catch((e) => setError(e.message || "failed"))
       .finally(() => { fetching.current = false; });
-  }, [token]);
+  }, []);
 
   return (
     <div className="p-4 space-y-3">

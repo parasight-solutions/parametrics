@@ -1,7 +1,7 @@
 // apps/web/src/pages/OrganizationMembers.jsx
 import { useCallback, useEffect, useMemo, useState } from "react";
 import AppShell from "../components/AppShell";
-import { getToken } from "../session";
+import { useAuth } from "../context/useAuth";
 import {
   MEMBER_CANDIDATE_MIN_SEARCH,
   MEMBER_CREATE_STATUSES,
@@ -60,16 +60,6 @@ function StepHeading({ n, title, hint }) {
   );
 }
 
-function readCurrentUserId() {
-  let storedUser = null;
-  try {
-    storedUser = JSON.parse(localStorage.getItem("pm_auth_user") || "null");
-  } catch {
-    storedUser = null;
-  }
-  return resolveCurrentUserId({ storedUser, token: getToken() });
-}
-
 const emptyCreateForm = Object.freeze({
   role: "viewer",
   status: "active",
@@ -116,6 +106,7 @@ function statusBadge(status) {
 }
 
 export default function OrganizationMembers({ onLogout }) {
+  const { user } = useAuth();
   const [orgs, setOrgs] = useState([]);
   const [orgsLoading, setOrgsLoading] = useState(false);
   const [orgsError, setOrgsError] = useState("");
@@ -145,7 +136,10 @@ export default function OrganizationMembers({ onLogout }) {
   const [actionMessage, setActionMessage] = useState("");
 
   // UI hint only (badge + self-disable guard); the API enforces real access.
-  const currentUserId = useMemo(() => readCurrentUserId(), []);
+  const currentUserId = useMemo(
+    () => resolveCurrentUserId({ storedUser: user }),
+    [user]
+  );
 
   const selectedOrg = useMemo(
     () => orgs.find((o) => o.id === selectedOrgId) || null,

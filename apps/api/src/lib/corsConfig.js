@@ -76,6 +76,17 @@ export function resolveAllowedOrigins(env = process.env) {
   return configured;
 }
 
+export function isAllowedCorsOrigin(origin, env = process.env) {
+  const normalized = normalizeOrigin(origin);
+  if (!normalized) return false;
+
+  const allowedOrigins = resolveAllowedOrigins(env);
+  return (
+    allowedOrigins.includes(normalized) ||
+    (isLocalEnvironment(env) && isLocalhostOrigin(normalized))
+  );
+}
+
 export function createCorsOptions(env = process.env) {
   const allowedOrigins = resolveAllowedOrigins(env);
   const local = isLocalEnvironment(env);
@@ -94,7 +105,7 @@ export function createCorsOptions(env = process.env) {
       return cb(new Error(`CORS origin not allowed: ${origin}`), false);
     },
     credentials: true,
-    allowedHeaders: ["Content-Type", "Authorization"],
+    allowedHeaders: ["Content-Type"],
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
   };
 }

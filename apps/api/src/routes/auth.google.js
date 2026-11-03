@@ -6,6 +6,12 @@ import { signJwt, verifyJwt } from "../lib/jwt.js";
 import { col } from "../lib/mongo.js";
 import { oauthRateLimit } from "../middleware/rateLimit.js";
 import { auditFailure, auditSuccess } from "../services/auditLog.js";
+import {
+  createSession,
+  readSessionToken,
+  revokeSession,
+  setSessionCookie,
+} from "../services/authSessions.js";
 
 const router = Router();
 
@@ -231,11 +237,11 @@ router.get("/callback", oauthRateLimit, async (req, res) => {
       name,
     });
 
-    const appJwt = signJwt({
-      user_id: user.id,
-      role: user.role,
-      email: user.email,
-    });
+    const currentSession = readSessionToken(req);
+    if (currentSession) await revokeSession(currentSession);
+
+    const rawSession = await createSession(user.id);
+    setSessionCookie(res, rawSession);
 
     await auditSuccess(req, "auth.google.callback", {
       actor_user_id: user.id,
@@ -246,9 +252,7 @@ router.get("/callback", oauthRateLimit, async (req, res) => {
       metadata: { email: user.email },
     });
 
-    return res.redirect(
-      `${returnUrl}?gjwt=${encodeURIComponent(appJwt)}`
-    );
+    return res.redirect(returnUrl);
   } catch (e) {
     console.error("[auth/google/callback] error", e);
     const reason = String(e?.message || "server_error").split(":").slice(0, 2).join(":");

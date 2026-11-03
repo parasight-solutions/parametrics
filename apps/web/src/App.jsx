@@ -1,5 +1,4 @@
 // apps/web/src/App.jsx
-import { useState } from "react";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import Login from "./pages/Login";
 import Dashboard from "./pages/Dashboard";
@@ -13,32 +12,30 @@ import GoogleConnected from "./pages/GoogleConnected";
 import Locations from "./pages/Locations";
 import OrganizationMembers from "./pages/OrganizationMembers";
 import ReportHistory from "./pages/ReportHistory";
-import { clearAuthSession } from "./session";
-
-function isAuthed() {
-  return !!localStorage.getItem("token");
-}
+import { useAuth } from "./context/useAuth";
 
 export default function App() {
-  const [authed, setAuthed] = useState(isAuthed());
-  function onAuthed() { setAuthed(true); }
-  function onLogout() { clearAuthSession(); setAuthed(false); }
+  const { authLoading, isAuthenticated: authed, login, logout } = useAuth();
+
+  if (authLoading) {
+    return <div className="min-h-screen flex items-center justify-center">Loading…</div>;
+  }
 
   return (
     <BrowserRouter>
       <Routes>
-        <Route path="/posts" element={authed ? <Posts onLogout={onLogout} /> : <Navigate to="/login" />} />
-        <Route path="/posts/new" element={authed ? <NewPost onLogout={onLogout} /> : <Navigate to="/login" />} />
-        <Route path="/reviews" element={authed ? <Reviews onLogout={onLogout} /> : <Navigate to="/login" />} />
-        <Route path="/recurrence" element={authed ? <Recurrence onLogout={onLogout} /> : <Navigate to="/login" />} />
-        <Route path="/integrations" element={authed ? <Integrations onLogout={onLogout} /> : <Navigate to="/login" />} />
-        <Route path="/locations" element={authed ? <Locations onLogout={onLogout} /> : <Navigate to="/login" />} />
-        <Route path="/organization-members" element={authed ? <OrganizationMembers onLogout={onLogout} /> : <Navigate to="/login" />} />
-        <Route path="/reports/history" element={authed ? <ReportHistory onLogout={onLogout} /> : <Navigate to="/login" />} />
+        <Route path="/posts" element={authed ? <Posts onLogout={logout} /> : <Navigate to="/login" />} />
+        <Route path="/posts/new" element={authed ? <NewPost onLogout={logout} /> : <Navigate to="/login" />} />
+        <Route path="/reviews" element={authed ? <Reviews onLogout={logout} /> : <Navigate to="/login" />} />
+        <Route path="/recurrence" element={authed ? <Recurrence onLogout={logout} /> : <Navigate to="/login" />} />
+        <Route path="/integrations" element={authed ? <Integrations onLogout={logout} /> : <Navigate to="/login" />} />
+        <Route path="/locations" element={authed ? <Locations onLogout={logout} /> : <Navigate to="/login" />} />
+        <Route path="/organization-members" element={authed ? <OrganizationMembers onLogout={logout} /> : <Navigate to="/login" />} />
+        <Route path="/reports/history" element={authed ? <ReportHistory onLogout={logout} /> : <Navigate to="/login" />} />
 
         <Route path="/integrations/google/connected" element={<GoogleConnected />} />
-        <Route path="/login" element={authed ? <Navigate to="/" /> : <Login onAuthed={onAuthed} />} />
-        <Route path="/" element={authed ? <Dashboard onLogout={onLogout} /> : <Navigate to="/login" />} />
+        <Route path="/login" element={authed ? <Navigate to="/" /> : <Login onAuthed={login} />} />
+        <Route path="/" element={authed ? <Dashboard onLogout={logout} /> : <Navigate to="/login" />} />
         <Route path="*" element={<Navigate to={authed ? "/" : "/login"} />} />
       </Routes>
     </BrowserRouter>

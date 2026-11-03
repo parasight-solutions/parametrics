@@ -3,21 +3,11 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import ActiveLocationPicker from "./ActiveLocationPicker";
 import { getActiveLocationId } from "../session";
 
-function authHeaders() {
-  const t =
-    localStorage.getItem("token") ||
-    localStorage.getItem("jwt") ||
-    sessionStorage.getItem("token") ||
-    "";
-  return t ? { Authorization: `Bearer ${t}` } : {};
-}
-
 async function api(path, opts = {}) {
   const res = await fetch(path, {
     ...opts,
     headers: {
       "Content-Type": "application/json",
-      ...authHeaders(),
       ...(opts.headers || {}),
     },
     credentials: "include",

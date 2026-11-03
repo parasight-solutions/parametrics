@@ -6,6 +6,7 @@ const keyEq = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 const pickIndexSignature = (ix) => ({
   key: ix?.key || null,
   unique: !!ix?.unique,
+  expireAfterSeconds: ix?.expireAfterSeconds ?? null,
   partialFilterExpression: ix?.partialFilterExpression || null,
 });
 
@@ -37,6 +38,7 @@ async function ensureIndex(collection, key, opts = {}) {
   const want = {
     key,
     unique: !!opts.unique,
+    expireAfterSeconds: opts.expireAfterSeconds ?? null,
     partialFilterExpression: opts.partialFilterExpression || null,
   };
 
@@ -69,6 +71,21 @@ async function ensureIndex(collection, key, opts = {}) {
 }
 
 export async function ensureIndexes() {
+  // ---------------------------------------------------------------------------
+  // auth_sessions
+  // ---------------------------------------------------------------------------
+  const authSessions = await col("auth_sessions");
+
+  await ensureIndex(authSessions, { token_hash: 1 }, {
+    unique: true,
+    name: "uniq_auth_sessions_token_hash",
+  });
+
+  await ensureIndex(authSessions, { expires_at: 1 }, {
+    name: "ttl_auth_sessions_expires_at",
+    expireAfterSeconds: 0,
+  });
+
   // ---------------------------------------------------------------------------
   // users
   // ---------------------------------------------------------------------------

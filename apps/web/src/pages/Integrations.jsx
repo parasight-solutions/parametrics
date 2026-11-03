@@ -117,12 +117,6 @@ export default function Integrations({ onLogout }) {
   }, [location.search]);
 
   function connectGoogle() {
-    const token = localStorage.getItem("token") || "";
-    if (!token) {
-      setMsg("Login required. Please login again.");
-      return;
-    }
-
     // User accepted the next-step CTA; clear banner state so UX is clean.
     try {
       sessionStorage.removeItem("reauth_required");
@@ -131,7 +125,7 @@ export default function Integrations({ onLogout }) {
     } catch {}
     setReauth(null);
 
-    window.location.href = `/api/v1/integrations/google/start?t=${encodeURIComponent(token)}`;
+    window.location.href = "/api/v1/integrations/google/start";
   }
 
   async function activateConnection(id) {

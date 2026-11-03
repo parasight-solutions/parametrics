@@ -157,33 +157,6 @@ function normalizeAccountResourceName(v) {
   throw e;
 }
 
-// Accept JWT from Authorization: Bearer ... OR ?t=...
-function userFromReq(req) {
-  const header = req.headers.authorization || ''
-  const m = header.match(/^Bearer\s+(.+)$/i)
-  const q = (req.query?.t || '').toString()
-
-  if (m) {
-    try {
-      const tok = verifyJwt(m[1])
-      return { user_id: tok.user_id, role: tok.role }
-    } catch (e) {
-      console.warn('[integrations.google/start] header token verify failed:', e?.message || e)
-    }
-  }
-
-  if (q) {
-    try {
-      const tok = verifyJwt(q)
-      return { user_id: tok.user_id, role: tok.role }
-    } catch (e) {
-      console.warn('[integrations.google/start] query token verify failed:', e?.message || e)
-    }
-  }
-
-  return null
-}
-
 // Map accountName ("accounts/..") -> integration doc (for multi-connection support)
 const ACCOUNT_TO_INTEG_CACHE = new Map(); // userId -> { ts, map: Map(accountName -> integrationId) }
 const ACCOUNT_TO_INTEG_TTL_MS = 60_000;
@@ -227,9 +200,9 @@ async function pickIntegrationForAccount(userId, accountName) {
 }
 
 // ----------------------
-// 1) START (no auth mw)
+// 1) START
 // ----------------------
-router.get('/start', oauthRateLimit, (req, res) => {
+router.get('/start', authenticate, oauthRateLimit, (req, res) => {
   const clientId = process.env.GOOGLE_CLIENT_ID || '';
   if (!clientId) {
     auditFailure(req, "google.oauth.start", {
@@ -240,15 +213,14 @@ router.get('/start', oauthRateLimit, (req, res) => {
     return res.status(500).json({ error: { code: 'config', message: 'GOOGLE_CLIENT_ID missing in .env' } });
   }
 
-  const u = userFromReq(req);
+  const u = req.user;
   if (!u?.user_id) {
-    console.error('[integrations.google/start] unauthorized: missing/invalid jwt. header=', !!req.headers.authorization, 'tParam=', !!req.query?.t);
     auditFailure(req, "google.oauth.start", {
       target_type: "integration",
       provider: "google",
       metadata: { reason: "unauthorized" },
     });
-    return res.status(401).json({ error: { code: 'unauthorized', message: 'pass JWT as Bearer or ?t=' } });
+    return res.status(401).json({ error: { code: 'unauthorized', message: 'Unauthorized' } });
   }
 
   const ru = computeRedirectUri(req);
@@ -459,7 +431,7 @@ router.get('/callback', oauthRateLimit, async (req, res) => {
 });
 
 // ---------------------------
-// 3) STATUS (Bearer auth)
+// 3) STATUS (session auth)
 // ---------------------------
 router.get("/status", authenticate, async (req, res) => {
   try {
@@ -615,7 +587,7 @@ router.post("/disconnect", authenticate, mutationRateLimit, async (req, res) => 
 });
 
 // ---------------------------
-// 4) ACCOUNTS (Bearer auth)
+// 4) ACCOUNTS (session auth)
 // ---------------------------
 const ACCOUNTS_CACHE = new Map() // user_id -> { ts, data, inflight, cooldownUntil }
 const ACCOUNTS_TTL_MS = 60_000
@@ -802,7 +774,7 @@ router.get('/accounts', authenticate, syncRateLimit, async (req, res) => {
 
 
 // ---------------------------
-// 5) LOCATIONS (Bearer auth)
+// 5) LOCATIONS (session auth)
 // ---------------------------
 router.get('/locations', authenticate, syncRateLimit, async (req, res) => {
   try {
@@ -844,7 +816,7 @@ router.get('/locations', authenticate, syncRateLimit, async (req, res) => {
 
 
 // ---------------------------
-// 6) LOCATIONS IMPORT (Bearer auth)
+// 6) LOCATIONS IMPORT (session auth)
 // ---------------------------
 router.post('/locations/import', authenticate, syncRateLimit, async (req, res) => {
   try {

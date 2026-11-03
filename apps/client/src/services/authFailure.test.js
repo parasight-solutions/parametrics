@@ -3,11 +3,11 @@ import { describe, expect, it } from "vitest";
 import { isApplicationAuthFailure } from "./authFailure";
 
 describe("isApplicationAuthFailure", () => {
-  it("recognizes an unauthorized response to a bearer-authenticated request", () => {
+  it("recognizes an unauthorized application response", () => {
     expect(
       isApplicationAuthFailure({
         response: { status: 401, data: { error: { code: "unauthorized" } } },
-        config: { headers: { Authorization: "Bearer token" } },
+        config: { url: "/clients" },
       }),
     ).toBe(true);
   });
@@ -28,7 +28,7 @@ describe("isApplicationAuthFailure", () => {
           status: 401,
           data: { error: { code: "reauth_required" } },
         },
-        config: { headers: { Authorization: "Bearer token" } },
+        config: { url: "/integrations/google/accounts" },
       }),
     ).toBe(false);
   });

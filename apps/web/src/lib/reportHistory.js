@@ -8,7 +8,6 @@
 // The download call uses fetch directly because the response body is raw
 // PDF/XLSX bytes (the api() client only parses JSON envelopes).
 import { api } from "../apiClient";
-import { getToken } from "../session";
 
 export const REPORT_RUN_STATUSES = Object.freeze([
   "pending",
@@ -32,7 +31,6 @@ function cleanText(value, max = 200) {
   if (!text) return "";
   return text.length > max ? text.slice(0, max) : text;
 }
-
 export function clampReportListLimit(value) {
   const n = Number(value);
   if (!Number.isFinite(n)) return REPORT_LIST_LIMIT_DEFAULT;
@@ -142,7 +140,6 @@ function normalizeOutput(rawOutput) {
     error: output.error || null,
   };
 }
-
 export function normalizeReportRunRow(rawRow) {
   const row = rawRow && typeof rawRow === "object" ? rawRow : {};
   const outputs = Array.isArray(row.outputs) ? row.outputs.map(normalizeOutput) : [];
@@ -211,7 +208,6 @@ export async function downloadReportOutput({
   runId,
   format,
   apiBase,
-  token,
   fetchImpl,
 } = {}) {
   const cleanRunId = cleanText(runId, 200);
@@ -227,13 +223,8 @@ export async function downloadReportOutput({
   }
 
   const base = (apiBase !== undefined ? String(apiBase || "") : resolveApiBase()).replace(/\/$/, "");
-  const authToken = token !== undefined ? token : safeGetToken();
-
   const url = `${base}/api/v1/reports/runs/${encodeURIComponent(cleanRunId)}/outputs/${encodeURIComponent(cleanFormat)}`;
-  const headers = {};
-  if (authToken) headers.Authorization = `Bearer ${authToken}`;
-
-  const res = await doFetch(url, { method: "GET", headers });
+  const res = await doFetch(url, { method: "GET", credentials: "include" });
   if (!res.ok) {
     let parsed = null;
     try {
@@ -261,12 +252,4 @@ export async function downloadReportOutput({
     contentType: contentType || (blob && blob.type) || "application/octet-stream",
     size: blob && Number.isFinite(blob.size) ? blob.size : 0,
   };
-}
-
-function safeGetToken() {
-  try {
-    return getToken();
-  } catch {
-    return "";
-  }
 }

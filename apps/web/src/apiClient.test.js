@@ -45,7 +45,6 @@ beforeEach(() => {
 describe("apiClient location-bound errors", () => {
   it("clears stale active_location_id on a location-bound 404 without logging out", async () => {
     const { api } = await loadApiClient();
-    localStorage.setItem("token", "fresh-app-token");
     localStorage.setItem("active_location_id", "stale-location");
 
     fetch.mockResolvedValueOnce({
@@ -66,15 +65,15 @@ describe("apiClient location-bound errors", () => {
       api("/integrations/google/performance-series?locationId=stale-location"),
     ).rejects.toMatchObject({ status: 404 });
 
-    expect(localStorage.getItem("token")).toBe("fresh-app-token");
     expect(localStorage.getItem("active_location_id")).toBeNull();
+    expect(fetch.mock.calls[0][1].credentials).toBe("include");
+    expect(fetch.mock.calls[0][1].headers.Authorization).toBeUndefined();
     expect(window.dispatchEvent).toHaveBeenCalledOnce();
     expect(window.location.href).toBe("/");
   });
 
   it("does not clear active location for provider reauth errors", async () => {
     const { api } = await loadApiClient();
-    localStorage.setItem("token", "fresh-app-token");
     localStorage.setItem("active_location_id", "valid-location");
 
     fetch.mockResolvedValueOnce({
@@ -95,7 +94,6 @@ describe("apiClient location-bound errors", () => {
       code: "reauth_required",
     });
 
-    expect(localStorage.getItem("token")).toBe("fresh-app-token");
     expect(localStorage.getItem("active_location_id")).toBe("valid-location");
     expect(sessionStorage.getItem("reauth_required")).toContain("google");
     expect(window.location.href).toBe("/integrations?reauth=google");

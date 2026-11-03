@@ -5,11 +5,12 @@ const isApplicationAuthFailure = (error) => {
   const code = String(
     error?.response?.data?.error?.code ?? error?.response?.data?.code ?? "",
   ).toLowerCase();
-  const authorization = error?.config?.headers?.Authorization;
+  const url = String(error?.config?.url ?? "");
 
   return (
     status === 401 &&
-    Boolean(authorization) &&
+    !url.endsWith("/auth/login") &&
+    !url.endsWith("/auth/session") &&
     (code === "unauthorized" || code === "invalid")
   );
 };

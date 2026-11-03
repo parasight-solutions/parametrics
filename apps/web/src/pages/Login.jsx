@@ -1,8 +1,7 @@
-import { useEffect, useState } from "react";
-import { useNavigate, useLocation } from "react-router-dom";
+import { useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { api } from "../apiClient";
 import GoogleLoginButton from "../components/GoogleLoginButton";
-import { setAuthSession } from "../session";
 
 // Fields start empty. They used to be pre-filled with a non-existent default
 // account (admin@example.com), and the masked password made it easy to submit
@@ -14,18 +13,6 @@ export default function Login({ onAuthed }) {
   const [password, setPassword] = useState(LOGIN_INITIAL_FORM.password);
   const [err, setErr] = useState("");
   const navigate = useNavigate();
-  const location = useLocation();
-
-  // Consume ?gjwt=... from OIDC callback
-  useEffect(() => {
-    const qp = new URLSearchParams(location.search);
-    const gjwt = qp.get("gjwt");
-    if (gjwt) {
-      setAuthSession(gjwt);
-      onAuthed({});
-      navigate("/", { replace: true });
-    }
-  }, [location.search, navigate, onAuthed]);
 
   async function submit(e) {
     e.preventDefault();
@@ -36,7 +23,6 @@ export default function Login({ onAuthed }) {
         body: { email, password },
         auth: false,
       });
-      setAuthSession(data.token, data.user);
       onAuthed(data.user);
       navigate("/", { replace: true });
     } catch (e) {

@@ -38,11 +38,11 @@ const Login = () => {
   const onSubmit = (values) =>
     callApi("submitting", () => authEndpoints.login(values), {
       onSuccess: ({ data }) => {
-        if (!data?.token || !data?.user) {
+        if (!data?.user) {
           throw new Error("Invalid login response");
         }
 
-        login(data.user, data.token);
+        login(data.user);
         navigate(getPostLoginPath(location.state?.from), { replace: true });
       },
       onError: (error) => {

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import AppShell from "../components/AppShell";
 import ActiveLocationPicker from "../components/ActiveLocationPicker";
 import { useCachedApi } from "../hooks/useCachedApi";
-import { api, getToken } from "../apiClient";
+import { api } from "../apiClient";
 import { getActiveLocationId } from "../session";
 import {
   buildDashboardReportPayload,
@@ -360,7 +360,6 @@ export default function Dashboard({ onLogout }) {
   const getPoints = (name) => byName.get(name)?.points ?? [];
 
   const reportDisabledReason = useMemo(() => {
-    if (!getToken()) return "Log in to generate backend report files.";
     if (!locationId) return "Pick a location before generating a report.";
     if (!data) return "Load dashboard data before generating a report.";
     if (!activeLocation?.organization_id || !activeLocation?.client_id) {

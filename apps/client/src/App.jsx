@@ -13,14 +13,18 @@ import Dashboard from "./pages/private/Dashboard";
 import { useAuth } from "./context/auth/useAuth";
 
 const GuestWrapper = () => {
-  const { isAuthenticated } = useAuth();
+  const { isAuthenticated, authLoading } = useAuth();
+
+  if (authLoading) return null;
 
   return isAuthenticated ? <Navigate to="/" replace /> : <Outlet />;
 };
 
 const PrivateWrapper = () => {
-  const { isAuthenticated } = useAuth();
+  const { isAuthenticated, authLoading } = useAuth();
   const location = useLocation();
+
+  if (authLoading) return null;
 
   return isAuthenticated ? (
     <Outlet />
