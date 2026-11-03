@@ -1,6 +1,7 @@
 import axios from "axios";
 
 import { getToken } from "../session";
+import { AUTH_EXPIRED_EVENT, isApplicationAuthFailure } from "./authFailure";
 
 const BASE_URL = import.meta.env.VITE_APP_BASE_URL;
 
@@ -25,6 +26,17 @@ api.interceptors.request.use(
     return config;
   },
   (error) => {
+    return Promise.reject(error);
+  },
+);
+
+api.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (isApplicationAuthFailure(error)) {
+      globalThis.dispatchEvent(new Event(AUTH_EXPIRED_EVENT));
+    }
+
     return Promise.reject(error);
   },
 );

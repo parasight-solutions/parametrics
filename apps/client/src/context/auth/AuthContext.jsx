@@ -1,68 +1,52 @@
-import { useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+
+import { restoreAuthState } from "./authState";
+import { clearSession, saveSession } from "../../session";
+import { AUTH_EXPIRED_EVENT } from "../../services/authFailure";
 
 import { AuthContext } from "./useAuth";
-import {
-  clearSession,
-  getStoredUser,
-  getToken,
-  isTokenExpired,
-  saveSession,
-} from "../../auth/session";
 
 export const AuthProvider = ({ children }) => {
-  // Restore session during initial state initialization
-  const [auth, setAuth] = useState(() => {
-    const storedToken = getToken();
-    const storedUser = getStoredUser();
+  const [auth, setAuth] = useState(restoreAuthState);
 
-    if (storedToken && storedUser && !isTokenExpired(storedToken)) {
-      return {
-        user: storedUser,
-        token: storedToken,
-      };
-    }
-
-    clearSession();
-
-    return {
-      user: null,
-      token: null,
-    };
-  });
-
-  const [authLoading] = useState(false);
-
-  // Login
-  const login = (userData, accessToken) => {
+  const login = useCallback((userData, accessToken) => {
     saveSession(userData, accessToken);
 
     setAuth({
       user: userData,
       token: accessToken,
     });
-  };
+  }, []);
 
-  // Logout
-  const logout = () => {
+  const logout = useCallback(() => {
     clearSession();
 
     setAuth({
       user: null,
       token: null,
     });
-  };
+  }, []);
 
-  return (
-    <AuthContext.Provider
-      value={{
-        user: auth.user,
-        token: auth.token,
-        login,
-        logout,
-        authLoading,
-      }}
-    >
-      {children}
-    </AuthContext.Provider>
+  useEffect(() => {
+    const handleAuthExpired = () => logout();
+
+    globalThis.addEventListener(AUTH_EXPIRED_EVENT, handleAuthExpired);
+
+    return () =>
+      globalThis.removeEventListener(AUTH_EXPIRED_EVENT, handleAuthExpired);
+  }, [logout]);
+
+  const value = useMemo(
+    () => ({
+      user: auth.user,
+      token: auth.token,
+      isAuthenticated: Boolean(auth.token && auth.user),
+      login,
+      logout,
+      authLoading: false,
+    }),
+    [auth, login, logout],
   );
+
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 };
