@@ -3,13 +3,13 @@ import { Loader2 } from "lucide-react";
 const variants = {
   orange: {
     text_color: "text-white",
-    bg_color: "bg-[#EC6D2E] hover:bg-[#D14905]",
+    bg_color: "bg-[#7851A9] hover:bg-[#66448f]",
     border: "border border-transparent",
   },
   orange_white: {
-    text_color: "text-[#EC6D2E]",
+    text_color: "text-[#7851A9]",
     bg_color: "bg-white hover:bg-[#FFF8EF]",
-    border: "border border-[#EC6D2E]",
+    border: "border border-[#7851A9]",
   },
   white: {
     text_color: "text-gray-800",

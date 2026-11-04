@@ -68,7 +68,7 @@ const NavItem = ({ menu, pathname, isExpanded, onToggle, onClose }) => {
   const menuClassName = (active) => `border-r-3 ${menuStyle}
     ${
       active
-        ? "bg-[#F0F0F0] text-[#EC6D2E] font-medium border-[#EC6D2E]"
+        ? "bg-[#F0F0F0] text-[#7851A9] font-medium border-[#7851A9]"
         : hasChildren && isExpanded
           ? "text-[#585F67] bg-gray-100 text-gray-800 border-transparent"
           : "text-[#585F67] hover:bg-gray-100 hover:text-gray-800 border-transparent"
@@ -109,7 +109,7 @@ const NavItem = ({ menu, pathname, isExpanded, onToggle, onClose }) => {
       )}
 
       {hasChildren && isExpanded && (
-        <div className="ml-2 pl-1 flex flex-col gap-1 border-l-2 border-[#EC6D2E]/80">
+        <div className="ml-2 pl-1 flex flex-col gap-1 border-l-2 border-[#7851A9]/80">
           {menu.children.map((child) => {
             const ChildIcon = child.icon;
 
@@ -122,7 +122,7 @@ const NavItem = ({ menu, pathname, isExpanded, onToggle, onClose }) => {
                 className={({ isActive }) =>
                   `px-3 py-2 flex items-center gap-2 text-[13px] rounded-md transition-colors ${
                     isActive
-                      ? "bg-orange-50 text-[#EC6D2E] font-medium"
+                      ? "bg-purple-50 text-[#7851A9] font-medium"
                       : "text-[#717781] hover:bg-gray-100 hover:text-gray-800"
                   }`
                 }
