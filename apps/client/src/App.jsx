@@ -7,8 +7,16 @@ import {
   useLocation,
 } from "react-router-dom";
 
+import PrivateLayout from "./layout/PrivateLayout";
+
 import Login from "./pages/authentication/Login";
+
 import Dashboard from "./pages/private/Dashboard";
+import Integrations from "./pages/private/Integrations";
+import Posts from "./pages/private/Posts";
+import Reviews from "./pages/private/Reviews";
+import Reports from "./pages/private/Reports";
+import OrganizationMembers from "./pages/private/OrganizationMembers";
 
 import { useAuth } from "./context/auth/useAuth";
 
@@ -42,7 +50,18 @@ const App = () => {
         </Route>
 
         <Route element={<PrivateWrapper />}>
-          <Route index element={<Dashboard />} />
+          <Route path="/" element={<PrivateLayout />}>
+            <Route index element={<Dashboard />} />
+            <Route path="dashboard" element={<Dashboard />} />
+            <Route path="integrations" element={<Integrations />} />
+            <Route path="posts" element={<Posts />} />
+            <Route path="reviews" element={<Reviews />} />
+            <Route path="reports/history" element={<Reports />} />
+            <Route
+              path="organization-members"
+              element={<OrganizationMembers />}
+            />
+          </Route>
         </Route>
 
         <Route path="*" element={<Navigate to="/" replace />} />
