@@ -10,6 +10,8 @@ import {
   UserStar,
   FileText,
   UsersRound,
+  Repeat,
+  Cog,
 } from "lucide-react";
 
 import { useAuth } from "../context/auth/useAuth";
@@ -37,13 +39,24 @@ const NAV_ITEMS = [
   },
   {
     name: "Reports",
-    path: "reports/history",
+    path: "reports",
     icon: FileText,
   },
   {
     name: "Members",
     path: "organization-members",
     icon: UsersRound,
+  },
+  {
+    name: "Tools",
+    icon: Cog,
+    children: [
+      {
+        name: "Recurrence Lab",
+        path: "recurrence",
+        icon: Repeat,
+      },
+    ],
   },
 ];
 

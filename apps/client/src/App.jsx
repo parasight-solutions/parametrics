@@ -19,6 +19,7 @@ import Reports from "./pages/private/Reports";
 import OrganizationMembers from "./pages/private/OrganizationMembers";
 
 import { useAuth } from "./context/auth/useAuth";
+import RecurranceLab from "./pages/private/RecurranceLab";
 
 const GuestWrapper = () => {
   const { isAuthenticated, authLoading } = useAuth();
@@ -56,11 +57,12 @@ const App = () => {
             <Route path="integrations" element={<Integrations />} />
             <Route path="posts" element={<Posts />} />
             <Route path="reviews" element={<Reviews />} />
-            <Route path="reports/history" element={<Reports />} />
+            <Route path="reports" element={<Reports />} />
             <Route
               path="organization-members"
               element={<OrganizationMembers />}
             />
+            <Route path="recurrence" element={<RecurranceLab />} />
           </Route>
         </Route>
 
