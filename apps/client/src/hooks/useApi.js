@@ -1,6 +1,6 @@
 import { useCallback, useState } from "react";
 
-export default function useApi(defaults) {
+const useApi = (defaults) => {
   const [loading, setLoading] = useState(defaults || {});
 
   const setLoadingKey = useCallback((key, boolean) => {
@@ -30,4 +30,6 @@ export default function useApi(defaults) {
   );
 
   return { loading, callApi };
-}
+};
+
+export default useApi;
