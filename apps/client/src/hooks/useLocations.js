@@ -10,8 +10,8 @@ const useLocations = () => {
 
   const fetchLocations = useCallback(() => {
     callApi("locationsLoading", commonEndpoints.getLocations, {
-      onSuccess: (res) => {
-        const formatted = res?.locations?.map((location) => ({
+      onSuccess: ({ data }) => {
+        const formatted = data?.locations?.map((location) => ({
           value: location?.id,
           label: location?.title,
           ...location,

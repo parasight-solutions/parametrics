@@ -1,7 +1,7 @@
 import { LockKeyhole, Mail } from "lucide-react";
 
-import { useForm } from "react-hook-form";
 import { useLocation, useNavigate } from "react-router-dom";
+import { useForm } from "react-hook-form";
 
 import FormField from "../../components/ui/FormField";
 import FieldError from "../../components/ui/FieldError";
@@ -16,6 +16,7 @@ import useApi from "../../hooks/useApi";
 import { useAuth } from "../../context/auth/useAuth";
 
 import { getLoginErrorMessage, getPostLoginPath } from "./loginHelpers";
+import GoogleAuthButton from "../../components/GoogleAuthButton";
 
 const Login = () => {
   const { login } = useAuth();
@@ -55,18 +56,15 @@ const Login = () => {
 
   return (
     <main className="min-h-screen bg-[#F7F9FB] flex items-center justify-center p-6">
-      <form
-        onSubmit={handleSubmit(onSubmit)}
-        className="w-full max-w-md rounded-xl border border-[#E5E7EB] bg-white p-7 shadow-sm"
-      >
-        <div className="mb-6">
+      <div className="w-full max-w-md p-7 flex flex-col gap-6 rounded-xl border border-[#E5E7EB] bg-white shadow-sm">
+        <div>
           <h1 className="text-2xl font-semibold text-gray-900">Sign in</h1>
           <p className="mt-1 text-sm text-gray-500">
             Enter your credentials to continue.
           </p>
         </div>
 
-        <div className="space-y-4">
+        <form onSubmit={handleSubmit(onSubmit)} className="flex flex-col gap-4">
           <FormField
             id="email"
             label="Email"
@@ -116,8 +114,16 @@ const Login = () => {
             loading={loading.submitting}
             className="w-full"
           />
+        </form>
+
+        <div className="flex items-center gap-2">
+          <div className="flex-1 border-b border-gray-400"></div>
+          <span className="text-xs text-gray-500">OR</span>
+          <div className="flex-1 border-b border-gray-400"></div>
         </div>
-      </form>
+
+        <GoogleAuthButton />
+      </div>
     </main>
   );
 };
