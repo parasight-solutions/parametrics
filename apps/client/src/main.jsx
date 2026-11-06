@@ -1,5 +1,6 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
+import { ConfigProvider } from "antd";
 
 import "./index.css";
 import App from "./App.jsx";
@@ -9,10 +10,18 @@ import { NotificationsProvider } from "./context/notification/NotificationsProvi
 
 createRoot(document.getElementById("root")).render(
   <StrictMode>
-    <NotificationsProvider>
-      <AuthProvider>
-        <App />
-      </AuthProvider>
-    </NotificationsProvider>
+    <ConfigProvider
+      theme={{
+        token: {
+          fontFamily: "Poppins, sans-serif",
+        },
+      }}
+    >
+      <NotificationsProvider>
+        <AuthProvider>
+          <App />
+        </AuthProvider>
+      </NotificationsProvider>
+    </ConfigProvider>
   </StrictMode>,
 );

@@ -1,14 +1,14 @@
 import { Loader2 } from "lucide-react";
 
 const variants = {
-  orange: {
+  purple: {
     text_color: "text-white",
     bg_color: "bg-[#7851A9] hover:bg-[#66448f]",
     border: "border border-transparent",
   },
-  orange_white: {
+  purple_white: {
     text_color: "text-[#7851A9]",
-    bg_color: "bg-white hover:bg-[#FFF8EF]",
+    bg_color: "bg-white hover:bg-purple-50",
     border: "border border-[#7851A9]",
   },
   white: {
@@ -44,7 +44,7 @@ export default function CustomButton({
   iconClassName = "",
   className = "",
   name,
-  variant = "orange",
+  variant = "purple",
   sizeVariant = "mid",
   loading,
   disabled,

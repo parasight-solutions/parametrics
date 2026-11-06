@@ -97,7 +97,8 @@ const Integrations = () => {
                       />
                     ) : (
                       <CustomButton
-                        name="Activate"
+                        variant="purple_white"
+                        name="Set Active"
                         onClick={() => activateConnection(id)}
                       />
                     )}

@@ -96,6 +96,13 @@ function ymd(d) {
   return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`;
 }
 
+export function readPerformanceDateParams(query = {}) {
+  return {
+    startDate: query.startDate,
+    endDate: query.endDate,
+  };
+}
+
 async function getOwnedLocationAccess(userId, locationId, allowedRoles) {
   const result = await requireOwnedOrganizationLocationAccess({
     userId,
@@ -242,21 +249,23 @@ router.get('/performance-series', authenticate, async (req, res) => {
       return dt;
     }
 
-    const qsStart = req.query.start;
-    const qsEnd = req.query.end;
+    const {
+      startDate: qsStartDate,
+      endDate: qsEndDate,
+    } = readPerformanceDateParams(req.query);
 
     let start = null;
     let end = null;
 
-    if (qsStart && qsEnd) {
-      start = parseYmdStrict(qsStart);
-      end = parseYmdStrict(qsEnd);
+    if (qsStartDate && qsEndDate) {
+      start = parseYmdStrict(qsStartDate);
+      end = parseYmdStrict(qsEndDate);
 
       if (!start || !end) {
-        return res.status(400).json({ error: { code: 'bad_request', message: 'start/end must be YYYY-MM-DD' } });
+        return res.status(400).json({ error: { code: 'bad_request', message: 'startDate/endDate must be YYYY-MM-DD' } });
       }
       if (end.getTime() < start.getTime()) {
-        return res.status(400).json({ error: { code: 'bad_request', message: 'end must be >= start' } });
+        return res.status(400).json({ error: { code: 'bad_request', message: 'endDate must be >= startDate' } });
       }
 
       const days = Math.floor((end.getTime() - start.getTime()) / 86400000) + 1;

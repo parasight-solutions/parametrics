@@ -233,28 +233,40 @@ export default function Dashboard({ onLogout }) {
   const [reportError, setReportError] = useState("");
   const exportRef = useRef(null);
 
-  const handleLocationChange = useCallback((nextLocationId, location = null) => {
-    setLocationId(nextLocationId || "");
-    setActiveLocation(
-      location && String(location.id) === String(nextLocationId) ? location : null,
-    );
-    setReportStatus("");
-    setReportError("");
-  }, []);
+  const handleLocationChange = useCallback(
+    (nextLocationId, location = null) => {
+      setLocationId(nextLocationId || "");
+      setActiveLocation(
+        location && String(location.id) === String(nextLocationId)
+          ? location
+          : null,
+      );
+      setReportStatus("");
+      setReportError("");
+    },
+    [],
+  );
 
   useEffect(() => {
     function handleActiveLocationCleared(event) {
       const clearedId = event?.detail?.locationId || "";
       setActiveLocation(null);
       setLocationId((current) => {
-        if (!clearedId || !current || String(current) === String(clearedId)) return "";
+        if (!clearedId || !current || String(current) === String(clearedId))
+          return "";
         return current;
       });
     }
 
-    window.addEventListener("pm:active-location-cleared", handleActiveLocationCleared);
+    window.addEventListener(
+      "pm:active-location-cleared",
+      handleActiveLocationCleared,
+    );
     return () => {
-      window.removeEventListener("pm:active-location-cleared", handleActiveLocationCleared);
+      window.removeEventListener(
+        "pm:active-location-cleared",
+        handleActiveLocationCleared,
+      );
     };
   }, []);
 
@@ -335,10 +347,10 @@ export default function Dashboard({ onLogout }) {
   const path = useMemo(() => {
     if (!locationId) return null;
     if (rangeError) return null;
-    // start/end are YYYY-MM-DD
-    return `/integrations/google/performance-series?locationId=${encodeURIComponent(locationId)}&start=${encodeURIComponent(
+    // startDate/endDate are YYYY-MM-DD
+    return `/integrations/google/performance-series?locationId=${encodeURIComponent(locationId)}&startDate=${encodeURIComponent(
       startStr,
-    )}&end=${encodeURIComponent(endStr)}`;
+    )}&endDate=${encodeURIComponent(endStr)}`;
   }, [locationId, startStr, endStr, rangeError]);
 
   const { data, loading, refreshing, error, lastUpdatedAt, refresh } =
@@ -395,14 +407,9 @@ export default function Dashboard({ onLogout }) {
     const rows = [];
     rows.push([`ParaMetrics Dashboard Export`]);
     rows.push([`Location ID`, locationId]);
-    rows.push([
-      `Range Start`,
-      data?.range?.start || startStr,
-      `Range End`,
-      data?.range?.end || endStr,
-      `Days`,
-      data?.range?.days || daysLabel,
-    ]);
+    rows.push([`Range Start`, data?.range?.start || startStr]);
+    rows.push([`Range End`, data?.range?.end || endStr]);
+    rows.push([`Days`, data?.range?.days || daysLabel]);
     rows.push([]);
     rows.push([`Totals`]);
     rows.push([`Metric`, `Total`]);
@@ -570,7 +577,10 @@ export default function Dashboard({ onLogout }) {
       <div className="bg-white border rounded-xl p-5 space-y-4">
         <div>
           <div className="text-sm text-gray-600 mb-2">Active Location</div>
-          <ActiveLocationPicker value={locationId} onChange={handleLocationChange} />
+          <ActiveLocationPicker
+            value={locationId}
+            onChange={handleLocationChange}
+          />
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-12 gap-3 items-end">
@@ -649,7 +659,8 @@ export default function Dashboard({ onLogout }) {
             title={
               reportGenerating
                 ? "Generating backend PDF/XLSX report files"
-                : reportDisabledReason || "Generate backend PDF/XLSX report files"
+                : reportDisabledReason ||
+                  "Generate backend PDF/XLSX report files"
             }
           >
             {reportGenerating ? "Generating..." : "Report PDF/XLSX"}
@@ -676,14 +687,17 @@ export default function Dashboard({ onLogout }) {
 
         <div className="text-sm" aria-live="polite">
           {reportGenerating ? (
-            <span className="text-gray-600">Generating backend report files…</span>
+            <span className="text-gray-600">
+              Generating backend report files…
+            </span>
           ) : reportError ? (
             <span className="text-red-700">{reportError}</span>
           ) : reportStatus ? (
             <span className="text-green-700">{reportStatus}</span>
           ) : (
             <span className="sr-only">
-              {reportDisabledReason || "Backend report generation is available."}
+              {reportDisabledReason ||
+                "Backend report generation is available."}
             </span>
           )}
         </div>
@@ -802,16 +816,32 @@ function DashboardExportMenu({ disabled, onCsv, onSvg, onPng, onPdf }) {
           role="menu"
           className="absolute left-0 top-full z-20 mt-2 w-40 rounded-lg border bg-white py-1 shadow-lg"
         >
-          <button type="button" onClick={() => run(onCsv)} className="block w-full px-3 py-2 text-left text-sm hover:bg-gray-100">
+          <button
+            type="button"
+            onClick={() => run(onCsv)}
+            className="block w-full px-3 py-2 text-left text-sm hover:bg-gray-100"
+          >
             CSV
           </button>
-          <button type="button" onClick={() => run(onSvg)} className="block w-full px-3 py-2 text-left text-sm hover:bg-gray-100">
+          <button
+            type="button"
+            onClick={() => run(onSvg)}
+            className="block w-full px-3 py-2 text-left text-sm hover:bg-gray-100"
+          >
             SVG
           </button>
-          <button type="button" onClick={() => run(onPng)} className="block w-full px-3 py-2 text-left text-sm hover:bg-gray-100">
+          <button
+            type="button"
+            onClick={() => run(onPng)}
+            className="block w-full px-3 py-2 text-left text-sm hover:bg-gray-100"
+          >
             PNG
           </button>
-          <button type="button" onClick={() => run(onPdf)} className="block w-full px-3 py-2 text-left text-sm hover:bg-gray-100">
+          <button
+            type="button"
+            onClick={() => run(onPdf)}
+            className="block w-full px-3 py-2 text-left text-sm hover:bg-gray-100"
+          >
             PDF
           </button>
         </div>
