@@ -272,6 +272,7 @@ const Dashboard = () => {
         >
           <CustomDatepicker
             id="endDate"
+            min={dayjs(params?.startDate).format("YYYY-MM-DD")}
             max={today.format("YYYY-MM-DD")}
             value={params?.endDate}
             onChange={(e) => changeParams("endDate", e.target.value)}
@@ -280,13 +281,13 @@ const Dashboard = () => {
 
         <div className="col-span-12 border-b border-gray-300"></div>
 
-        <div className="col-span-6 self-center">
+        <div className="col-span-12 md:col-span-6 self-center">
           <span className="font-medium">Last updated: </span>
           <span>{formatDateInAlphaNumericWithTime(lastUpdated)}</span>
         </div>
 
         {/* Action Buttons */}
-        <div className="col-span-6 flex items-center justify-end gap-3">
+        <div className="col-span-12 md:col-span-6 flex items-center justify-end gap-3">
           <CustomButton
             icon={RefreshCcw}
             name="Refresh"

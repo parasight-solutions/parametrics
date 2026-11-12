@@ -36,7 +36,7 @@ const formatDateInAlphaNumeric = (date) => {
 };
 
 const formatDateInAlphaNumericWithTime = (date) => {
-  return date ? dayjs(date).format("DD MMM, hh:mm A") : "";
+  return date ? dayjs(date).format("DD MMM, YYYY, hh:mm A") : "";
 };
 
 export {

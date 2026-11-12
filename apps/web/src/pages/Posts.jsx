@@ -5,6 +5,7 @@ import AppShell from "../components/AppShell";
 import ActiveLocationPicker from "../components/ActiveLocationPicker";
 import { api } from "../apiClient";
 import { getActiveLocationId } from "../session";
+import { buildPostListQuery } from "../lib/postListQuery";
 
 function toLocalInputValue(iso) {
   if (!iso) return "";
@@ -71,26 +72,6 @@ function compactErr(err) {
   return s.slice(0, 140) + "…";
 }
 
-function matchesSearch(p, q) {
-  if (!q) return true;
-  const needle = q.toLowerCase();
-
-  const fields = [
-    p.summary,
-    p.location?.title,
-    p.location_id,
-    p.provider_post_name,
-    p.status,
-    p.provider_error,
-  ]
-    .filter(Boolean)
-    .map(String)
-    .join(" ")
-    .toLowerCase();
-
-  return fields.includes(needle);
-}
-
 export default function Posts({ onLogout }) {
   const nav = useNavigate();
   const [locationId, setLocationId] = useState(getActiveLocationId());
@@ -99,9 +80,17 @@ export default function Posts({ onLogout }) {
   const [posts, setPosts] = useState([]);
   const [loading, setLoading] = useState(false);
 
-  // NEW: search + status filter
   const [search, setSearch] = useState("");
+  const [debouncedKeyword, setDebouncedKeyword] = useState("");
   const [statusFilter, setStatusFilter] = useState("all"); // all|scheduled|queued|publishing|published|failed
+  const [page, setPage] = useState(1);
+  const perPage = 10;
+  const [pagination, setPagination] = useState({
+    page: 1,
+    perPage,
+    total: 0,
+    totalPages: 0,
+  });
 
   const [editing, setEditing] = useState(null); // post object
   const [editSummary, setEditSummary] = useState("");
@@ -111,28 +100,55 @@ export default function Posts({ onLogout }) {
 
   const [lastRefreshedAt, setLastRefreshedAt] = useState(null);
 
-  const inFlight = useRef(false);
+  const latestRequestId = useRef(0);
 
   const query = useMemo(() => {
-    if (showAll) return "";
-    if (!locationId) return "";
-    return `?locationId=${encodeURIComponent(locationId)}`;
-  }, [showAll, locationId]);
+    return buildPostListQuery({
+      locationId,
+      showAll,
+      keyword: debouncedKeyword,
+      status: statusFilter,
+      page,
+      perPage,
+    });
+  }, [debouncedKeyword, locationId, page, showAll, statusFilter]);
 
   async function load({ silent = false } = {}) {
-    if (inFlight.current) return;
-    inFlight.current = true;
+    const requestId = latestRequestId.current + 1;
+    latestRequestId.current = requestId;
 
     if (!silent) setLoading(true);
     try {
       const out = await api(`/posts${query}`);
+      if (requestId !== latestRequestId.current) return;
+
+      const nextPagination = out.pagination || {
+        page,
+        perPage,
+        total: (out.posts || []).length,
+        totalPages: (out.posts || []).length ? 1 : 0,
+      };
+
+      if (nextPagination.totalPages > 0 && page > nextPagination.totalPages) {
+        setPage(nextPagination.totalPages);
+        return;
+      }
+
       setPosts(out.posts || []);
+      setPagination(nextPagination);
       setLastRefreshedAt(new Date());
     } finally {
-      if (!silent) setLoading(false);
-      inFlight.current = false;
+      if (requestId === latestRequestId.current) setLoading(false);
     }
   }
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedKeyword(search.trim());
+      setPage(1);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [search]);
 
   useEffect(() => {
     load();
@@ -158,32 +174,6 @@ export default function Posts({ onLogout }) {
     return () => clearInterval(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [needsAutoRefresh, editing, query]);
-
-  const counts = useMemo(() => {
-    const c = { total: posts.length, scheduled: 0, queued: 0, publishing: 0, published: 0, failed: 0 };
-    for (const p of posts) {
-      const s = String(p.status || "").toLowerCase();
-      if (s === "scheduled") c.scheduled++;
-      else if (s === "queued" || s === "retrying") c.queued++;
-      else if (s === "publishing") c.publishing++;
-      else if (s === "published") c.published++;
-      else if (s === "failed") c.failed++;
-    }
-    return c;
-  }, [posts]);
-
-  const filteredPosts = useMemo(() => {
-    let list = posts;
-
-    if (statusFilter !== "all") {
-      list = list.filter((p) => String(p.status || "").toLowerCase() === statusFilter);
-    }
-
-    const q = search.trim();
-    if (q) list = list.filter((p) => matchesSearch(p, q));
-
-    return list;
-  }, [posts, statusFilter, search]);
 
   function openEdit(p) {
     setEditing(p);
@@ -290,13 +280,25 @@ export default function Posts({ onLogout }) {
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-start">
           <div>
             <div className="text-sm text-gray-600 mb-2">Active Location (for filtering)</div>
-            <ActiveLocationPicker value={locationId} onChange={setLocationId} />
+            <ActiveLocationPicker
+              value={locationId}
+              onChange={(nextLocationId) => {
+                setLocationId(nextLocationId);
+                setPage(1);
+              }}
+            />
             <label className="mt-2 flex items-center gap-2 text-sm text-gray-700">
-              <input type="checkbox" checked={showAll} onChange={(e) => setShowAll(e.target.checked)} />
+              <input
+                type="checkbox"
+                checked={showAll}
+                onChange={(e) => {
+                  setShowAll(e.target.checked);
+                  setPage(1);
+                }}
+              />
               Show all locations
             </label>
 
-            {/* NEW: Search */}
             <div className="mt-3">
               <input
                 value={search}
@@ -313,15 +315,10 @@ export default function Posts({ onLogout }) {
                 "Loading…"
               ) : (
                 <>
-                  <span className="font-medium text-gray-800">{filteredPosts.length}</span> shown ·{" "}
-                  <span className="font-medium text-gray-800">{counts.total}</span> total
+                  <span className="font-medium text-gray-800">{posts.length}</span> shown ·{" "}
+                  <span className="font-medium text-gray-800">{pagination.total}</span> total
                 </>
               )}
-            </div>
-
-            <div className="text-xs text-gray-500">
-              Scheduled: {counts.scheduled} · Queued: {counts.queued} · Publishing: {counts.publishing} · Published:{" "}
-              {counts.published} · Failed: {counts.failed}
             </div>
 
             <div className="text-xs text-gray-500">
@@ -329,7 +326,6 @@ export default function Posts({ onLogout }) {
               {needsAutoRefresh && !editing ? <span className="ml-2 text-gray-700">· Auto-refresh ON</span> : null}
             </div>
 
-            {/* NEW: Status tabs */}
             <div className="flex md:justify-end">
               <div className="inline-flex rounded-lg border overflow-hidden">
                 {[
@@ -345,7 +341,10 @@ export default function Posts({ onLogout }) {
                     <button
                       key={opt.key}
                       type="button"
-                      onClick={() => setStatusFilter(opt.key)}
+                      onClick={() => {
+                        setStatusFilter(opt.key);
+                        setPage(1);
+                      }}
                       aria-pressed={active}
                       className={
                         "px-3 py-1.5 text-xs " +
@@ -376,7 +375,7 @@ export default function Posts({ onLogout }) {
             </thead>
 
             <tbody>
-              {filteredPosts.map((p) => (
+              {posts.map((p) => (
                 <tr key={p.id} className="border-b align-top">
                   <td className="py-3 px-3 font-medium">{p.summary}</td>
 
@@ -433,7 +432,7 @@ export default function Posts({ onLogout }) {
                 </tr>
               ))}
 
-              {!filteredPosts.length && !loading ? (
+              {!posts.length && !loading ? (
                 <tr>
                   <td colSpan={7} className="py-10 text-center text-gray-500">
                     No posts match this filter/search.
@@ -443,6 +442,30 @@ export default function Posts({ onLogout }) {
             </tbody>
           </table>
         </div>
+
+        {pagination.totalPages > 1 ? (
+          <div className="flex items-center justify-between gap-3">
+            <button
+              type="button"
+              onClick={() => setPage((currentPage) => Math.max(1, currentPage - 1))}
+              disabled={loading || pagination.page <= 1}
+              className="px-3 py-2 rounded-lg border bg-white text-sm hover:bg-gray-100 disabled:opacity-50"
+            >
+              Previous
+            </button>
+            <span className="text-sm text-gray-600">
+              Page {pagination.page} of {pagination.totalPages}
+            </span>
+            <button
+              type="button"
+              onClick={() => setPage((currentPage) => Math.min(pagination.totalPages, currentPage + 1))}
+              disabled={loading || pagination.page >= pagination.totalPages}
+              className="px-3 py-2 rounded-lg border bg-white text-sm hover:bg-gray-100 disabled:opacity-50"
+            >
+              Next
+            </button>
+          </div>
+        ) : null}
       </div>
 
       {/* Edit Modal */}

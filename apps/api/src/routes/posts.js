@@ -18,6 +18,11 @@ import {
 } from "../services/ownership.js";
 import { requireOwnedOrganizationLocationAccess } from "../services/organizationAccess.js";
 import { auditQueued, auditSuccess } from "../services/auditLog.js";
+import {
+  buildPostListFilter,
+  createKeywordRegex,
+  normalizePostListQuery,
+} from "../services/postList.js";
 
 const router = Router();
 const publishQueue = makeQueue("post-publish");
@@ -227,6 +232,7 @@ export async function publishPostNow(postId) {
 router.get("/", authenticate, async (req, res) => {
   try {
     const userId = req.user.user_id;
+    const { keyword, status, page, perPage } = normalizePostListQuery(req.query);
     const locationId = (req.query.locationId || req.query.location_id || "")
       .toString()
       .trim();
@@ -249,7 +255,41 @@ router.get("/", authenticate, async (req, res) => {
       };
     }
 
-    const rows = await postsCol.find(q).sort({ created_at: -1 }).toArray();
+    let matchingLocationIds = [];
+    if (keyword) {
+      const locations = await col("locations");
+      const locationFilter = {
+        user_id: userId,
+        $or: [
+          { title: createKeywordRegex(keyword) },
+          { name: createKeywordRegex(keyword) },
+          { provider_location_name: createKeywordRegex(keyword) },
+        ],
+      };
+      if (locationId) locationFilter.id = q.location_id;
+      const matchingLocations = await locations
+        .find(locationFilter, { projection: { _id: 0, id: 1 } })
+        .toArray();
+      matchingLocationIds = matchingLocations.map((location) => location.id);
+    }
+
+    q = buildPostListFilter({
+      baseFilter: q,
+      keyword,
+      status,
+      matchingLocationIds,
+    });
+
+    const skip = (page - 1) * perPage;
+    const [total, rows] = await Promise.all([
+      postsCol.countDocuments(q),
+      postsCol
+        .find(q)
+        .sort({ created_at: -1 })
+        .skip(skip)
+        .limit(perPage)
+        .toArray(),
+    ]);
     const locMap = await mapLocationsById(userId, rows.map((r) => r.location_id));
 
     const posts = rows.map((p) => {
@@ -276,7 +316,15 @@ router.get("/", authenticate, async (req, res) => {
       };
     });
 
-    return res.json({ posts });
+    return res.json({
+      posts,
+      pagination: {
+        page,
+        perPage,
+        total,
+        totalPages: total ? Math.ceil(total / perPage) : 0,
+      },
+    });
   } catch (e) {
     return toApiError(res, e);
   }
