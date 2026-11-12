@@ -34,6 +34,7 @@ import { integrationsEndpoints } from "../../services/integrations.service";
 
 import useApi from "../../hooks/useApi";
 import useLocations from "../../hooks/useLocations";
+import useListParams from "../../hooks/useListParams";
 
 import { getActiveLocationId, setActiveLocationId } from "../../session";
 
@@ -110,65 +111,34 @@ const Dashboard = () => {
   const getRangeForStartDate = (days) =>
     formatDateToISO(today.subtract(days - 1, "day"));
 
-  const [params, setParams] = useState({
-    locationId: getActiveLocationId(),
-    startDate: getRangeForStartDate(DEFAULT_RANGE),
-    endDate: formatDateToISO(today),
-    range: DEFAULT_RANGE,
-  });
+  const [range, setRange] = useState(DEFAULT_RANGE);
+  const { params, getParams, changeParams } = useListParams(
+    {
+      locationId: getActiveLocationId(),
+      startDate: getRangeForStartDate(DEFAULT_RANGE),
+      endDate: formatDateToISO(today),
+    },
+    { syncWithUrl: true, urlKeys: ["locationId", "startDate", "endDate"] },
+  );
 
   const graphName = `Parametrics Dashboard metrics form ${params.startDate} to ${params.endDate} on ${formatDateInAlphaNumericWithTime(lastUpdated)}`;
 
-  const changeParams = (field, value) => {
-    if (detailsLoading) return;
-
-    // Quick range selected
-    if (field === "range") {
-      const days = Number(value);
-
-      if (!RANGE_OPTIONS.some((option) => option.value === days)) {
-        return;
-      }
-
-      setParams((prev) => ({
-        ...prev,
-        range: days,
-        startDate: getRangeForStartDate(days),
-        endDate: formatDateToISO(today),
-      }));
+  const handleRangeSelection = (range) => {
+    if (!RANGE_OPTIONS.some((option) => option.value === range)) {
+      return;
     }
 
-    // Manual date change clears the selected quick range
-    else if (field === "startDate" || field === "endDate") {
-      setParams((prev) => ({
-        ...prev,
-        [field]: value,
-        range: "",
-      }));
-    }
-
-    // Other fields, such as locationId
-    else {
-      if (field === "locationId") {
-        setActiveLocationId(value);
-      }
-
-      setParams((prev) => ({
-        ...prev,
-        [field]: value,
-      }));
-    }
+    setRange(range);
+    changeParams("startDate", getRangeForStartDate(range));
+    changeParams("endDate", formatDateToISO(today));
   };
 
   const fetchPerformanceSeries = useCallback(() => {
     if (!params?.locationId) return;
 
-    const apiParams = { ...params };
-    delete apiParams.range;
-
     callApi(
       "detailsLoading",
-      () => integrationsEndpoints.getPerformanceSeries(apiParams),
+      () => integrationsEndpoints.getPerformanceSeries(getParams()),
       {
         onSuccess: ({ data }) => {
           setDetails(data);
@@ -176,7 +146,7 @@ const Dashboard = () => {
         },
       },
     );
-  }, [callApi, params, setDetails, setLastUpdated]);
+  }, [callApi, params, getParams, setDetails, setLastUpdated]);
 
   const handleExport = async (type) => {
     if (detailsLoading || !details?.metrics?.length) return;
@@ -209,7 +179,12 @@ const Dashboard = () => {
 
   useEffect(() => {
     fetchPerformanceSeries();
-  }, [fetchPerformanceSeries]);
+  }, [
+    fetchPerformanceSeries,
+    params?.locationId,
+    params?.startDate,
+    params?.endDate,
+  ]);
 
   return (
     <div className="flex flex-col gap-6 text-sm">
@@ -232,7 +207,10 @@ const Dashboard = () => {
             placeholder="Select Location"
             value={params?.locationId}
             options={locations}
-            onChange={(value) => changeParams("locationId", value)}
+            onChange={(value) => {
+              changeParams("locationId", value);
+              setActiveLocationId(value);
+            }}
             loading={locationsLoading}
           />
         </FormField>
@@ -244,9 +222,9 @@ const Dashboard = () => {
         >
           <CustomRadioButtons
             id="range"
-            value={params?.range}
+            value={range}
             options={RANGE_OPTIONS}
-            onChange={(value) => changeParams("range", value)}
+            onChange={(value) => handleRangeSelection(value)}
           />
         </FormField>
 
@@ -258,9 +236,12 @@ const Dashboard = () => {
         >
           <CustomDatepicker
             id="startDate"
-            max={today.format("YYYY-MM-DD")}
+            max={dayjs(params?.endDate).format("YYYY-MM-DD")}
             value={params?.startDate}
-            onChange={(e) => changeParams("startDate", e.target.value)}
+            onChange={(e) => {
+              changeParams("startDate", e.target.value);
+              setRange("");
+            }}
           />
         </FormField>
 
@@ -275,7 +256,10 @@ const Dashboard = () => {
             min={dayjs(params?.startDate).format("YYYY-MM-DD")}
             max={today.format("YYYY-MM-DD")}
             value={params?.endDate}
-            onChange={(e) => changeParams("endDate", e.target.value)}
+            onChange={(e) => {
+              changeParams("endDate", e.target.value);
+              setRange("");
+            }}
           />
         </FormField>
 
