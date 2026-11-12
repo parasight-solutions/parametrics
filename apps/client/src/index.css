@@ -4,6 +4,8 @@ body {
   font-family: "Poppins", sans-serif;
 }
 
-button {
-  cursor: pointer;
+@layer base {
+  button:not(:disabled) {
+    cursor: pointer;
+  }
 }

@@ -1,5 +1,5 @@
 const BADGE_COLORS = {
-  orange: { text_color: "text-[#EC6D2E]", bg_color: "bg-[#FFECE3]" },
+  purple: { text_color: "text-[#7851A9]", bg_color: "bg-[#66448f]" },
   green: { text_color: "text-[#059669]", bg_color: "bg-[#ECFDF5]" },
   gray: { text_color: "text-[#475569]", bg_color: "bg-[#F1F5F9]" },
   red: { text_color: "text-[#93000A]", bg_color: "bg-[#FFDAD6]" },

@@ -4,6 +4,7 @@ import { FilePenLine, RefreshCcw, Search, Trash2 } from "lucide-react";
 
 import DataTable from "../../components/DataTable";
 
+import Badge from "../../components/ui/Badge";
 import FormField from "../../components/ui/FormField";
 import PageHeader from "../../components/ui/PageHeader";
 import Pagination from "../../components/ui/Pagination";
@@ -20,10 +21,12 @@ import useListParams from "../../hooks/useListParams";
 
 import { postsEndpoints } from "../../services/posts.service";
 
+import { BADGE_STATUS_COLORS } from "../../constant";
 import { getActiveLocationId, setActiveLocationId } from "../../session";
 
 const STATUS_OPTIONS = [
   { label: "All", value: "all" },
+  { label: "Draft", value: "draft" },
   { label: "Scheduled", value: "scheduled" },
   { label: "Queued", value: "queued" },
   { label: "Publishing", value: "publishing" },
@@ -104,6 +107,9 @@ const Posts = () => {
     } = post || {};
     const { title } = location || {};
 
+    const isPublished = status === "published";
+    const isDraft = status === "draft";
+
     return {
       cells: [
         <div className="max-w-120 text-wrap line-clamp-6 truncate">
@@ -112,22 +118,32 @@ const Posts = () => {
         <div className="max-w-120 text-wrap line-clamp-6 truncate">
           {title}
         </div>,
-        <div className="max-w-120 text-wrap line-clamp-6 truncate">
-          {status}
-        </div>,
+        <Badge variant={BADGE_STATUS_COLORS[status]} text={status} />,
         <div className="max-w-120 text-wrap line-clamp-6 truncate">
           {formatDateInAlphaNumericWithTime(scheduled_at) || "-"}
         </div>,
-        <div className="max-w-10 text-wrap line-clamp-6 truncate break-all">
+        <div className="max-w-120 text-wrap line-clamp-6 truncate break-all">
           {provider_post_name || "-"}
         </div>,
         <div className="max-w-120 text-wrap line-clamp-6 truncate">
           {provider_error || "-"}
         </div>,
-        <div className="flex items-center gap-1">
-          <ActionButton title="Edit" variant="green" icon={FilePenLine} />
+        <div className="flex flex-col gap-1">
+          <ActionButton
+            title="Edit"
+            variant="green"
+            icon={FilePenLine}
+            disabled={isPublished}
+          />
+
           <ActionButton title="Delete" variant="red" icon={Trash2} />
-          <ActionButton title="Retry" variant="purple" icon={RefreshCcw} />
+
+          <ActionButton
+            title="Retry"
+            variant="purple"
+            icon={RefreshCcw}
+            disabled={isPublished || isDraft}
+          />
         </div>,
       ],
     };
