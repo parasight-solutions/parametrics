@@ -1,6 +1,22 @@
 export const POST_LIST_DEFAULT_PER_PAGE = 10;
 export const POST_LIST_MAX_PER_PAGE = 100;
 
+function normalizeProviderPostUrl(value) {
+  if (typeof value !== "string" || !value.trim()) return null;
+  try {
+    return new URL(value.trim()).protocol === "https:" ? value.trim() : null;
+  } catch {
+    return null;
+  }
+}
+
+export function providerFieldsFromGooglePost(post = {}) {
+  return {
+    provider_post_name: post.name || null,
+    provider_post_url: normalizeProviderPostUrl(post.searchUrl),
+  };
+}
+
 function badRequest(message) {
   const error = new Error(message);
   error.status = 400;

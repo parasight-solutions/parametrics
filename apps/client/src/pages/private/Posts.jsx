@@ -14,6 +14,7 @@ import ActionButton from "../../components/ui/ActionButton";
 import CustomCheckbox from "../../components/ui/CustomCheckbox";
 
 import { formatDateInAlphaNumericWithTime } from "../../utils/dateAndTime";
+import { isProviderPostUrl, openProviderPost } from "../../utils/providerPostUrl";
 
 import useApi from "../../hooks/useApi";
 import useLocations from "../../hooks/useLocations";
@@ -103,12 +104,14 @@ const Posts = () => {
       scheduled_at,
       location,
       provider_post_name,
+      provider_post_url,
       provider_error,
     } = post || {};
     const { title } = location || {};
 
     const isPublished = status === "published";
     const isDraft = status === "draft";
+    const hasProviderPostUrl = isProviderPostUrl(provider_post_url);
 
     return {
       cells: [
@@ -122,9 +125,19 @@ const Posts = () => {
         <div className="max-w-120 text-wrap line-clamp-6 truncate">
           {formatDateInAlphaNumericWithTime(scheduled_at) || "-"}
         </div>,
-        <div className="max-w-120 text-wrap line-clamp-6 truncate break-all">
-          {provider_post_name || "-"}
-        </div>,
+        provider_post_name ? (
+          <button
+            type="button"
+            title={hasProviderPostUrl ? "Open post on Google" : "Public post URL unavailable"}
+            onClick={() => openProviderPost(provider_post_url)}
+            disabled={!hasProviderPostUrl}
+            className="max-w-120 text-left text-wrap line-clamp-6 truncate break-all enabled:text-[#7851A9] enabled:hover:underline enabled:cursor-pointer disabled:cursor-default"
+          >
+            {provider_post_name}
+          </button>
+        ) : (
+          "-"
+        ),
         <div className="max-w-120 text-wrap line-clamp-6 truncate">
           {provider_error || "-"}
         </div>,

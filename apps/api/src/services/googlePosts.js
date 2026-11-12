@@ -1,6 +1,7 @@
 // apps/api/src/services/googlePosts.js
 import { col } from '../lib/mongo.js'
 import { getActiveGoogleIntegration, ensureAccessToken } from '../integrations/google.store.js'
+import { providerFieldsFromGooglePost } from './postList.js'
 
 const GOOGLE_BASE = 'https://mybusiness.googleapis.com/v4'
 
@@ -92,7 +93,7 @@ export async function publishPostNow(postId) {
     {
       $set: {
         status: 'published',
-        provider_post_name: created?.name || null,
+        ...providerFieldsFromGooglePost(created),
         provider_error: null,
         updated_at: new Date(),
       },

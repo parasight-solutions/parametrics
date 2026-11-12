@@ -1,6 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { buildPostListFilter, normalizePostListQuery } from "./postList.js";
+import {
+  buildPostListFilter,
+  normalizePostListQuery,
+  providerFieldsFromGooglePost,
+} from "./postList.js";
 
 test("post list query defaults to the first page with ten rows", () => {
   assert.deepEqual(normalizePostListQuery({}), {
@@ -53,4 +57,30 @@ test("post list filter treats keyword metacharacters literally", () => {
   assert.deepEqual(filter.$or.at(-1), {
     location_id: { $in: ["location-2"] },
   });
+});
+
+test("Google post fields preserve the resource name and public search URL", () => {
+  assert.deepEqual(
+    providerFieldsFromGooglePost({
+      name: "accounts/1/locations/2/localPosts/3",
+      searchUrl: "https://posts.gle/example",
+    }),
+    {
+      provider_post_name: "accounts/1/locations/2/localPosts/3",
+      provider_post_url: "https://posts.gle/example",
+    },
+  );
+
+  assert.deepEqual(providerFieldsFromGooglePost({ name: "post-name" }), {
+    provider_post_name: "post-name",
+    provider_post_url: null,
+  });
+
+  assert.deepEqual(
+    providerFieldsFromGooglePost({ name: "post-name", searchUrl: "javascript:alert(1)" }),
+    {
+      provider_post_name: "post-name",
+      provider_post_url: null,
+    },
+  );
 });

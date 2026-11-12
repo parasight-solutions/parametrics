@@ -280,3 +280,15 @@ export async function listLocalPosts(access, accountName, locationName, opts = {
   const url = `${MYBUSINESS_V4_BASE}/${parent}/localPosts?${qs.toString()}`;
   return callGoogleJson(url, token);
 }
+
+export async function getLocalPost(access, postName) {
+  const token = resolveAccessToken(access);
+  if (!token) throw new Error('missing_access_token');
+
+  const name = String(postName || '').trim();
+  if (!/^accounts\/[^/]+\/locations\/[^/]+\/localPosts\/[^/]+$/.test(name)) {
+    throw new Error('invalid_local_post_name');
+  }
+
+  return callGoogleJson(`${MYBUSINESS_V4_BASE}/${name}`, token);
+}

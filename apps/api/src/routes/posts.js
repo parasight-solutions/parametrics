@@ -22,6 +22,7 @@ import {
   buildPostListFilter,
   createKeywordRegex,
   normalizePostListQuery,
+  providerFieldsFromGooglePost,
 } from "../services/postList.js";
 
 const router = Router();
@@ -213,7 +214,7 @@ export async function publishPostNow(postId) {
       {
         $set: {
           status: "published",
-          provider_post_name: created?.name || null,
+          ...providerFieldsFromGooglePost(created),
           provider_error: null,
           updated_at: new Date(),
         },
@@ -310,6 +311,7 @@ router.get("/", authenticate, async (req, res) => {
         scheduled_at: p.scheduled_at || null,
         integration_id: p.integration_id || null,
         provider_post_name: p.provider_post_name || null,
+        provider_post_url: p.provider_post_url || null,
         provider_error: p.provider_error || null,
         created_at: p.created_at,
         updated_at: p.updated_at,
