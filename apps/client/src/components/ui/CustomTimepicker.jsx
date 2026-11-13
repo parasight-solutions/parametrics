@@ -14,7 +14,7 @@ export default function CustomTimepicker({
     <div className="relative">
       <input
         {...props}
-        type="time"
+        type="datetime-local"
         onClick={(e) => e.currentTarget.showPicker()}
         className={`${Icon && "pl-9"} ${className} ${inputClass(error)} [&::-webkit-calendar-picker-indicator]:hidden appearance-none`}
       />

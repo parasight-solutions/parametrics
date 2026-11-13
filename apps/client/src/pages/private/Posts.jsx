@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 
-import { FilePenLine, RefreshCcw, Search, Trash2 } from "lucide-react";
+import { useNavigate } from "react-router-dom";
+import { FilePenLine, Plus, RefreshCcw, Search, Trash2 } from "lucide-react";
 
 import DataTable from "../../components/DataTable";
 
@@ -9,18 +10,24 @@ import FormField from "../../components/ui/FormField";
 import PageHeader from "../../components/ui/PageHeader";
 import Pagination from "../../components/ui/Pagination";
 import CustomInput from "../../components/ui/CustomInput";
+import CustomButton from "../../components/ui/CustomButton";
 import CustomSelect from "../../components/ui/CustomSelect";
 import ActionButton from "../../components/ui/ActionButton";
 import CustomCheckbox from "../../components/ui/CustomCheckbox";
 
 import { formatDateInAlphaNumericWithTime } from "../../utils/dateAndTime";
-import { isProviderPostUrl, openProviderPost } from "../../utils/providerPostUrl";
+import {
+  isProviderPostUrl,
+  openProviderPost,
+} from "../../utils/providerPostUrl";
 
 import useApi from "../../hooks/useApi";
 import useLocations from "../../hooks/useLocations";
 import useListParams from "../../hooks/useListParams";
 
 import { postsEndpoints } from "../../services/posts.service";
+
+import { useNotify } from "../../context/notification/useNotify";
 
 import { BADGE_STATUS_COLORS } from "../../constant";
 import { getActiveLocationId, setActiveLocationId } from "../../session";
@@ -36,6 +43,10 @@ const STATUS_OPTIONS = [
 ];
 
 const Posts = () => {
+  const { notify } = useNotify();
+
+  const navigate = useNavigate();
+
   const { loading, callApi } = useApi({ postsLoading: true });
   const { locationsLoading, locations } = useLocations();
 
@@ -76,6 +87,30 @@ const Posts = () => {
     });
   }, [callApi, getParams]);
 
+  const deletePost = (postId) => {
+    callApi("deleting", () => postsEndpoints.deletePost(postId), {
+      onSuccess: () => {
+        fetchPosts();
+        notify.msgSuccess("Post deleted!");
+      },
+      onError: () => {
+        notify.msgSuccess("Failed to delete post!");
+      },
+    });
+  };
+
+  const retryPost = (postId) => {
+    callApi("retrying", () => postsEndpoints.retryPost(postId), {
+      onSuccess: () => {
+        fetchPosts();
+        notify.msgSuccess("Retry posting!");
+      },
+      onError: () => {
+        notify.msgSuccess("Failed to retry posting!");
+      },
+    });
+  };
+
   useEffect(() => {
     fetchPosts();
   }, [
@@ -99,6 +134,7 @@ const Posts = () => {
 
   const tableBody = posts?.map((post) => {
     const {
+      id,
       summary,
       status,
       scheduled_at,
@@ -110,7 +146,7 @@ const Posts = () => {
     const { title } = location || {};
 
     const isPublished = status === "published";
-    const isDraft = status === "draft";
+    const isFailed = status === "failed";
     const hasProviderPostUrl = isProviderPostUrl(provider_post_url);
 
     return {
@@ -128,7 +164,11 @@ const Posts = () => {
         provider_post_name ? (
           <button
             type="button"
-            title={hasProviderPostUrl ? "Open post on Google" : "Public post URL unavailable"}
+            title={
+              hasProviderPostUrl
+                ? "Open post on Google"
+                : "Public post URL unavailable"
+            }
             onClick={() => openProviderPost(provider_post_url)}
             disabled={!hasProviderPostUrl}
             className="max-w-120 text-left text-wrap line-clamp-6 truncate break-all enabled:text-[#7851A9] enabled:hover:underline enabled:cursor-pointer disabled:cursor-default"
@@ -149,13 +189,19 @@ const Posts = () => {
             disabled={isPublished}
           />
 
-          <ActionButton title="Delete" variant="red" icon={Trash2} />
+          <ActionButton
+            title="Delete"
+            variant="red"
+            icon={Trash2}
+            onClick={() => deletePost(id)}
+          />
 
           <ActionButton
             title="Retry"
             variant="purple"
             icon={RefreshCcw}
-            disabled={isPublished || isDraft}
+            onClick={() => retryPost(id)}
+            disabled={!isFailed}
           />
         </div>,
       ],
@@ -167,7 +213,13 @@ const Posts = () => {
       <PageHeader
         heading="Posts"
         subHeading="Create and publish Google Business Profile updates"
-      />
+      >
+        <CustomButton
+          icon={Plus}
+          name="New Post"
+          onClick={() => navigate("add")}
+        />
+      </PageHeader>
 
       <div className="p-6 grid grid-cols-12 gap-6 border border-gray-300 rounded-xl">
         <FormField
@@ -232,31 +284,6 @@ const Posts = () => {
             }
           />
         </FormField>
-
-        {/* <div className="col-span-12 lg:col-span-6">
-          <div className="p-1 h-full w-fit flex items-center justify-between gap-1 bg-gray-100 rounded-full">
-            {[
-              { label: "All", value: "" },
-              { label: "Scheduled", value: "scheduled" },
-              { label: "Queued", value: "queued" },
-              { label: "Publishing", value: "publishing" },
-              { label: "Published", value: "published" },
-              { label: "Failed", value: "failed" },
-            ].map(({ label, value }) => {
-              const isActive = value === params?.status;
-
-              return (
-                <button
-                  key={value}
-                  onClick={() => changeParams("status", value)}
-                  className={`h-full px-3 ${isActive ? "text-white bg-[#7851A9]" : ""} font-medium text-xs text-center rounded-full cursor-pointer`}
-                >
-                  {label}
-                </button>
-              );
-            })}
-          </div>
-        </div> */}
       </div>
 
       <DataTable

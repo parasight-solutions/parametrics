@@ -7,8 +7,12 @@ export function isProviderPostUrl(value) {
   }
 }
 
-export function openProviderPost(value, openWindow = globalThis.window?.open?.bind(globalThis.window)) {
-  if (!isProviderPostUrl(value) || typeof openWindow !== "function") return false;
+export function openProviderPost(
+  value,
+  openWindow = globalThis.window?.open?.bind(globalThis.window),
+) {
+  if (!isProviderPostUrl(value) || typeof openWindow !== "function")
+    return false;
 
   const url = value.trim();
   openWindow(url, "_blank", "noopener,noreferrer");

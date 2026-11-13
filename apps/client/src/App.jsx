@@ -20,6 +20,7 @@ import OrganizationMembers from "./pages/private/OrganizationMembers";
 
 import { useAuth } from "./context/auth/useAuth";
 import RecurranceLab from "./pages/private/RecurranceLab";
+import PostFormPage from "./pages/private/PostFormPage";
 
 const GuestWrapper = () => {
   const { isAuthenticated, authLoading } = useAuth();
@@ -55,7 +56,11 @@ const App = () => {
             <Route index element={<Dashboard />} />
             <Route path="dashboard" element={<Dashboard />} />
             <Route path="integrations" element={<Integrations />} />
-            <Route path="posts" element={<Posts />} />
+            <Route path="posts">
+              <Route index element={<Posts />} />
+              <Route path="add" element={<PostFormPage />} />
+              <Route path=":postId/edit" element={<PostFormPage />} />
+            </Route>
             <Route path="reviews" element={<Reviews />} />
             <Route path="reports" element={<Reports />} />
             <Route
