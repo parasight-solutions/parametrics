@@ -1,5 +1,6 @@
 import { useCallback, useEffect } from "react";
 
+import dayjs from "dayjs";
 import { useNavigate, useParams } from "react-router-dom";
 import { Controller, useForm } from "react-hook-form";
 
@@ -54,7 +55,13 @@ const PostFormPage = () => {
 
     callApi("postLoading", () => postsEndpoints.getPost(postId), {
       onSuccess: ({ data }) => {
-        reset(data);
+        const { post } = data || {};
+        reset({
+          ...post,
+          scheduleAt: post?.scheduled_at
+            ? dayjs(post.scheduled_at).format("YYYY-MM-DDTHH:mm")
+            : "",
+        });
       },
     });
   }, [callApi, postId, reset]);
@@ -63,7 +70,7 @@ const PostFormPage = () => {
     const { scheduleAt } = data;
     const payload = {
       ...data,
-      scheduleAt: scheduleAt ? new Date(scheduleAt).toISOString() : null,
+      scheduleAt: scheduleAt ? dayjs(scheduleAt).toISOString() : null,
       publishNow: scheduleAt ? false : true,
     };
 

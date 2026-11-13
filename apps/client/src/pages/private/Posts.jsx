@@ -186,6 +186,7 @@ const Posts = () => {
             title="Edit"
             variant="green"
             icon={FilePenLine}
+            onClick={() => navigate(`${id}/edit`)}
             disabled={isPublished}
           />
 
@@ -221,6 +222,7 @@ const Posts = () => {
         />
       </PageHeader>
 
+      {/* Filters */}
       <div className="p-6 grid grid-cols-12 gap-6 border border-gray-300 rounded-xl">
         <FormField
           id="locationId"

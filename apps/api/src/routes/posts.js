@@ -24,6 +24,7 @@ import {
   normalizePostListQuery,
   providerFieldsFromGooglePost,
 } from "../services/postList.js";
+import { getPostDetailsForUser } from "../services/postDetails.js";
 
 const router = Router();
 const publishQueue = makeQueue("post-publish");
@@ -363,6 +364,26 @@ router.get("/provider", authenticate, syncRateLimit, async (req, res) => {
     return res.json({ provider_posts: data?.localPosts || [], nextPageToken: data?.nextPageToken || null });
   } catch (e) {
     return toApiError(res, e);
+  }
+});
+
+router.get("/:id", authenticate, async (req, res) => {
+  try {
+    const post = await getPostDetailsForUser(
+      {
+        userId: req.user.user_id,
+        postId: req.params.id,
+      },
+      {
+        posts: await col("posts"),
+        requireLocationAccess: requireOwnedOrganizationLocationAccess,
+        assertScope: assertDocMatchesLocationScope,
+      },
+    );
+
+    return res.json({ post });
+  } catch (error) {
+    return toApiError(res, error);
   }
 });
 
