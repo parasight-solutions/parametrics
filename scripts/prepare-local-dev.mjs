@@ -56,8 +56,14 @@ function writeEnvFile(filePath, values, header) {
   fs.writeFileSync(filePath, lines.join("\n"), "utf8");
 }
 
-const apiPreferredPort = parsePort(process.env.PARAMETRICS_API_PORT, API_PREFERRED_PORT);
-const webPreferredPort = parsePort(process.env.PARAMETRICS_WEB_PORT, WEB_PREFERRED_PORT);
+const apiPreferredPort = parsePort(
+  process.env.PARAMETRICS_API_PORT,
+  API_PREFERRED_PORT,
+);
+const webPreferredPort = parsePort(
+  process.env.PARAMETRICS_WEB_PORT,
+  WEB_PREFERRED_PORT,
+);
 
 const reserved = new Set();
 const apiPort = await nextAvailablePort(apiPreferredPort, reserved);
@@ -74,7 +80,7 @@ writeEnvFile(
     PORT: apiPort,
     APP_PUBLIC_API_BASE: apiBaseUrl,
     APP_URL: webOrigin,
-    CORS_ORIGINS: `${webOrigin},${webLocalhostOrigin}`,
+    CORS_ORIGINS: `${webOrigin},${webLocalhostOrigin},http://localhost:5000,http://192.168.0.114:5000`,
   },
   "Resolved API and browser origins for local API startup.",
 );
