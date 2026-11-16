@@ -1,4 +1,4 @@
-import { useCallback, useEffect } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import dayjs from "dayjs";
 import { useNavigate, useParams } from "react-router-dom";
@@ -22,8 +22,12 @@ import useLocations from "../../hooks/useLocations";
 import { useNotify } from "../../context/notification/useNotify";
 
 import { getActiveLocationId } from "../../session";
+import { enterImageUrlState, selectImageFileState } from "./postImageForm";
 
 const PostFormPage = () => {
+  const fileInputRef = useRef(null);
+  const [imageFile, setImageFile] = useState(null);
+  const [imagePreview, setImagePreview] = useState("");
   const { notify } = useNotify();
 
   const navigate = useNavigate();
@@ -38,6 +42,7 @@ const PostFormPage = () => {
     register,
     handleSubmit,
     reset,
+    setValue,
     control,
     watch,
     formState: { errors },
@@ -52,6 +57,7 @@ const PostFormPage = () => {
   });
 
   const scheduleAt = watch("scheduleAt");
+  const imageUrl = watch("imageUrl");
 
   const fetchPost = useCallback(() => {
     if (!postId) return;
@@ -73,6 +79,7 @@ const PostFormPage = () => {
     const { scheduleAt } = data;
     const payload = {
       ...data,
+      imageFile,
       scheduleAt: scheduleAt ? dayjs(scheduleAt).toISOString() : null,
       publishNow: scheduleAt ? false : true,
     };
@@ -93,6 +100,17 @@ const PostFormPage = () => {
       },
     );
   };
+
+  useEffect(() => {
+    if (!imageFile) {
+      setImagePreview(imageUrl || "");
+      return;
+    }
+
+    const objectUrl = URL.createObjectURL(imageFile);
+    setImagePreview(objectUrl);
+    return () => URL.revokeObjectURL(objectUrl);
+  }, [imageFile, imageUrl]);
 
   useEffect(() => {
     fetchPost();
@@ -168,6 +186,30 @@ const PostFormPage = () => {
         {/* Image URL */}
         {!postId && (
           <FormField
+            id="imageFile"
+            label="Image file"
+            className="col-span-2 md:col-span-1"
+          >
+            <input
+              ref={fileInputRef}
+              id="imageFile"
+              type="file"
+              accept="image/jpeg,image/png,image/webp"
+              onChange={(event) => {
+                const next = selectImageFileState({
+                  file: event.target.files?.[0],
+                });
+
+                setImageFile(next.imageFile);
+
+                setValue("imageUrl", next.imageUrl, { shouldValidate: true });
+              }}
+            />
+          </FormField>
+        )}
+
+        {!postId && (
+          <FormField
             id="imageUrl"
             label="Image URL"
             className="col-span-2 md:col-span-1"
@@ -176,9 +218,30 @@ const PostFormPage = () => {
             <CustomInput
               id="imageUrl"
               placeholder="https://"
-              {...register("imageUrl", validateWebsite)}
+              {...register("imageUrl", {
+                ...validateWebsite,
+                onChange: (event) => {
+                  const next = enterImageUrlState({
+                    value: event.target.value,
+                  });
+
+                  if (next.clearNativeFile && fileInputRef.current) {
+                    fileInputRef.current.value = "";
+                  }
+
+                  setImageFile(next.imageFile);
+                },
+              })}
             />
           </FormField>
+        )}
+
+        {!postId && imagePreview && (
+          <img
+            src={imagePreview}
+            alt="Post preview"
+            className="col-span-2 max-h-64 rounded object-contain"
+          />
         )}
 
         {/* CTA URL */}

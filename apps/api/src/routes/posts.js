@@ -25,12 +25,16 @@ import {
   providerFieldsFromGooglePost,
 } from "../services/postList.js";
 import { getPostDetailsForUser } from "../services/postDetails.js";
+import { createImageUploadMiddleware, createPostImageStorage, resolvePostUploadConfig, validateExternalImageUrl } from "../services/postImageStorage.js";
 
 const router = Router();
 const publishQueue = makeQueue("post-publish");
 const PUBLISH_JOB_ID = (postId) => `publish_${postId}`;
 const LOCATION_READ_ROLES = Object.freeze(["owner", "admin", "manager", "viewer"]);
 const LOCATION_OPERATION_ROLES = Object.freeze(["owner", "admin", "manager"]);
+const postImageConfig = resolvePostUploadConfig();
+const postImageStorage = createPostImageStorage(postImageConfig);
+const parsePostImage = createImageUploadMiddleware(postImageConfig);
 
 async function removePublishJob(postId) {
   const jobId = PUBLISH_JOB_ID(postId);
@@ -71,8 +75,11 @@ function normalizeCreateBody(body = {}) {
   const languageCode = body.languageCode || body.language_code || null;
   const topicType = body.topicType || body.topic_type || null;
   const scheduleAt = body.scheduleAt || body.scheduled_at || null;
-  const publishNow =
-    typeof body.publishNow === "boolean" ? body.publishNow : !scheduleAt;
+  const publishNow = typeof body.publishNow === "boolean"
+    ? body.publishNow
+    : typeof body.publishNow === "string"
+      ? body.publishNow.toLowerCase() === "true"
+      : !scheduleAt;
 
   return {
     locationId: String(locationId || ""),
@@ -387,7 +394,8 @@ router.get("/:id", authenticate, async (req, res) => {
   }
 });
 
-router.post("/", authenticate, generationRateLimit, async (req, res) => {
+router.post("/", authenticate, generationRateLimit, parsePostImage, async (req, res) => {
+  let storedImage = null;
   try {
     const userId = req.user.user_id;
     const b = normalizeCreateBody(req.body);
@@ -449,6 +457,9 @@ router.post("/", authenticate, generationRateLimit, async (req, res) => {
       return res.status(500).json({ error: { code: "server_error", message: e?.message || "server_error" } });
     }
 
+    if (req.file) storedImage = await postImageStorage.writeValidatedImage(req.file);
+    const resolvedImageUrl = storedImage?.url || validateExternalImageUrl(b.imageUrl);
+
     const id = crypto.randomUUID();
     const now = new Date();
 
@@ -462,7 +473,7 @@ router.post("/", authenticate, generationRateLimit, async (req, res) => {
       provider_account_name: loc.provider_account_name || null,
       provider_location_name: loc.provider_location_name || null,
       summary: b.summary,
-      image_url: b.imageUrl,
+      image_url: resolvedImageUrl,
       call_to_action_url: b.callToActionUrl,
       topic_type: b.topicType || "STANDARD",
       language_code: b.languageCode || "en-US",
@@ -512,6 +523,13 @@ router.post("/", authenticate, generationRateLimit, async (req, res) => {
       },
     });
   } catch (e) {
+    if (storedImage?.filename) await postImageStorage.deleteImage(storedImage.filename).catch(() => {});
+    if (["unsupported_image_type", "invalid_image_url", "missing_file"].includes(e?.code)) {
+      return res.status(400).json({ error: { code: e.code, message: e.message } });
+    }
+    if (e?.code === "image_too_large") {
+      return res.status(413).json({ error: { code: e.code, message: e.message } });
+    }
     return toApiError(res, e);
   }
 });
