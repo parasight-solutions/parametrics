@@ -80,6 +80,7 @@ const Posts = () => {
     delete apiParams.showAll;
 
     callApi("postsLoading", () => postsEndpoints.getPosts(apiParams), {
+      loading: false,
       onSuccess: ({ data }) => {
         setPosts(data?.posts || []);
         setTotalPages(data?.pagination?.totalPages);
@@ -121,6 +122,14 @@ const Posts = () => {
     params?.showAll,
     params?.page,
   ]);
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      fetchPosts();
+    }, 10000);
+
+    return () => clearInterval(interval);
+  }, [fetchPosts]);
 
   const tableHeading = [
     { label: "Summary" },
@@ -224,6 +233,7 @@ const Posts = () => {
 
       {/* Filters */}
       <div className="p-6 grid grid-cols-12 gap-6 border border-gray-300 rounded-xl">
+        {/* Locations */}
         <FormField
           id="locationId"
           label="Active Location"
@@ -244,6 +254,7 @@ const Posts = () => {
           />
         </FormField>
 
+        {/* Post Status Options */}
         <FormField
           id="status"
           label="Status"

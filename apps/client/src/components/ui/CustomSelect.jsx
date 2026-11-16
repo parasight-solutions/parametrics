@@ -9,6 +9,7 @@ export default function CustomSelect({
   className = "",
   id,
   name,
+  loading = false,
   disabled = false,
   required = false,
   onBlur,
@@ -48,6 +49,7 @@ export default function CustomSelect({
         allowClear={!required}
         onClear={handleClear}
         error={error}
+        loading={loading}
         disabled={disabled}
         required={required}
         className={className}

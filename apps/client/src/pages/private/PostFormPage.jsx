@@ -39,6 +39,7 @@ const PostFormPage = () => {
     handleSubmit,
     reset,
     control,
+    watch,
     formState: { errors },
   } = useForm({
     defaultValues: {
@@ -49,6 +50,8 @@ const PostFormPage = () => {
     },
     mode: "onChange",
   });
+
+  const scheduleAt = watch("scheduleAt");
 
   const fetchPost = useCallback(() => {
     if (!postId) return;
@@ -197,7 +200,15 @@ const PostFormPage = () => {
         <CustomButton
           className="col-span-2 justify-self-end"
           type="submit"
-          name={savingPost ? "Posting..." : "Post Now"}
+          name={
+            scheduleAt
+              ? savingPost
+                ? "Scheduling..."
+                : "Schedule"
+              : savingPost
+                ? "Posting..."
+                : "Post Now"
+          }
           loading={savingPost}
         />
       </form>

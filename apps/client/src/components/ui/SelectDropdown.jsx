@@ -12,7 +12,7 @@ import {
   useFloating,
   useInteractions,
 } from "@floating-ui/react";
-import { ChevronDown, Search, X } from "lucide-react";
+import { ChevronDown, Loader2, Search, X } from "lucide-react";
 
 import CustomInput from "./CustomInput";
 
@@ -29,6 +29,7 @@ export default function SelectDropdown({
   allowClear = false,
   onClear,
   error,
+  loading = false,
   disabled = false,
   required = false,
   className = "",
@@ -175,13 +176,20 @@ export default function SelectDropdown({
           </span>
         )}
 
-        <ChevronDown
-          aria-hidden="true"
-          size={18}
-          className={`shrink-0 transition-transform ${
-            isOpen ? "rotate-180" : ""
-          }`}
-        />
+        {loading ? (
+          <Loader2
+            size={18}
+            className="shrink-0 transition-transform animate-spin"
+          />
+        ) : (
+          <ChevronDown
+            aria-hidden="true"
+            size={18}
+            className={`shrink-0 transition-transform ${
+              isOpen ? "rotate-180" : ""
+            }`}
+          />
+        )}
       </div>
 
       {isOpen && !disabled && (
