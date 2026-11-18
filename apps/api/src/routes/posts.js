@@ -25,7 +25,8 @@ import {
   providerFieldsFromGooglePost,
 } from "../services/postList.js";
 import { getPostDetailsForUser } from "../services/postDetails.js";
-import { createImageUploadMiddleware, createPostImageStorage, resolvePostUploadConfig, validateExternalImageUrl } from "../services/postImageStorage.js";
+import { createImageUploadMiddleware, createPostImageStorage, resolvePostImageSource, resolvePostUploadConfig } from "../services/postImageStorage.js";
+import { buildGoogleLocalPostPayload } from "../services/googlePostPayload.js";
 
 const router = Router();
 const publishQueue = makeQueue("post-publish");
@@ -184,31 +185,7 @@ export async function publishPostNow(postId) {
   );
 
   try {
-    const topicType = post.topic_type || post.topicType || "STANDARD";
-    const languageCode = post.language_code || post.languageCode || "en-US";
-
-    const payload = {
-      summary: post.summary,
-      languageCode,
-      topicType,
-    };
-
-    if (post.image_url) {
-      payload.media = [{ sourceUrl: post.image_url }];
-    }
-
-    if (post.call_to_action_type) {
-      const actionType = String(post.call_to_action_type).trim().toUpperCase();
-      const cta = { actionType };
-
-      if (actionType !== "CALL" && post.call_to_action_url) {
-        cta.url = post.call_to_action_url;
-      }
-
-      payload.callToAction = cta;
-    } else if (post.call_to_action_url) {
-      payload.callToAction = { actionType: "LEARN_MORE", url: post.call_to_action_url };
-    }
+    const payload = buildGoogleLocalPostPayload(post);
 
     const created = await createLocalPost(
       access_token,
@@ -457,8 +434,9 @@ router.post("/", authenticate, generationRateLimit, parsePostImage, async (req, 
       return res.status(500).json({ error: { code: "server_error", message: e?.message || "server_error" } });
     }
 
-    if (req.file) storedImage = await postImageStorage.writeValidatedImage(req.file);
-    const resolvedImageUrl = storedImage?.url || validateExternalImageUrl(b.imageUrl);
+    const imageSource = await resolvePostImageSource({ file: req.file, imageUrl: b.imageUrl, storage: postImageStorage });
+    storedImage = imageSource.storedFilename ? { filename: imageSource.storedFilename } : null;
+    const resolvedImageUrl = imageSource.imageUrl;
 
     const id = crypto.randomUUID();
     const now = new Date();
@@ -524,7 +502,7 @@ router.post("/", authenticate, generationRateLimit, parsePostImage, async (req, 
     });
   } catch (e) {
     if (storedImage?.filename) await postImageStorage.deleteImage(storedImage.filename).catch(() => {});
-    if (["unsupported_image_type", "invalid_image_url", "missing_file"].includes(e?.code)) {
+    if (["unsupported_image_type", "invalid_image_url", "image_url_must_be_public_https", "image_url_not_public", "missing_file"].includes(e?.code)) {
       return res.status(400).json({ error: { code: e.code, message: e.message } });
     }
     if (e?.code === "image_too_large") {

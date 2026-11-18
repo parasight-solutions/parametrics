@@ -22,21 +22,23 @@ import useLocations from "../../hooks/useLocations";
 import { useNotify } from "../../context/notification/useNotify";
 
 import { getActiveLocationId } from "../../session";
-import { enterImageUrlState, selectImageFileState } from "./postImageForm";
+import ActionButton from "../../components/ui/ActionButton";
+import { X } from "lucide-react";
 
 const PostFormPage = () => {
-  const fileInputRef = useRef(null);
-  const [imageFile, setImageFile] = useState(null);
-  const [imagePreview, setImagePreview] = useState("");
   const { notify } = useNotify();
 
   const navigate = useNavigate();
+  const { postId } = useParams();
+
   const { loading, callApi } = useApi();
   const { locationsLoading, locations } = useLocations();
 
   const savingPost = loading?.savingPost;
 
-  const { postId } = useParams();
+  const fileInputRef = useRef(null);
+  const [imageFile, setImageFile] = useState(null);
+  const [imagePreview, setImagePreview] = useState("");
 
   const {
     register,
@@ -117,7 +119,7 @@ const PostFormPage = () => {
   }, [fetchPost]);
 
   return (
-    <div className="flex flex-col gap-6">
+    <div className="flex flex-col gap-6 text-sm">
       <PageHeader
         heading={postId ? "Edit Post" : "Add Post"}
         subHeading="Publish an update to a Business Profile location"
@@ -186,30 +188,6 @@ const PostFormPage = () => {
         {/* Image URL */}
         {!postId && (
           <FormField
-            id="imageFile"
-            label="Image file"
-            className="col-span-2 md:col-span-1"
-          >
-            <input
-              ref={fileInputRef}
-              id="imageFile"
-              type="file"
-              accept="image/jpeg,image/png,image/webp"
-              onChange={(event) => {
-                const next = selectImageFileState({
-                  file: event.target.files?.[0],
-                });
-
-                setImageFile(next.imageFile);
-
-                setValue("imageUrl", next.imageUrl, { shouldValidate: true });
-              }}
-            />
-          </FormField>
-        )}
-
-        {!postId && (
-          <FormField
             id="imageUrl"
             label="Image URL"
             className="col-span-2 md:col-span-1"
@@ -221,27 +199,85 @@ const PostFormPage = () => {
               {...register("imageUrl", {
                 ...validateWebsite,
                 onChange: (event) => {
-                  const next = enterImageUrlState({
-                    value: event.target.value,
-                  });
+                  const clearNativeFile = Boolean(
+                    String(event.target.value || "").trim(),
+                  );
 
-                  if (next.clearNativeFile && fileInputRef.current) {
+                  if (clearNativeFile && fileInputRef.current) {
                     fileInputRef.current.value = "";
                   }
 
-                  setImageFile(next.imageFile);
+                  setImageFile(null);
                 },
               })}
             />
           </FormField>
         )}
 
-        {!postId && imagePreview && (
-          <img
-            src={imagePreview}
-            alt="Post preview"
-            className="col-span-2 max-h-64 rounded object-contain"
-          />
+        {/* Preview Image */}
+        <div className="relative col-span-2 row-span-3 min-h-0 md:col-span-1">
+          {!postId && imagePreview && (
+            <div className="absolute inset-0 w-fit flex items-center justify-center overflow-hidden">
+              <img
+                src={imagePreview}
+                alt="Post preview"
+                className="max-h-full max-w-full rounded object-contain"
+              />
+
+              <ActionButton
+                icon={X}
+                type="button"
+                variant="red"
+                className="absolute top-2 right-2"
+                onClick={() => {
+                  if (fileInputRef.current) {
+                    fileInputRef.current.value = "";
+                  }
+
+                  setImageFile(null);
+                  setValue("imageUrl", "");
+                }}
+              />
+            </div>
+          )}
+        </div>
+
+        <div className="-my-3 col-span-2 md:col-span-1 text-gray-500">
+          <div className="flex items-center justify-center gap-3">
+            <div className="w-full border-b border-gray-400"></div>
+            <span>OR</span>
+            <div className="w-full border-b border-gray-400"></div>
+          </div>
+        </div>
+
+        {/* Image File */}
+        {!postId && (
+          <FormField
+            id="imageFile"
+            label="Image file"
+            className="col-span-2 md:col-span-1"
+          >
+            <CustomButton
+              type="button"
+              name="Choose File"
+              variant="purple_white"
+              className="w-fit"
+              onClick={() => fileInputRef.current.click()}
+            />
+
+            <input
+              ref={fileInputRef}
+              id="imageFile"
+              type="file"
+              accept="image/jpeg,image/png,image/webp"
+              className="hidden"
+              onChange={(event) => {
+                const file = event.target.files?.[0];
+                setImageFile(file);
+                setValue("imageUrl", "", { shouldValidate: true });
+              }}
+            />
+          </FormField>
         )}
 
         {/* CTA URL */}
