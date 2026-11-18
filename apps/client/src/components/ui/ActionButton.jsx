@@ -1,8 +1,8 @@
 const variants = {
-  gray: "text-[#585F67] hover:text-gray-800",
-  purple: "text-[#7851A9] hover:text-[#66448f]",
-  green: "text-green-600 hover:text-green-700",
-  red: "text-[#BA1A1A] hover:text-[#A71717]",
+  gray: { bg_color: "bg-[#585F67] hover:bg-gray-800" },
+  purple: { bg_color: "bg-[#7851A9] hover:bg-[#66448f]" },
+  green: { bg_color: "bg-green-600 hover:bg-green-700" },
+  red: { bg_color: "bg-[#BA1A1A] hover:bg-[#A71717]" },
   custom: "",
 };
 
@@ -19,9 +19,9 @@ export default function ActionButton({
   return (
     <button
       {...props}
-      className={`${className} p-1 rounded cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed transition-all`}
+      className={`w-fit ${className} ${variants[variant].bg_color} p-1 rounded cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed transition-all`}
     >
-      <Icon size={size} className={`${iconClass} ${variants[variant]}`} />
+      <Icon size={size} className={`shrink-0 text-white ${iconClass}`} />
     </button>
   );
 }

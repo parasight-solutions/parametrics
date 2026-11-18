@@ -189,28 +189,53 @@ const PostFormPage = () => {
         {!postId && (
           <FormField
             id="imageUrl"
-            label="Image URL"
+            label="Image URL or (Upload)"
             className="col-span-2 md:col-span-1"
             error={errors.imageUrl?.message}
           >
-            <CustomInput
-              id="imageUrl"
-              placeholder="https://"
-              {...register("imageUrl", {
-                ...validateWebsite,
-                onChange: (event) => {
-                  const clearNativeFile = Boolean(
-                    String(event.target.value || "").trim(),
-                  );
+            <div className="w-full flex item-center gap-3">
+              <div className="w-full">
+                <CustomInput
+                  id="imageUrl"
+                  placeholder="https://"
+                  {...register("imageUrl", {
+                    ...validateWebsite,
+                    onChange: (event) => {
+                      const clearNativeFile = Boolean(
+                        String(event.target.value || "").trim(),
+                      );
 
-                  if (clearNativeFile && fileInputRef.current) {
-                    fileInputRef.current.value = "";
-                  }
+                      if (clearNativeFile && fileInputRef.current) {
+                        fileInputRef.current.value = "";
+                      }
 
-                  setImageFile(null);
-                },
-              })}
-            />
+                      setImageFile(null);
+                    },
+                  })}
+                />
+              </div>
+
+              <CustomButton
+                type="button"
+                name="Choose File"
+                variant="purple_white"
+                className="w-fit"
+                onClick={() => fileInputRef.current.click()}
+              />
+
+              <input
+                ref={fileInputRef}
+                id="imageFile"
+                type="file"
+                accept="image/jpeg,image/png,image/webp"
+                className="hidden"
+                onChange={(event) => {
+                  const file = event.target.files?.[0];
+                  setImageFile(file);
+                  setValue("imageUrl", "", { shouldValidate: true });
+                }}
+              />
+            </div>
           </FormField>
         )}
 
@@ -242,16 +267,8 @@ const PostFormPage = () => {
           )}
         </div>
 
-        <div className="-my-3 col-span-2 md:col-span-1 text-gray-500">
-          <div className="flex items-center justify-center gap-3">
-            <div className="w-full border-b border-gray-400"></div>
-            <span>OR</span>
-            <div className="w-full border-b border-gray-400"></div>
-          </div>
-        </div>
-
         {/* Image File */}
-        {!postId && (
+        {/* {!postId && (
           <FormField
             id="imageFile"
             label="Image file"
@@ -278,7 +295,7 @@ const PostFormPage = () => {
               }}
             />
           </FormField>
-        )}
+        )} */}
 
         {/* CTA URL */}
         {!postId && (

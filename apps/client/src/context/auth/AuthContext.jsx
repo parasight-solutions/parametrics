@@ -6,6 +6,7 @@ import { AUTH_EXPIRED_EVENT } from "../../services/authFailure";
 import { clearSession } from "../../session";
 
 import useApi from "../../hooks/useApi";
+
 import { AuthContext } from "./useAuth";
 
 export const AuthProvider = ({ children }) => {
