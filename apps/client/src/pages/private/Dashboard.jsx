@@ -16,7 +16,6 @@ import {
 import FormField from "../../components/ui/FormField";
 import PageHeader from "../../components/ui/PageHeader";
 import CustomButton from "../../components/ui/CustomButton";
-import CustomSelect from "../../components/ui/CustomSelect";
 import CustomDatepicker from "../../components/ui/CustomDatepicker";
 import CustomRadioButtons from "../../components/ui/CustomRadioButtons";
 
@@ -33,10 +32,9 @@ import {
 import { integrationsEndpoints } from "../../services/integrations.service";
 
 import useApi from "../../hooks/useApi";
-import useLocations from "../../hooks/useLocations";
 import useListParams from "../../hooks/useListParams";
 
-import { getActiveLocationId, setActiveLocationId } from "../../session";
+import { useLocation } from "../../context/location/useLocation";
 
 const DEFAULT_RANGE = 30;
 
@@ -97,8 +95,8 @@ const formatDashboardCSV = (details) => {
 };
 
 const Dashboard = () => {
+  const { activeLocation } = useLocation();
   const { loading, callApi } = useApi();
-  const { locationsLoading, locations } = useLocations();
 
   const today = dayjs();
   const detailsLoading = loading?.detailsLoading;
@@ -114,11 +112,10 @@ const Dashboard = () => {
   const [range, setRange] = useState(DEFAULT_RANGE);
   const { params, getParams, changeParams } = useListParams(
     {
-      locationId: getActiveLocationId(),
       startDate: getRangeForStartDate(DEFAULT_RANGE),
       endDate: formatDateToISO(today),
     },
-    { syncWithUrl: true, urlKeys: ["locationId", "startDate", "endDate"] },
+    { syncWithUrl: true, urlKeys: ["startDate", "endDate"] },
   );
 
   const graphName = `Parametrics Dashboard metrics form ${params.startDate} to ${params.endDate} on ${formatDateInAlphaNumericWithTime(lastUpdated)}`;
@@ -134,11 +131,16 @@ const Dashboard = () => {
   };
 
   const fetchPerformanceSeries = useCallback(() => {
-    if (!params?.locationId) return;
+    if (!activeLocation) return;
+
+    const apiParams = {
+      locationId: activeLocation,
+      ...getParams(),
+    };
 
     callApi(
       "detailsLoading",
-      () => integrationsEndpoints.getPerformanceSeries(getParams()),
+      () => integrationsEndpoints.getPerformanceSeries(apiParams),
       {
         onSuccess: ({ data }) => {
           setDetails(data);
@@ -146,7 +148,7 @@ const Dashboard = () => {
         },
       },
     );
-  }, [callApi, params, getParams, setDetails, setLastUpdated]);
+  }, [callApi, activeLocation, getParams, setDetails, setLastUpdated]);
 
   const handleExport = async (type) => {
     if (detailsLoading || !details?.metrics?.length) return;
@@ -181,7 +183,7 @@ const Dashboard = () => {
     fetchPerformanceSeries();
   }, [
     fetchPerformanceSeries,
-    params?.locationId,
+    activeLocation,
     params?.startDate,
     params?.endDate,
   ]);
@@ -195,26 +197,6 @@ const Dashboard = () => {
 
       {/* Filters */}
       <div className="p-6 grid grid-cols-12 gap-6 border border-gray-300 rounded-xl">
-        <FormField
-          id="locationId"
-          label="Active Location"
-          colSpan="col-span-12"
-          error={!params.locationId && "Select Location"}
-          required
-        >
-          <CustomSelect
-            id="locationId"
-            placeholder="Select Location"
-            value={params?.locationId}
-            options={locations}
-            onChange={(value) => {
-              changeParams("locationId", value);
-              setActiveLocationId(value);
-            }}
-            loading={locationsLoading}
-          />
-        </FormField>
-
         <FormField
           id="range"
           label="Quick Range"

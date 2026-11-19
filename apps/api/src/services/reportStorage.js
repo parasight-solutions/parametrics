@@ -233,9 +233,9 @@ function defaultRepoRoot() {
   return path.resolve(here, "../../../..");
 }
 
-function isPathInside(parent, child) {
-  const rel = path.relative(parent, child);
-  return rel === "" || (!rel.startsWith("..") && !path.isAbsolute(rel));
+function isPathInside(parent, child, pathImpl = path) {
+  const rel = pathImpl.relative(parent, child);
+  return rel === "" || (!rel.startsWith("..") && !pathImpl.isAbsolute(rel));
 }
 
 function isBlockedProductionRoot(absRoot) {
@@ -253,19 +253,20 @@ function isBlockedProductionRoot(absRoot) {
   return false;
 }
 
-function redactedRootLabel({ configured, absRoot, defaultRoot }) {
+function redactedRootLabel({ configured, absRoot, defaultRoot, pathImpl = path }) {
   if (!configured) {
-    return `<os-tmpdir>/${path.basename(path.dirname(defaultRoot))}/${path.basename(defaultRoot)}`;
+    return `<os-tmpdir>/${pathImpl.basename(pathImpl.dirname(defaultRoot))}/${pathImpl.basename(defaultRoot)}`;
   }
-  return `<persistent-root>/${path.basename(absRoot)}`;
+  return `<persistent-root>/${pathImpl.basename(absRoot)}`;
 }
 
 export function validateReportStorageConfig({
   env = process.env,
   cwd,
   fsImpl = fsSync,
+  pathImpl = path,
 } = {}) {
-  const repoRoot = cwd ? path.resolve(String(cwd)) : defaultRepoRoot();
+  const repoRoot = cwd ? pathImpl.resolve(String(cwd)) : defaultRepoRoot();
   const production = !isLocalNodeEnv(env);
   const rawValue = env?.REPORT_STORAGE_LOCAL_DIR;
 
@@ -299,13 +300,13 @@ export function validateReportStorageConfig({
     });
   }
 
-  if (!path.isAbsolute(trimmed)) {
+  if (!pathImpl.isAbsolute(trimmed)) {
     const err = new Error("REPORT_STORAGE_LOCAL_DIR must resolve to an absolute path");
     err.code = "report_storage_config_relative_root";
     throw err;
   }
 
-  const absRoot = path.resolve(trimmed);
+  const absRoot = pathImpl.resolve(trimmed);
 
   if (production && isBlockedProductionRoot(absRoot)) {
     const err = new Error(
@@ -315,7 +316,7 @@ export function validateReportStorageConfig({
     throw err;
   }
 
-  if (isPathInside(repoRoot, absRoot)) {
+  if (isPathInside(repoRoot, absRoot, pathImpl)) {
     const err = new Error("REPORT_STORAGE_LOCAL_DIR must resolve outside the project root");
     err.code = "report_storage_config_inside_repo";
     throw err;
@@ -345,7 +346,7 @@ export function validateReportStorageConfig({
     }
   }
 
-  const probe = path.join(absRoot, STORAGE_WRITE_CHECK_FILENAME);
+  const probe = pathImpl.join(absRoot, STORAGE_WRITE_CHECK_FILENAME);
   try {
     fsImpl.writeFileSync(probe, Buffer.from("ok"));
     fsImpl.unlinkSync(probe);
@@ -364,6 +365,7 @@ export function validateReportStorageConfig({
       configured: true,
       absRoot,
       defaultRoot: absRoot,
+      pathImpl,
     }),
   });
 }

@@ -1,5 +1,7 @@
 const GOOGLE_REAUTH_KEY = "pm_google_reauth";
 const ACTIVE_LOCATION_KEY = "pm_active_location_id";
+const LEGACY_SESSION_KEYS = ["pm_access_token", "pm_auth_user"];
+const LEGACY_LOCAL_KEYS = ["pm_auth_identity"];
 
 function readJson(storage, key) {
   try {
@@ -8,6 +10,13 @@ function readJson(storage, key) {
     return null;
   }
 }
+
+export function clearLegacyAuthStorage() {
+  for (const key of LEGACY_SESSION_KEYS) globalThis.sessionStorage?.removeItem(key);
+  for (const key of LEGACY_LOCAL_KEYS) globalThis.localStorage?.removeItem(key);
+}
+
+clearLegacyAuthStorage();
 
 export function clearSession() {
   sessionStorage?.removeItem(GOOGLE_REAUTH_KEY);

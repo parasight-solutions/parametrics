@@ -20,6 +20,7 @@ import { inputClass } from "../../utils/getInputClass";
 
 export default function SelectDropdown({
   id,
+  icon,
   options,
   selectedOptions = [],
   placeholder,
@@ -35,6 +36,8 @@ export default function SelectDropdown({
   className = "",
   onBlur,
 }) {
+  const Icon = icon;
+
   const [isOpen, setIsOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const searchInputRef = useRef(null);
@@ -133,12 +136,20 @@ export default function SelectDropdown({
           "aria-required": required || undefined,
           "aria-disabled": disabled || undefined,
         })}
-        className={`${inputClass(error)} ${className} ${
+        className={`${Icon && "pl-9"} ${inputClass(error)} ${className} ${
           multiple ? "h-auto min-h-10" : ""
         } flex items-center justify-between gap-3 text-left ${
           disabled ? "cursor-not-allowed opacity-60" : "cursor-pointer"
         }`}
       >
+        {Icon && (
+          <Icon
+            size={16}
+            className="absolute top-1/2 -translate-y-1/2 left-3"
+            color="#717781"
+          />
+        )}
+
         {multiple ? (
           <div className="flex min-w-0 flex-1 flex-wrap gap-2">
             {hasSelection ? (

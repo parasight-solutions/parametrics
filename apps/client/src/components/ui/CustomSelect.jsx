@@ -9,6 +9,7 @@ export default function CustomSelect({
   className = "",
   id,
   name,
+  icon,
   loading = false,
   disabled = false,
   required = false,
@@ -41,6 +42,7 @@ export default function CustomSelect({
     <div className="relative w-full">
       <SelectDropdown
         id={id}
+        icon={icon}
         options={options}
         selectedOptions={selectedItem ? [selectedItem] : []}
         placeholder={placeholder}
