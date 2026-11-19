@@ -1,7 +1,14 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { useNavigate } from "react-router-dom";
-import { FilePenLine, Plus, RefreshCcw, Search, Trash2 } from "lucide-react";
+import {
+  FilePenLine,
+  LoaderCircle,
+  Plus,
+  RefreshCcw,
+  Search,
+  Trash2,
+} from "lucide-react";
 
 import DataTable from "../../components/DataTable";
 
@@ -30,6 +37,10 @@ import { useNotify } from "../../context/notification/useNotify";
 import { useLocation } from "../../context/location/useLocation";
 
 import { BADGE_STATUS_COLORS } from "../../constant";
+import {
+  getPostDeleteErrorMessage,
+  isPostDeleteDisabled,
+} from "../../utils/postDeleteUi";
 
 const STATUS_OPTIONS = [
   { label: "All", value: "all" },
@@ -51,6 +62,9 @@ const Posts = () => {
 
   const [totalPages, setTotalPages] = useState(0);
   const [posts, setPosts] = useState([]);
+
+  const [deletingPostIds, setDeletingPostIds] = useState(() => new Set());
+  const deletingPostIdsRef = useRef(new Set());
 
   const {
     params,
@@ -86,16 +100,29 @@ const Posts = () => {
     });
   }, [callApi, activeLocation, getParams]);
 
-  const deletePost = (postId) => {
-    callApi("deleting", () => postsEndpoints.deletePost(postId), {
-      onSuccess: () => {
-        fetchPosts();
-        notify.msgSuccess("Post deleted!");
-      },
-      onError: () => {
-        notify.msgSuccess("Failed to delete post!");
-      },
-    });
+  const deletePost = async (postId) => {
+    if (deletingPostIdsRef.current.has(postId)) return;
+
+    deletingPostIdsRef.current.add(postId);
+    setDeletingPostIds(new Set(deletingPostIdsRef.current));
+    try {
+      await callApi(
+        `deleting:${postId}`,
+        () => postsEndpoints.deletePost(postId),
+        {
+          onSuccess: () => {
+            fetchPosts();
+            notify.msgSuccess("Post deleted!");
+          },
+          onError: (error) => {
+            notify.msgError(getPostDeleteErrorMessage(error));
+          },
+        },
+      );
+    } finally {
+      deletingPostIdsRef.current.delete(postId);
+      setDeletingPostIds(new Set(deletingPostIdsRef.current));
+    }
   };
 
   const retryPost = (postId) => {
@@ -154,6 +181,7 @@ const Posts = () => {
 
     const isPublished = status === "published";
     const isFailed = status === "failed";
+    const isDeleting = deletingPostIds.has(id);
     const hasProviderPostUrl = isProviderPostUrl(provider_post_url);
 
     return {
@@ -198,10 +226,22 @@ const Posts = () => {
           />
 
           <ActionButton
-            title="Delete"
+            title={
+              status === "publishing"
+                ? "Cannot delete while publishing"
+                : isDeleting
+                  ? "Deleting"
+                  : "Delete"
+            }
             variant="red"
-            icon={Trash2}
+            icon={isDeleting ? LoaderCircle : Trash2}
+            iconClass={isDeleting ? "animate-spin" : ""}
             onClick={() => deletePost(id)}
+            disabled={isPostDeleteDisabled({
+              status,
+              postId: id,
+              deletingPostIds,
+            })}
           />
 
           <ActionButton

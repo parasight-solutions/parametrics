@@ -4,13 +4,21 @@ import crypto from "crypto";
 import { col } from "../lib/mongo.js";
 import { authenticate } from "../middleware/auth.js";
 import {
-  getActiveGoogleIntegration,
   getGoogleIntegrationById,
   ensureAccessToken,
 } from "../integrations/google.store.js";
-import { createLocalPost, listAccounts, listLocalPosts } from "../integrations/google.js";
+import {
+  createLocalPost,
+  deleteLocalPost,
+  listAccounts,
+  listLocalPosts,
+} from "../integrations/google.js";
 import { makeQueue } from "../lib/queues.js";
-import { generationRateLimit, mutationRateLimit, syncRateLimit } from "../middleware/rateLimit.js";
+import {
+  generationRateLimit,
+  mutationRateLimit,
+  syncRateLimit,
+} from "../middleware/rateLimit.js";
 import {
   assertDocMatchesLocationScope,
   requireOwnedLocation,
@@ -25,13 +33,28 @@ import {
   providerFieldsFromGooglePost,
 } from "../services/postList.js";
 import { getPostDetailsForUser } from "../services/postDetails.js";
-import { createImageUploadMiddleware, createPostImageStorage, resolvePostImageSource, resolvePostUploadConfig } from "../services/postImageStorage.js";
+import {
+  createImageUploadMiddleware,
+  createPostImageStorage,
+  resolvePostImageSource,
+  resolvePostUploadConfig,
+} from "../services/postImageStorage.js";
 import { buildGoogleLocalPostPayload } from "../services/googlePostPayload.js";
+import {
+  claimPostForPublishing,
+  markPostPublished,
+} from "../services/postPublishLifecycle.js";
+import { deletePostWithProvider } from "../services/postDeletion.js";
 
 const router = Router();
 const publishQueue = makeQueue("post-publish");
 const PUBLISH_JOB_ID = (postId) => `publish_${postId}`;
-const LOCATION_READ_ROLES = Object.freeze(["owner", "admin", "manager", "viewer"]);
+const LOCATION_READ_ROLES = Object.freeze([
+  "owner",
+  "admin",
+  "manager",
+  "viewer",
+]);
 const LOCATION_OPERATION_ROLES = Object.freeze(["owner", "admin", "manager"]);
 const postImageConfig = resolvePostUploadConfig();
 const postImageStorage = createPostImageStorage(postImageConfig);
@@ -41,16 +64,24 @@ async function removePublishJob(postId) {
   const jobId = PUBLISH_JOB_ID(postId);
   const j = await publishQueue.getJob(jobId);
   if (j) {
-    try { await j.remove(); } catch { }
+    try {
+      await j.remove();
+    } catch {}
   }
 }
 
-async function enqueuePublishNow({ postId, userId, reason = "manual-publish" }) {
+async function enqueuePublishNow({
+  postId,
+  userId,
+  reason = "manual-publish",
+}) {
   const jobId = PUBLISH_JOB_ID(postId);
 
   const existing = await publishQueue.getJob(jobId);
   if (existing) {
-    try { await existing.remove(); } catch { }
+    try {
+      await existing.remove();
+    } catch {}
   }
 
   await publishQueue.add(
@@ -62,7 +93,7 @@ async function enqueuePublishNow({ postId, userId, reason = "manual-publish" }) 
       backoff: { type: "exponential", delay: 2000 },
       removeOnComplete: 1000,
       removeOnFail: 1000,
-    }
+    },
   );
 }
 
@@ -71,16 +102,19 @@ function normalizeCreateBody(body = {}) {
   const summary = body.summary || body.text || "";
 
   const imageUrl = body.imageUrl || body.image_url || null;
-  const callToActionUrl = body.callToActionUrl || body.call_to_action_url || null;
-  const callToActionType = body.callToActionType || body.call_to_action_type || null;
+  const callToActionUrl =
+    body.callToActionUrl || body.call_to_action_url || null;
+  const callToActionType =
+    body.callToActionType || body.call_to_action_type || null;
   const languageCode = body.languageCode || body.language_code || null;
   const topicType = body.topicType || body.topic_type || null;
   const scheduleAt = body.scheduleAt || body.scheduled_at || null;
-  const publishNow = typeof body.publishNow === "boolean"
-    ? body.publishNow
-    : typeof body.publishNow === "string"
-      ? body.publishNow.toLowerCase() === "true"
-      : !scheduleAt;
+  const publishNow =
+    typeof body.publishNow === "boolean"
+      ? body.publishNow
+      : typeof body.publishNow === "string"
+        ? body.publishNow.toLowerCase() === "true"
+        : !scheduleAt;
 
   return {
     locationId: String(locationId || ""),
@@ -130,7 +164,7 @@ async function mapLocationsById(userId, locationIds) {
           organization_id: 1,
           client_id: 1,
         },
-      }
+      },
     )
     .toArray();
 
@@ -149,14 +183,35 @@ async function mapLocationsById(userId, locationIds) {
   return m;
 }
 
-export async function publishPostNow(postId) {
+export async function publishPostNow(
+  postId,
+  { userId = null, attemptId = crypto.randomUUID() } = {},
+) {
   const posts = await col("posts");
 
-  const post = await posts.findOne({ id: postId });
-  if (!post) throw new Error("post_not_found");
-  if (post.status === "published") return { name: post.provider_post_name || null };
+  const existing = await posts.findOne({
+    id: postId,
+    ...(userId ? { user_id: userId } : {}),
+  });
+  if (!existing) throw new Error("post_not_found");
+  if (existing.status === "published")
+    return { name: existing.provider_post_name || null };
 
-  const loc = await requireOwnedLocation(post.user_id, post.location_id, { provider: "google" });
+  const post = await claimPostForPublishing(posts, {
+    postId,
+    userId: existing.user_id,
+    attemptId,
+  });
+  if (!post) {
+    const error = new Error("post_publish_not_claimed");
+    error.code = "post_publish_not_claimed";
+    error.status = 409;
+    throw error;
+  }
+
+  const loc = await requireOwnedLocation(post.user_id, post.location_id, {
+    provider: "google",
+  });
   assertDocMatchesLocationScope(post, loc, "post");
 
   const integrationId = loc.integration_id || post.integration_id;
@@ -167,9 +222,12 @@ export async function publishPostNow(postId) {
 
   const { access_token } = await ensureAccessToken(integ);
 
-  const providerAccount = loc.provider_account_name || post.provider_account_name;
-  const providerLocation = loc.provider_location_name || post.provider_location_name;
-  if (!providerAccount || !providerLocation) throw new Error("post_missing_provider_refs");
+  const providerAccount =
+    loc.provider_account_name || post.provider_account_name;
+  const providerLocation =
+    loc.provider_location_name || post.provider_location_name;
+  if (!providerAccount || !providerLocation)
+    throw new Error("post_missing_provider_refs");
 
   const postScope = {
     id: postId,
@@ -179,11 +237,6 @@ export async function publishPostNow(postId) {
     location_id: loc.id,
   };
 
-  await posts.updateOne(
-    postScope,
-    { $set: { status: "publishing", updated_at: new Date() } }
-  );
-
   try {
     const payload = buildGoogleLocalPostPayload(post);
 
@@ -191,26 +244,24 @@ export async function publishPostNow(postId) {
       access_token,
       providerAccount,
       providerLocation,
-      payload
+      payload,
     );
 
-    await posts.updateOne(
-      postScope,
-      {
-        $set: {
-          status: "published",
-          ...providerFieldsFromGooglePost(created),
-          provider_error: null,
-          updated_at: new Date(),
-        },
-        $unset: {
-          provider_error_detail: "",
-        },
-      }
-    );
+    const updated = await markPostPublished(posts, {
+      scope: postScope,
+      attemptId,
+      providerFields: providerFieldsFromGooglePost(created),
+    });
+    if (!updated) {
+      const error = new Error("post_publish_state_changed");
+      error.code = "post_publish_state_changed";
+      error.status = 409;
+      throw error;
+    }
 
     return created;
   } catch (e) {
+    e.postScope = postScope;
     throw e;
   }
 }
@@ -218,7 +269,9 @@ export async function publishPostNow(postId) {
 router.get("/", authenticate, async (req, res) => {
   try {
     const userId = req.user.user_id;
-    const { keyword, status, page, perPage } = normalizePostListQuery(req.query);
+    const { keyword, status, page, perPage } = normalizePostListQuery(
+      req.query,
+    );
     const locationId = (req.query.locationId || req.query.location_id || "")
       .toString()
       .trim();
@@ -276,7 +329,10 @@ router.get("/", authenticate, async (req, res) => {
         .limit(perPage)
         .toArray(),
     ]);
-    const locMap = await mapLocationsById(userId, rows.map((r) => r.location_id));
+    const locMap = await mapLocationsById(
+      userId,
+      rows.map((r) => r.location_id),
+    );
 
     const posts = rows.map((p) => {
       const loc = locMap.get(p.location_id) || null;
@@ -322,7 +378,9 @@ router.get("/provider", authenticate, syncRateLimit, async (req, res) => {
     const userId = req.user.user_id;
     const locationId = String(req.query.locationId || "").trim();
     if (!locationId) {
-      return res.status(400).json({ error: { code: "bad_request", message: "locationId required" } });
+      return res.status(400).json({
+        error: { code: "bad_request", message: "locationId required" },
+      });
     }
 
     const { location: loc } = await requireOwnedOrganizationLocationAccess({
@@ -339,13 +397,23 @@ router.get("/provider", authenticate, syncRateLimit, async (req, res) => {
 
     const integ = await getGoogleIntegrationById(userId, integrationId);
     if (!integ) {
-      return res.status(409).json({ error: { code: "no_integration_for_location" } });
+      return res
+        .status(409)
+        .json({ error: { code: "no_integration_for_location" } });
     }
 
     const { access_token } = await ensureAccessToken(integ);
-    const data = await listLocalPosts(access_token, loc.provider_account_name, loc.provider_location_name, { pageSize: 20 });
+    const data = await listLocalPosts(
+      access_token,
+      loc.provider_account_name,
+      loc.provider_location_name,
+      { pageSize: 20 },
+    );
 
-    return res.json({ provider_posts: data?.localPosts || [], nextPageToken: data?.nextPageToken || null });
+    return res.json({
+      provider_posts: data?.localPosts || [],
+      nextPageToken: data?.nextPageToken || null,
+    });
   } catch (e) {
     return toApiError(res, e);
   }
@@ -371,146 +439,205 @@ router.get("/:id", authenticate, async (req, res) => {
   }
 });
 
-router.post("/", authenticate, generationRateLimit, parsePostImage, async (req, res) => {
-  let storedImage = null;
-  try {
-    const userId = req.user.user_id;
-    const b = normalizeCreateBody(req.body);
-
-    if (!b.publishNow && b.scheduleAt) {
-      if (Number.isNaN(b.scheduleAt.getTime())) {
-        return res.status(400).json({
-          error: { code: "bad_request", message: "invalid scheduleAt" },
-        });
-      }
-    }
-
-    if (!b.locationId) {
-      return res.status(400).json({ error: { code: "bad_request", message: "locationId required" } });
-    }
-    if (!b.summary) {
-      return res.status(400).json({ error: { code: "bad_request", message: "summary required" } });
-    }
-
-    const { location: loc, membership } = await requireOwnedOrganizationLocationAccess({
-      userId,
-      locationId: b.locationId,
-      provider: "google",
-      allowedRoles: LOCATION_OPERATION_ROLES,
-    });
-    if (!loc.integration_id) {
-      return res.status(409).json({
-        error: {
-          code: "location_not_bound",
-          message:
-            "This location is not bound to a Google connection. Re-import locations after connecting Google.",
-        },
-      });
-    }
-
+router.post(
+  "/",
+  authenticate,
+  generationRateLimit,
+  parsePostImage,
+  async (req, res) => {
+    let storedImage = null;
     try {
-      const integ = await getGoogleIntegrationById(userId, loc.integration_id);
-      if (!integ) {
-        return res.status(409).json({
-          error: { code: "no_integration_for_location", message: "Google connection for this location not found" },
+      const userId = req.user.user_id;
+      const b = normalizeCreateBody(req.body);
+
+      if (!b.publishNow && b.scheduleAt) {
+        if (Number.isNaN(b.scheduleAt.getTime())) {
+          return res.status(400).json({
+            error: { code: "bad_request", message: "invalid scheduleAt" },
+          });
+        }
+      }
+
+      if (!b.locationId) {
+        return res.status(400).json({
+          error: { code: "bad_request", message: "locationId required" },
+        });
+      }
+      if (!b.summary) {
+        return res.status(400).json({
+          error: { code: "bad_request", message: "summary required" },
         });
       }
 
-      const tokenObj = await ensureAccessToken(integ);
-      const accessToken = tokenObj?.access_token || tokenObj?.accessToken || tokenObj;
-
-      await assertLocationAccessible(accessToken, loc);
-    } catch (e) {
-      if (e?.code === "account_mismatch") {
+      const { location: loc, membership } =
+        await requireOwnedOrganizationLocationAccess({
+          userId,
+          locationId: b.locationId,
+          provider: "google",
+          allowedRoles: LOCATION_OPERATION_ROLES,
+        });
+      if (!loc.integration_id) {
         return res.status(409).json({
           error: {
-            code: "account_mismatch",
+            code: "location_not_bound",
             message:
-              "This location belongs to a different Google account. Switch connection and re-import locations.",
-            data: e.data || null,
+              "This location is not bound to a Google connection. Re-import locations after connecting Google.",
           },
         });
       }
-      return res.status(500).json({ error: { code: "server_error", message: e?.message || "server_error" } });
-    }
 
-    const imageSource = await resolvePostImageSource({ file: req.file, imageUrl: b.imageUrl, storage: postImageStorage });
-    storedImage = imageSource.storedFilename ? { filename: imageSource.storedFilename } : null;
-    const resolvedImageUrl = imageSource.imageUrl;
+      try {
+        const integ = await getGoogleIntegrationById(
+          userId,
+          loc.integration_id,
+        );
+        if (!integ) {
+          return res.status(409).json({
+            error: {
+              code: "no_integration_for_location",
+              message: "Google connection for this location not found",
+            },
+          });
+        }
 
-    const id = crypto.randomUUID();
-    const now = new Date();
+        const tokenObj = await ensureAccessToken(integ);
+        const accessToken =
+          tokenObj?.access_token || tokenObj?.accessToken || tokenObj;
 
-    const doc = {
-      id,
-      user_id: userId,
-      organization_id: loc.organization_id,
-      client_id: loc.client_id,
-      location_id: loc.id,
-      integration_id: loc.integration_id,
-      provider_account_name: loc.provider_account_name || null,
-      provider_location_name: loc.provider_location_name || null,
-      summary: b.summary,
-      image_url: resolvedImageUrl,
-      call_to_action_url: b.callToActionUrl,
-      topic_type: b.topicType || "STANDARD",
-      language_code: b.languageCode || "en-US",
-      call_to_action_type: b.callToActionType || null,
-      status: b.publishNow ? "queued" : "scheduled",
-      scheduled_at: b.publishNow ? null : b.scheduleAt,
-      ai_status: "done",
-      ai_error: null,
-      ai_generated_at: now,
-      provider_post_name: null,
-      provider_error: null,
-      created_at: now,
-      updated_at: now,
-    };
+        await assertLocationAccessible(accessToken, loc);
+      } catch (e) {
+        if (e?.code === "account_mismatch") {
+          return res.status(409).json({
+            error: {
+              code: "account_mismatch",
+              message:
+                "This location belongs to a different Google account. Switch connection and re-import locations.",
+              data: e.data || null,
+            },
+          });
+        }
+        return res.status(500).json({
+          error: {
+            code: "server_error",
+            message: e?.message || "server_error",
+          },
+        });
+      }
 
-    await (await col("posts")).insertOne(doc);
+      const imageSource = await resolvePostImageSource({
+        file: req.file,
+        imageUrl: b.imageUrl,
+        storage: postImageStorage,
+      });
+      storedImage = imageSource.storedFilename
+        ? { filename: imageSource.storedFilename }
+        : null;
+      const resolvedImageUrl = imageSource.imageUrl;
 
-    if (b.publishNow) {
-      await enqueuePublishNow({ postId: id, userId, reason: "manual-publish" });
-      await auditQueued(req, "post.publish.queue", {
+      const id = crypto.randomUUID();
+      const now = new Date();
+
+      const doc = {
+        id,
+        user_id: userId,
+        organization_id: loc.organization_id,
+        client_id: loc.client_id,
+        location_id: loc.id,
+        integration_id: loc.integration_id,
+        provider_account_name: loc.provider_account_name || null,
+        provider_location_name: loc.provider_location_name || null,
+        summary: b.summary,
+        image_url: resolvedImageUrl,
+        call_to_action_url: b.callToActionUrl,
+        topic_type: b.topicType || "STANDARD",
+        language_code: b.languageCode || "en-US",
+        call_to_action_type: b.callToActionType || null,
+        status: b.publishNow ? "queued" : "scheduled",
+        scheduled_at: b.publishNow ? null : b.scheduleAt,
+        ai_status: "done",
+        ai_error: null,
+        ai_generated_at: now,
+        provider_post_name: null,
+        provider_error: null,
+        created_at: now,
+        updated_at: now,
+      };
+
+      await (await col("posts")).insertOne(doc);
+
+      if (b.publishNow) {
+        await enqueuePublishNow({
+          postId: id,
+          userId,
+          reason: "manual-publish",
+        });
+        await auditQueued(req, "post.publish.queue", {
+          target_type: "post",
+          target_id: id,
+          organization_id: loc.organization_id,
+          client_id: loc.client_id,
+          location_id: loc.id,
+          provider: "google",
+          metadata: {
+            reason: "manual-publish",
+            membership_role: membership.role,
+          },
+        });
+      } else {
+        await removePublishJob(id);
+      }
+
+      await auditSuccess(req, "post.create", {
         target_type: "post",
         target_id: id,
         organization_id: loc.organization_id,
         client_id: loc.client_id,
         location_id: loc.id,
         provider: "google",
-        metadata: { reason: "manual-publish", membership_role: membership.role },
+        metadata: {
+          status: doc.status,
+          publishNow: b.publishNow,
+          membership_role: membership.role,
+        },
       });
-    } else {
-      await removePublishJob(id);
-    }
 
-    await auditSuccess(req, "post.create", {
-      target_type: "post",
-      target_id: id,
-      organization_id: loc.organization_id,
-      client_id: loc.client_id,
-      location_id: loc.id,
-      provider: "google",
-      metadata: { status: doc.status, publishNow: b.publishNow, membership_role: membership.role },
-    });
-
-    return res.json({
-      post: {
-        ...doc,
-        location: { id: loc.id, title: loc.title || loc.name || loc.provider_location_name || loc.id },
-      },
-    });
-  } catch (e) {
-    if (storedImage?.filename) await postImageStorage.deleteImage(storedImage.filename).catch(() => {});
-    if (["unsupported_image_type", "invalid_image_url", "image_url_must_be_public_https", "image_url_not_public", "missing_file"].includes(e?.code)) {
-      return res.status(400).json({ error: { code: e.code, message: e.message } });
+      return res.json({
+        post: {
+          ...doc,
+          location: {
+            id: loc.id,
+            title:
+              loc.title || loc.name || loc.provider_location_name || loc.id,
+          },
+        },
+      });
+    } catch (e) {
+      if (storedImage?.filename)
+        await postImageStorage
+          .deleteImage(storedImage.filename)
+          .catch(() => {});
+      if (
+        [
+          "unsupported_image_type",
+          "invalid_image_url",
+          "image_url_must_be_public_https",
+          "image_url_not_public",
+          "missing_file",
+        ].includes(e?.code)
+      ) {
+        return res
+          .status(400)
+          .json({ error: { code: e.code, message: e.message } });
+      }
+      if (e?.code === "image_too_large") {
+        return res
+          .status(413)
+          .json({ error: { code: e.code, message: e.message } });
+      }
+      return toApiError(res, e);
     }
-    if (e?.code === "image_too_large") {
-      return res.status(413).json({ error: { code: e.code, message: e.message } });
-    }
-    return toApiError(res, e);
-  }
-});
+  },
+);
 
 router.patch("/:id", authenticate, generationRateLimit, async (req, res) => {
   try {
@@ -520,28 +647,42 @@ router.patch("/:id", authenticate, generationRateLimit, async (req, res) => {
 
     const post = await posts.findOne({ id, user_id: userId });
     if (!post) {
-      return res.status(404).json({ error: { code: "not_found", message: "post not found" } });
+      return res
+        .status(404)
+        .json({ error: { code: "not_found", message: "post not found" } });
     }
 
-    const { location: loc, membership } = await requireOwnedOrganizationLocationAccess({
-      userId,
-      locationId: post.location_id,
-      provider: "google",
-      allowedRoles: LOCATION_OPERATION_ROLES,
-    });
+    const { location: loc, membership } =
+      await requireOwnedOrganizationLocationAccess({
+        userId,
+        locationId: post.location_id,
+        provider: "google",
+        allowedRoles: LOCATION_OPERATION_ROLES,
+      });
     assertDocMatchesLocationScope(post, loc, "post");
 
     if (post.status === "publishing") {
-      return res.status(409).json({ error: { code: "conflict", message: "post is publishing; cannot edit now" } });
+      return res.status(409).json({
+        error: {
+          code: "conflict",
+          message: "post is publishing; cannot edit now",
+        },
+      });
     }
 
     if (post.status === "published") {
-      return res.status(409).json({ error: { code: "conflict", message: "published posts cannot be edited" } });
+      return res.status(409).json({
+        error: {
+          code: "conflict",
+          message: "published posts cannot be edited",
+        },
+      });
     }
 
     const body = req.body || {};
     const summary = body.summary ?? body.text;
-    const publishNow = typeof body.publishNow === "boolean" ? body.publishNow : undefined;
+    const publishNow =
+      typeof body.publishNow === "boolean" ? body.publishNow : undefined;
     const scheduleAtRaw = body.scheduleAt ?? body.scheduled_at;
 
     const $set = { updated_at: new Date() };
@@ -559,7 +700,9 @@ router.patch("/:id", authenticate, generationRateLimit, async (req, res) => {
       if (scheduleAtRaw) {
         const dt = new Date(scheduleAtRaw);
         if (Number.isNaN(dt.getTime())) {
-          return res.status(400).json({ error: { code: "bad_request", message: "invalid scheduleAt" } });
+          return res.status(400).json({
+            error: { code: "bad_request", message: "invalid scheduleAt" },
+          });
         }
         $set.status = "scheduled";
         $set.scheduled_at = dt;
@@ -605,7 +748,11 @@ router.patch("/:id", authenticate, generationRateLimit, async (req, res) => {
       client_id: loc.client_id,
       location_id: loc.id,
       provider: "google",
-      metadata: { status: updated.status, queued: updated.status === "queued", membership_role: membership.role },
+      metadata: {
+        status: updated.status,
+        queued: updated.status === "queued",
+        membership_role: membership.role,
+      },
     });
 
     return res.json({ post: updated });
@@ -614,47 +761,59 @@ router.patch("/:id", authenticate, generationRateLimit, async (req, res) => {
   }
 });
 
-router.post("/:id/retry", authenticate, generationRateLimit, async (req, res) => {
-  try {
-    const userId = req.user.user_id;
-    const id = String(req.params.id || "");
-    const posts = await col("posts");
+router.post(
+  "/:id/retry",
+  authenticate,
+  generationRateLimit,
+  async (req, res) => {
+    try {
+      const userId = req.user.user_id;
+      const id = String(req.params.id || "");
+      const posts = await col("posts");
 
-    const post = await posts.findOne({ id, user_id: userId });
-    if (!post) {
-      return res.status(404).json({ error: { code: "not_found", message: "post not found" } });
-    }
+      const post = await posts.findOne({ id, user_id: userId });
+      if (!post) {
+        return res
+          .status(404)
+          .json({ error: { code: "not_found", message: "post not found" } });
+      }
 
-    const { location: loc, membership } = await requireOwnedOrganizationLocationAccess({
-      userId,
-      locationId: post.location_id,
-      provider: "google",
-      allowedRoles: LOCATION_OPERATION_ROLES,
-    });
-    assertDocMatchesLocationScope(post, loc, "post");
+      const { location: loc, membership } =
+        await requireOwnedOrganizationLocationAccess({
+          userId,
+          locationId: post.location_id,
+          provider: "google",
+          allowedRoles: LOCATION_OPERATION_ROLES,
+        });
+      assertDocMatchesLocationScope(post, loc, "post");
 
-    if (post.status !== "failed") {
-      return res.status(409).json({ error: { code: "conflict", message: "only failed posts can be retried" } });
-    }
+      if (post.status !== "failed") {
+        return res.status(409).json({
+          error: {
+            code: "conflict",
+            message: "only failed posts can be retried",
+          },
+        });
+      }
 
-    const rebind = {};
-    if (loc?.integration_id) rebind.integration_id = loc.integration_id;
-    if (loc?.provider_account_name) rebind.provider_account_name = loc.provider_account_name;
-    if (loc?.provider_location_name) rebind.provider_location_name = loc.provider_location_name;
-    if (!post.topic_type) rebind.topic_type = "STANDARD";
-    if (!post.language_code) rebind.language_code = "en-US";
+      const rebind = {};
+      if (loc?.integration_id) rebind.integration_id = loc.integration_id;
+      if (loc?.provider_account_name)
+        rebind.provider_account_name = loc.provider_account_name;
+      if (loc?.provider_location_name)
+        rebind.provider_location_name = loc.provider_location_name;
+      if (!post.topic_type) rebind.topic_type = "STANDARD";
+      if (!post.language_code) rebind.language_code = "en-US";
 
-    const postScope = {
-      id,
-      user_id: userId,
-      organization_id: loc.organization_id,
-      client_id: loc.client_id,
-      location_id: loc.id,
-    };
+      const postScope = {
+        id,
+        user_id: userId,
+        organization_id: loc.organization_id,
+        client_id: loc.client_id,
+        location_id: loc.id,
+      };
 
-    await posts.updateOne(
-      postScope,
-      {
+      await posts.updateOne(postScope, {
         $set: {
           status: "queued",
           provider_error: null,
@@ -664,26 +823,26 @@ router.post("/:id/retry", authenticate, generationRateLimit, async (req, res) =>
         $unset: {
           provider_error_detail: "",
         },
-      }
-    );
+      });
 
-    await enqueuePublishNow({ postId: id, userId, reason: "manual-retry" });
+      await enqueuePublishNow({ postId: id, userId, reason: "manual-retry" });
 
-    await auditQueued(req, "post.retry", {
-      target_type: "post",
-      target_id: id,
-      organization_id: loc.organization_id,
-      client_id: loc.client_id,
-      location_id: loc.id,
-      provider: "google",
-      metadata: { reason: "manual-retry", membership_role: membership.role },
-    });
+      await auditQueued(req, "post.retry", {
+        target_type: "post",
+        target_id: id,
+        organization_id: loc.organization_id,
+        client_id: loc.client_id,
+        location_id: loc.id,
+        provider: "google",
+        metadata: { reason: "manual-retry", membership_role: membership.role },
+      });
 
-    return res.json({ ok: true });
-  } catch (e) {
-    return toApiError(res, e);
-  }
-});
+      return res.json({ ok: true });
+    } catch (e) {
+      return toApiError(res, e);
+    }
+  },
+);
 
 router.delete("/:id", authenticate, mutationRateLimit, async (req, res) => {
   try {
@@ -693,25 +852,30 @@ router.delete("/:id", authenticate, mutationRateLimit, async (req, res) => {
 
     const post = await posts.findOne({ id, user_id: userId });
     if (!post) {
-      return res.status(404).json({ error: { code: "not_found", message: "post not found" } });
+      return res
+        .status(404)
+        .json({ error: { code: "not_found", message: "post not found" } });
     }
 
-    const { location: loc, membership } = await requireOwnedOrganizationLocationAccess({
-      userId,
-      locationId: post.location_id,
-      provider: "google",
-      allowedRoles: LOCATION_OPERATION_ROLES,
-    });
+    const { location: loc, membership } =
+      await requireOwnedOrganizationLocationAccess({
+        userId,
+        locationId: post.location_id,
+        provider: "google",
+        allowedRoles: LOCATION_OPERATION_ROLES,
+      });
     assertDocMatchesLocationScope(post, loc, "post");
 
-    await removePublishJob(id);
-    await posts.deleteOne({
-      id,
-      user_id: userId,
-      organization_id: loc.organization_id,
-      client_id: loc.client_id,
-      location_id: loc.id,
-    });
+    const deletion = await deletePostWithProvider(
+      { post, location: loc, userId },
+      {
+        posts,
+        removePublishJob,
+        getIntegrationById: getGoogleIntegrationById,
+        ensureAccessToken,
+        deleteLocalPost,
+      },
+    );
 
     await auditSuccess(req, "post.delete", {
       target_type: "post",
@@ -720,10 +884,10 @@ router.delete("/:id", authenticate, mutationRateLimit, async (req, res) => {
       client_id: loc.client_id,
       location_id: loc.id,
       provider: "google",
-      metadata: { membership_role: membership.role },
+      metadata: { membership_role: membership.role, remote: deletion.remote },
     });
 
-    return res.json({ ok: true });
+    return res.json(deletion);
   } catch (e) {
     return toApiError(res, e);
   }
