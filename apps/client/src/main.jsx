@@ -6,6 +6,7 @@ import "./index.css";
 import App from "./App.jsx";
 
 import { AuthProvider } from "./context/auth/AuthContext.jsx";
+import { LocationProvider } from "./context/location/LocationContext.jsx";
 import { NotificationsProvider } from "./context/notification/NotificationsProvider.jsx";
 
 createRoot(document.getElementById("root")).render(
@@ -19,7 +20,9 @@ createRoot(document.getElementById("root")).render(
     >
       <NotificationsProvider>
         <AuthProvider>
-          <App />
+          <LocationProvider>
+            <App />
+          </LocationProvider>
         </AuthProvider>
       </NotificationsProvider>
     </ConfigProvider>

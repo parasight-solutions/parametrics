@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import {
   clearSession,
+  clearLegacyAuthStorage,
   getActiveLocationId,
   getGoogleReauth,
   setActiveLocationId,
@@ -28,6 +29,7 @@ describe("client browser storage", () => {
     localStorage.setItem("pm_auth_identity", "id:user-1");
     setActiveLocationId("location-1");
     setGoogleReauth({ provider: "google" });
+    clearLegacyAuthStorage();
 
     expect(sessionStorage.getItem("pm_access_token")).toBeNull();
     expect(sessionStorage.getItem("pm_auth_user")).toBeNull();

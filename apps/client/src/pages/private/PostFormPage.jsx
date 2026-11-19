@@ -1,13 +1,15 @@
-import { useCallback, useEffect } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import dayjs from "dayjs";
 import { useNavigate, useParams } from "react-router-dom";
 import { Controller, useForm } from "react-hook-form";
+import { X } from "lucide-react";
 
 import FormField from "../../components/ui/FormField";
 import PageHeader from "../../components/ui/PageHeader";
 import CustomInput from "../../components/ui/CustomInput";
 import CustomSelect from "../../components/ui/CustomSelect";
+import ActionButton from "../../components/ui/ActionButton";
 import CustomButton from "../../components/ui/CustomButton";
 import CustomTextarea from "../../components/ui/CustomTextarea";
 import CustomTimepicker from "../../components/ui/CustomTimepicker";
@@ -27,17 +29,22 @@ const PostFormPage = () => {
   const { notify } = useNotify();
 
   const navigate = useNavigate();
+  const { postId } = useParams();
+
   const { loading, callApi } = useApi();
   const { locationsLoading, locations } = useLocations();
 
   const savingPost = loading?.savingPost;
 
-  const { postId } = useParams();
+  const fileInputRef = useRef(null);
+  const [imageFile, setImageFile] = useState(null);
+  const [imagePreview, setImagePreview] = useState("");
 
   const {
     register,
     handleSubmit,
     reset,
+    setValue,
     control,
     watch,
     formState: { errors },
@@ -52,6 +59,7 @@ const PostFormPage = () => {
   });
 
   const scheduleAt = watch("scheduleAt");
+  const imageUrl = watch("imageUrl");
 
   const fetchPost = useCallback(() => {
     if (!postId) return;
@@ -73,6 +81,7 @@ const PostFormPage = () => {
     const { scheduleAt } = data;
     const payload = {
       ...data,
+      imageFile,
       scheduleAt: scheduleAt ? dayjs(scheduleAt).toISOString() : null,
       publishNow: scheduleAt ? false : true,
     };
@@ -95,11 +104,22 @@ const PostFormPage = () => {
   };
 
   useEffect(() => {
+    if (!imageFile) {
+      setImagePreview(imageUrl || "");
+      return;
+    }
+
+    const objectUrl = URL.createObjectURL(imageFile);
+    setImagePreview(objectUrl);
+    return () => URL.revokeObjectURL(objectUrl);
+  }, [imageFile, imageUrl]);
+
+  useEffect(() => {
     fetchPost();
   }, [fetchPost]);
 
   return (
-    <div className="flex flex-col gap-6">
+    <div className="flex flex-col gap-6 text-sm">
       <PageHeader
         heading={postId ? "Edit Post" : "Add Post"}
         subHeading="Publish an update to a Business Profile location"
@@ -169,17 +189,113 @@ const PostFormPage = () => {
         {!postId && (
           <FormField
             id="imageUrl"
-            label="Image URL"
+            label="Image URL or (Upload)"
             className="col-span-2 md:col-span-1"
             error={errors.imageUrl?.message}
           >
-            <CustomInput
-              id="imageUrl"
-              placeholder="https://"
-              {...register("imageUrl", validateWebsite)}
-            />
+            <div className="w-full flex item-center gap-3">
+              <div className="w-full">
+                <CustomInput
+                  id="imageUrl"
+                  placeholder="https://"
+                  {...register("imageUrl", {
+                    ...validateWebsite,
+                    onChange: (event) => {
+                      const clearNativeFile = Boolean(
+                        String(event.target.value || "").trim(),
+                      );
+
+                      if (clearNativeFile && fileInputRef.current) {
+                        fileInputRef.current.value = "";
+                      }
+
+                      setImageFile(null);
+                    },
+                  })}
+                />
+              </div>
+
+              <CustomButton
+                type="button"
+                name="Choose File"
+                variant="purple_white"
+                className="w-fit"
+                onClick={() => fileInputRef.current.click()}
+              />
+
+              <input
+                ref={fileInputRef}
+                id="imageFile"
+                type="file"
+                accept="image/jpeg,image/png,image/webp"
+                className="hidden"
+                onChange={(event) => {
+                  const file = event.target.files?.[0];
+                  setImageFile(file);
+                  setValue("imageUrl", "", { shouldValidate: true });
+                }}
+              />
+            </div>
           </FormField>
         )}
+
+        {/* Preview Image */}
+        <div className="relative col-span-2 row-span-3 min-h-0 md:col-span-1">
+          {!postId && imagePreview && (
+            <div className="absolute inset-0 w-fit flex items-center justify-center overflow-hidden">
+              <img
+                src={imagePreview}
+                alt="Post preview"
+                className="max-h-full max-w-full rounded object-contain"
+              />
+
+              <ActionButton
+                icon={X}
+                type="button"
+                variant="red"
+                className="absolute top-2 right-2"
+                onClick={() => {
+                  if (fileInputRef.current) {
+                    fileInputRef.current.value = "";
+                  }
+
+                  setImageFile(null);
+                  setValue("imageUrl", "");
+                }}
+              />
+            </div>
+          )}
+        </div>
+
+        {/* Image File */}
+        {/* {!postId && (
+          <FormField
+            id="imageFile"
+            label="Image file"
+            className="col-span-2 md:col-span-1"
+          >
+            <CustomButton
+              type="button"
+              name="Choose File"
+              variant="purple_white"
+              className="w-fit"
+              onClick={() => fileInputRef.current.click()}
+            />
+
+            <input
+              ref={fileInputRef}
+              id="imageFile"
+              type="file"
+              accept="image/jpeg,image/png,image/webp"
+              className="hidden"
+              onChange={(event) => {
+                const file = event.target.files?.[0];
+                setImageFile(file);
+                setValue("imageUrl", "", { shouldValidate: true });
+              }}
+            />
+          </FormField>
+        )} */}
 
         {/* CTA URL */}
         {!postId && (

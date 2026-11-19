@@ -22,15 +22,14 @@ import {
 } from "../../utils/providerPostUrl";
 
 import useApi from "../../hooks/useApi";
-import useLocations from "../../hooks/useLocations";
 import useListParams from "../../hooks/useListParams";
 
 import { postsEndpoints } from "../../services/posts.service";
 
 import { useNotify } from "../../context/notification/useNotify";
+import { useLocation } from "../../context/location/useLocation";
 
 import { BADGE_STATUS_COLORS } from "../../constant";
-import { getActiveLocationId, setActiveLocationId } from "../../session";
 
 const STATUS_OPTIONS = [
   { label: "All", value: "all" },
@@ -44,11 +43,11 @@ const STATUS_OPTIONS = [
 
 const Posts = () => {
   const { notify } = useNotify();
+  const { activeLocation } = useLocation();
 
   const navigate = useNavigate();
 
   const { loading, callApi } = useApi({ postsLoading: true });
-  const { locationsLoading, locations } = useLocations();
 
   const [totalPages, setTotalPages] = useState(0);
   const [posts, setPosts] = useState([]);
@@ -62,18 +61,17 @@ const Posts = () => {
     applyDraftParams,
   } = useListParams(
     {
-      locationId: getActiveLocationId(),
       keyword: null,
       status: "all",
       showAll: false,
       page: 1,
       perPage: 5,
     },
-    { syncWithUrl: true, urlKeys: ["keyword", "status", "locationId", "page"] },
+    { syncWithUrl: true, urlKeys: ["keyword", "status", "page"] },
   );
 
   const fetchPosts = useCallback(() => {
-    const apiParams = { ...getParams() };
+    const apiParams = { locationId: activeLocation, ...getParams() };
     if (getParams()?.showAll) {
       delete apiParams.locationId;
     }
@@ -86,7 +84,7 @@ const Posts = () => {
         setTotalPages(data?.pagination?.totalPages);
       },
     });
-  }, [callApi, getParams]);
+  }, [callApi, activeLocation, getParams]);
 
   const deletePost = (postId) => {
     callApi("deleting", () => postsEndpoints.deletePost(postId), {
@@ -116,8 +114,8 @@ const Posts = () => {
     fetchPosts();
   }, [
     fetchPosts,
+    activeLocation,
     params?.keyword,
-    params?.locationId,
     params?.status,
     params?.showAll,
     params?.page,
@@ -233,27 +231,6 @@ const Posts = () => {
 
       {/* Filters */}
       <div className="p-6 grid grid-cols-12 gap-6 border border-gray-300 rounded-xl">
-        {/* Locations */}
-        <FormField
-          id="locationId"
-          label="Active Location"
-          colSpan="col-span-12 lg:col-span-6"
-          error={!params.locationId && "Select Location"}
-          required
-        >
-          <CustomSelect
-            id="locationId"
-            placeholder="Select Location"
-            value={params?.locationId}
-            options={locations}
-            onChange={(value) => {
-              changeParams("locationId", value);
-              setActiveLocationId(value);
-            }}
-            loading={locationsLoading}
-          />
-        </FormField>
-
         {/* Post Status Options */}
         <FormField
           id="status"
@@ -266,6 +243,22 @@ const Posts = () => {
             value={params?.status}
             options={STATUS_OPTIONS}
             onChange={(value) => changeParams("status", value)}
+          />
+        </FormField>
+
+        {/* Show All */}
+        <FormField
+          id="showAll"
+          label="Show All Locations"
+          colSpan="lg:mt-8 col-span-12 lg:col-span-6"
+          type="checkbox"
+        >
+          <CustomCheckbox
+            id="showAll"
+            checked={params?.showAll}
+            onChange={(e) =>
+              changeParams("showAll", e.target.checked ? true : false)
+            }
           />
         </FormField>
 
@@ -282,21 +275,6 @@ const Posts = () => {
             }}
           />
         </div>
-
-        <FormField
-          id="showAll"
-          label="Show All Locations"
-          colSpan="mt-2 col-span-12 lg:col-span-6"
-          type="checkbox"
-        >
-          <CustomCheckbox
-            id="showAll"
-            checked={params?.showAll}
-            onChange={(e) =>
-              changeParams("showAll", e.target.checked ? true : false)
-            }
-          />
-        </FormField>
       </div>
 
       <DataTable

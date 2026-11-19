@@ -1,8 +1,8 @@
 import { useState } from "react";
 
 import { Outlet } from "react-router-dom";
-import { Menu } from "lucide-react";
 
+import Header from "../components/Header";
 import SideBar from "../components/SideBar";
 import ResponsiveMenuModal from "../components/ResponsiveMenuModal";
 
@@ -25,9 +25,7 @@ const PrivateLayout = () => {
       />
 
       <div className="flex-1 w-full">
-        <div className="md:hidden shrink-0 z-10 h-15 px-5 flex items-center justify-between gap-3 shadow-sm">
-          <Menu size={22} onClick={() => setIsSidebarOpen(true)} />
-        </div>
+        <Header onClick={() => setIsSidebarOpen(true)} />
 
         <div
           className="h-full w-full

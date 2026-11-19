@@ -4,7 +4,6 @@ import "./startup/env.js"
 import express from "express"
 import helmet from "helmet"
 import cors from "cors"
-import path from "node:path"
 import { createCorsOptions } from "./lib/corsConfig.js"
 import { ensureIndexes } from "./startup/ensureIndexes.js"
 import auth from "./routes/auth.js"
@@ -24,6 +23,7 @@ import googleAuthRouter from "./routes/auth.google.js";
 import reportsRouter from "./routes/reports.js";
 import { validateReportStorageConfig } from "./services/reportStorage.js";
 import { validateRequestOrigin } from "./middleware/validateRequestOrigin.js";
+import { resolvePostUploadConfig, validatePostImageStorageConfig } from "./services/postImageStorage.js";
 
 
 const locationsRoutes = locationsMod.default || locationsMod.locations
@@ -42,7 +42,7 @@ app.use(helmet())
 app.use(express.json())
 app.use("/api", validateRequestOrigin)
 
-app.use("/uploads", express.static(path.resolve(process.cwd(), "uploads")))
+app.use("/uploads", express.static(resolvePostUploadConfig().root))
 
 app.get("/api/v1/health", (_req, res) =>
   res.json({ ok: true, ts: new Date().toISOString() })
@@ -83,6 +83,8 @@ console.log(
 const port = Number(process.env.PORT || 5050)
 
 try {
+  const uploadStorageCfg = await validatePostImageStorageConfig()
+  console.log(`[post_upload_storage] root=${uploadStorageCfg.safeRootLabel}`)
   const reportStorageCfg = validateReportStorageConfig()
   console.log(
     `[report_storage] provider=${reportStorageCfg.provider}`,
