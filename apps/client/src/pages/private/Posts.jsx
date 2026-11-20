@@ -27,6 +27,10 @@ import {
   isProviderPostUrl,
   openProviderPost,
 } from "../../utils/providerPostUrl";
+import {
+  getPostDeleteErrorMessage,
+  isPostDeleteDisabled,
+} from "../../utils/postDeleteUi";
 
 import useApi from "../../hooks/useApi";
 import useListParams from "../../hooks/useListParams";
@@ -37,10 +41,6 @@ import { useNotify } from "../../context/notification/useNotify";
 import { useLocation } from "../../context/location/useLocation";
 
 import { BADGE_STATUS_COLORS } from "../../constant";
-import {
-  getPostDeleteErrorMessage,
-  isPostDeleteDisabled,
-} from "../../utils/postDeleteUi";
 
 const STATUS_OPTIONS = [
   { label: "All", value: "all" },
@@ -54,7 +54,7 @@ const STATUS_OPTIONS = [
 
 const Posts = () => {
   const { notify } = useNotify();
-  const { activeLocation } = useLocation();
+  const { activeLocation, locations, setDisbledLocationUpdate } = useLocation();
 
   const navigate = useNavigate();
 
@@ -62,6 +62,7 @@ const Posts = () => {
 
   const [totalPages, setTotalPages] = useState(0);
   const [posts, setPosts] = useState([]);
+  const [lastSyncByLocation, setLastSyncByLocation] = useState({});
 
   const [deletingPostIds, setDeletingPostIds] = useState(() => new Set());
   const deletingPostIdsRef = useRef(new Set());
@@ -86,6 +87,7 @@ const Posts = () => {
 
   const fetchPosts = useCallback(() => {
     const apiParams = { locationId: activeLocation, ...getParams() };
+
     if (getParams()?.showAll) {
       delete apiParams.locationId;
     }
@@ -105,24 +107,20 @@ const Posts = () => {
 
     deletingPostIdsRef.current.add(postId);
     setDeletingPostIds(new Set(deletingPostIdsRef.current));
-    try {
-      await callApi(
-        `deleting:${postId}`,
-        () => postsEndpoints.deletePost(postId),
-        {
-          onSuccess: () => {
-            fetchPosts();
-            notify.msgSuccess("Post deleted!");
-          },
-          onError: (error) => {
-            notify.msgError(getPostDeleteErrorMessage(error));
-          },
-        },
-      );
-    } finally {
-      deletingPostIdsRef.current.delete(postId);
-      setDeletingPostIds(new Set(deletingPostIdsRef.current));
-    }
+
+    callApi(`deleting:${postId}`, () => postsEndpoints.deletePost(postId), {
+      onSuccess: () => {
+        fetchPosts();
+        notify.msgSuccess("Post deleted!");
+      },
+      onError: (error) => {
+        notify.msgError(getPostDeleteErrorMessage(error));
+      },
+      atLast: () => {
+        deletingPostIdsRef.current.delete(postId);
+        setDeletingPostIds(new Set(deletingPostIdsRef.current));
+      },
+    });
   };
 
   const retryPost = (postId) => {
@@ -135,6 +133,41 @@ const Posts = () => {
         notify.msgSuccess("Failed to retry posting!");
       },
     });
+  };
+
+  const syncPosts = async () => {
+    if (!activeLocation) return;
+    setDisbledLocationUpdate(true);
+
+    callApi(
+      "syncingPosts",
+      () => postsEndpoints.syncPosts({ locationId: activeLocation }),
+      {
+        onSuccess: ({ data }) => {
+          const summary = data?.summary || {};
+          if (data?.lastSyncedAt) {
+            setLastSyncByLocation((prev) => ({
+              ...prev,
+              [activeLocation]: data.lastSyncedAt,
+            }));
+          }
+
+          notify.msgSuccess(
+            `Posts synced: ${summary.inserted || 0} imported, ${summary.updated || 0} updated.`,
+          );
+          fetchPosts();
+        },
+        onError: (error) => {
+          notify.msgError(
+            error?.response?.data?.error?.message ||
+              "Posts could not be synchronized. Please try again.",
+          );
+        },
+        atLast: () => {
+          setDisbledLocationUpdate(false);
+        },
+      },
+    );
   };
 
   useEffect(() => {
@@ -165,6 +198,14 @@ const Posts = () => {
     { label: "Error" },
     { label: "Actions" },
   ];
+
+  const activeLocationDetails = locations?.find(
+    (location) =>
+      location?.id === activeLocation || location?.value === activeLocation,
+  );
+  const lastSyncedAt =
+    lastSyncByLocation[activeLocation] ||
+    activeLocationDetails?.post_sync?.last_success_at;
 
   const tableBody = posts?.map((post) => {
     const {
@@ -257,16 +298,27 @@ const Posts = () => {
   });
 
   return (
-    <div className="flex flex-col gap-6">
+    <div className="flex flex-col gap-6 text-sm">
       <PageHeader
         heading="Posts"
         subHeading="Create and publish Google Business Profile updates"
       >
-        <CustomButton
-          icon={Plus}
-          name="New Post"
-          onClick={() => navigate("add")}
-        />
+        <div className="flex items-center justify-end gap-3">
+          <CustomButton
+            icon={RefreshCcw}
+            variant="purple_white"
+            name="Sync Posts"
+            onClick={syncPosts}
+            loading={loading?.syncingPosts}
+            disabled={!activeLocation}
+          />
+
+          <CustomButton
+            icon={Plus}
+            name="New Post"
+            onClick={() => navigate("add")}
+          />
+        </div>
       </PageHeader>
 
       {/* Filters */}
@@ -314,6 +366,11 @@ const Posts = () => {
               if (e.key === "Enter") applyDraftParams(["keyword"]);
             }}
           />
+        </div>
+
+        <div className="col-span-12 md:col-span-6 self-center">
+          <span className="font-medium">Last synced: </span>
+          <span>{formatDateInAlphaNumericWithTime(lastSyncedAt)}</span>
         </div>
       </div>
 

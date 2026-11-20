@@ -8,7 +8,11 @@ const useApi = (defaults) => {
   }, []);
 
   const callApi = useCallback(
-    async (keyName, api, { loading = true, onSuccess, onError } = {}) => {
+    async (
+      keyName,
+      api,
+      { loading = true, onSuccess, onError, atLast } = {},
+    ) => {
       if (loading) {
         setLoadingKey(keyName, true);
       }
@@ -24,6 +28,7 @@ const useApi = (defaults) => {
         return undefined;
       } finally {
         setLoadingKey(keyName, false);
+        await atLast?.();
       }
     },
     [setLoadingKey],

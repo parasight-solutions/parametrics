@@ -24,14 +24,10 @@ const PrivateLayout = () => {
         modalOpenDirection="left"
       />
 
-      <div className="flex-1 w-full">
+      <div className="flex flex-col w-full overflow-hidden">
         <Header onClick={() => setIsSidebarOpen(true)} />
 
-        <div
-          className="h-full w-full
-            p-5 md:px-12 md:py-8
-            overflow-y-auto"
-        >
+        <div className="flex-1 w-full p-5 md:px-12 md:py-8 overflow-y-auto">
           <Outlet />
         </div>
       </div>

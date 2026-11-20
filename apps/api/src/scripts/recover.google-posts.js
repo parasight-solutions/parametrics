@@ -13,7 +13,7 @@ async function main() {
     getIntegrationById: getGoogleIntegrationById,
     recoverGooglePosts,
     recoveryDependencies: {
-      posts: await col("posts"), ensureAccessToken, listAccounts, listLocations, listLocalPosts,
+      posts: await col("posts"), tombstones: await col("post_deletion_tombstones"), ensureAccessToken, listAccounts, listLocations, listLocalPosts,
     },
   });
   console.log(JSON.stringify({ task: "google_post_recovery", ...result }, null, 2));

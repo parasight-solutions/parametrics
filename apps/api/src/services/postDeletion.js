@@ -202,6 +202,8 @@ export async function deletePostWithProvider(
     getIntegrationById,
     ensureAccessToken,
     deleteLocalPost,
+    persistTombstone,
+    removeRecoveryImport = async () => {},
     operationId: createOperationId = randomUUID,
     leaseMs = DELETE_LEASE_MS,
   },
@@ -289,6 +291,27 @@ export async function deletePostWithProvider(
           : error;
       await releaseOperation(posts, scope, operationId, actionableError, now);
       throw actionableError;
+    }
+  }
+
+  if (remoteRequired) {
+    try {
+      await persistTombstone({
+        post: claimed,
+        location,
+        userId,
+        providerOutcome: claimed.provider_delete_outcome || remote,
+        deletedAt: claimed.provider_deleted_at || now,
+      });
+      await removeRecoveryImport({ post: claimed, location });
+    } catch (cause) {
+      const error = makeError(
+        503,
+        "post_delete_tombstone_failed",
+        "Google deletion completed, but deletion protection could not be saved. Retry deletion to finish cleanup.",
+      );
+      await releaseOperation(posts, scope, operationId, error, now);
+      throw error;
     }
   }
 

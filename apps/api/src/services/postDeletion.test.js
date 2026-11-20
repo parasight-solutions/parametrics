@@ -85,7 +85,7 @@ const basePost = {
 const remoteName = "accounts/123/locations/456/localPosts/789";
 
 function dependencies(posts, overrides = {}) {
-  const calls = { jobs: 0, google: 0, tokens: 0, integrations: 0 };
+  const calls = { jobs: 0, google: 0, tokens: 0, integrations: 0, tombstones: 0, recoveryCleanup: 0 };
   return {
     calls,
     deps: {
@@ -108,6 +108,12 @@ function dependencies(posts, overrides = {}) {
         assert.equal(name, remoteName);
         return {};
       },
+      persistTombstone: async ({ post, providerOutcome }) => {
+        calls.tombstones += 1;
+        assert.equal(post.provider_post_name, remoteName);
+        assert.ok(["deleted", "absent"].includes(providerOutcome));
+      },
+      removeRecoveryImport: async () => { calls.recoveryCleanup += 1; },
       ...overrides,
     },
   };
@@ -176,7 +182,7 @@ test("uncoordinated draft generation posts are not claimed for deletion", async 
 test("a deletion claim prevents a worker from claiming the same queued post", async () => {
   const post = { ...basePost, status: "queued" };
   const posts = makePosts(post);
-  const { deps } = dependencies(posts, {
+  const { calls, deps } = dependencies(posts, {
     removePublishJob: async () => {
       const workerClaim = await claimPostForPublishing(posts, {
         postId: post.id,
@@ -215,6 +221,7 @@ test("published posts use the bound integration and exact provider resource", as
   assert.deepEqual(integrationArgs, ["user-1", "integration-1"]);
   assert.deepEqual(tokenIntegration, { id: "integration-1" });
   assert.equal(calls.google, 1);
+  assert.equal(calls.tombstones, 1);
   assert.equal(posts.state.doc, null);
 });
 
@@ -248,7 +255,7 @@ test("validated Google 404 permits local cleanup", async () => {
     provider_post_name: remoteName,
   };
   const posts = makePosts(post);
-  const { deps } = dependencies(posts, {
+  const { calls, deps } = dependencies(posts, {
     deleteLocalPost: async () => {
       const error = new Error("google_http_error");
       error.status = 404;
@@ -257,6 +264,30 @@ test("validated Google 404 permits local cleanup", async () => {
     },
   });
   assert.deepEqual(await run(post, deps), { ok: true, remote: "absent" });
+  assert.equal(calls.tombstones, 1);
+  assert.equal(posts.state.doc, null);
+});
+
+test("tombstone failure retains provider progress and retry skips Google", async () => {
+  const post = { ...basePost, status: "published", provider_post_name: remoteName };
+  const posts = makePosts(post);
+  let fail = true;
+  const { calls, deps } = dependencies(posts, {
+    persistTombstone: async () => {
+      calls.tombstones += 1;
+      if (fail) throw new Error("tombstone unavailable");
+    },
+  });
+  await assert.rejects(run(post, deps), (error) => error.code === "post_delete_tombstone_failed");
+  assert.equal(posts.state.doc.status, "deleting");
+  assert.ok(posts.state.doc.provider_deleted_at instanceof Date);
+  assert.equal(posts.state.doc.deletion_operation_id, undefined);
+  fail = false;
+  assert.deepEqual(await run(structuredClone(posts.state.doc), deps, new Date(now.getTime() + 1000)), {
+    ok: true, remote: "already_deleted",
+  });
+  assert.equal(calls.google, 1);
+  assert.equal(calls.tombstones, 2);
   assert.equal(posts.state.doc, null);
 });
 

@@ -11,6 +11,7 @@ import { getActiveLocationId, setActiveLocationId } from "../../session";
 export const LocationProvider = ({ children }) => {
   const { loading, callApi } = useApi({ locationsLoading: true });
   const [locations, setLocations] = useState([]);
+  const [disableLocationUpdate, setDisbledLocationUpdate] = useState(false);
 
   const [activeLocation, setActiveLocation] = useState(getActiveLocationId());
 
@@ -44,6 +45,8 @@ export const LocationProvider = ({ children }) => {
         locationsLoading: loading?.locationsLoading,
         handleLocationChange,
         activeLocation,
+        disableLocationUpdate,
+        setDisbledLocationUpdate,
       }}
     >
       {children}

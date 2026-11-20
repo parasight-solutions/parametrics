@@ -70,6 +70,19 @@ async function ensureIndex(collection, key, opts = {}) {
   await collection.createIndex(key, opts);
 }
 
+export async function ensurePostDeletionTombstoneIndexes(collection) {
+  await ensureIndex(collection, { provider_resource_key: 1 }, {
+    unique: true,
+    name: "uniq_post_deletion_tombstones_provider_resource_key",
+  });
+  await ensureIndex(collection, {
+    provider: 1,
+    provider_account_name: 1,
+    provider_location_name: 1,
+    provider_post_name: 1,
+  }, { name: "idx_post_deletion_tombstones_provider_resource" });
+}
+
 export async function ensureIndexes() {
   // ---------------------------------------------------------------------------
   // auth_sessions
@@ -500,4 +513,7 @@ export async function ensureIndexes() {
   await ensureIndex(auditLogs, { location_id: 1, created_at: -1 }, {
     name: "idx_audit_logs_location_created_at",
   });
+
+  const postDeletionTombstones = await col("post_deletion_tombstones");
+  await ensurePostDeletionTombstoneIndexes(postDeletionTombstones);
 }

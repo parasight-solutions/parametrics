@@ -11,6 +11,7 @@ import {
   createLocalPost,
   deleteLocalPost,
   listAccounts,
+  listLocations,
   listLocalPosts,
 } from "../integrations/google.js";
 import { makeQueue } from "../lib/queues.js";
@@ -45,6 +46,9 @@ import {
   markPostPublished,
 } from "../services/postPublishLifecycle.js";
 import { deletePostWithProvider } from "../services/postDeletion.js";
+import { buildPostDeletionTombstone, upsertPostDeletionTombstone } from "../services/postDeletionTombstones.js";
+import { buildGoogleRecoveryIdentity, syncGooglePosts } from "../services/postSync.js";
+import { runManualPostSync } from "../services/manualPostSync.js";
 
 const router = Router();
 const publishQueue = makeQueue("post-publish");
@@ -416,6 +420,32 @@ router.get("/provider", authenticate, syncRateLimit, async (req, res) => {
     });
   } catch (e) {
     return toApiError(res, e);
+  }
+});
+
+router.post("/sync", authenticate, syncRateLimit, async (req, res) => {
+  try {
+    const locations = await col("locations");
+    const result = await runManualPostSync(
+      { userId: req.user.user_id, locationId: req.body?.locationId },
+      {
+        locations,
+        requireLocationAccess: requireOwnedOrganizationLocationAccess,
+        getIntegrationById: getGoogleIntegrationById,
+        syncGooglePosts,
+        syncDependencies: {
+          posts: await col("posts"),
+          tombstones: await col("post_deletion_tombstones"),
+          ensureAccessToken,
+          listAccounts,
+          listLocations,
+          listLocalPosts,
+        },
+      },
+    );
+    return res.json(result);
+  } catch (error) {
+    return toApiError(res, error);
   }
 });
 
@@ -874,6 +904,29 @@ router.delete("/:id", authenticate, mutationRateLimit, async (req, res) => {
         getIntegrationById: getGoogleIntegrationById,
         ensureAccessToken,
         deleteLocalPost,
+        persistTombstone: async ({ post: claimed, providerOutcome, deletedAt }) => {
+          const document = buildPostDeletionTombstone({
+            post: claimed, location: loc, userId, providerOutcome, deletedAt,
+          });
+          return upsertPostDeletionTombstone(await col("post_deletion_tombstones"), document);
+        },
+        removeRecoveryImport: async ({ post: claimed }) => {
+          const identity = buildGoogleRecoveryIdentity({
+            locationId: loc.id,
+            providerPostName: claimed.provider_post_name,
+          });
+          await posts.deleteOne({
+            _id: identity.mongoId,
+            provider_post_name: claimed.provider_post_name,
+            user_id: userId,
+            organization_id: loc.organization_id,
+            client_id: loc.client_id,
+            location_id: loc.id,
+            integration_id: loc.integration_id,
+            origin: "google_imported",
+            status: "published",
+          });
+        },
       },
     );
 

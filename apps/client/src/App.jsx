@@ -17,10 +17,10 @@ import Posts from "./pages/private/Posts";
 import Reviews from "./pages/private/Reviews";
 import Reports from "./pages/private/Reports";
 import OrganizationMembers from "./pages/private/OrganizationMembers";
-
-import { useAuth } from "./context/auth/useAuth";
 import RecurranceLab from "./pages/private/RecurranceLab";
 import PostFormPage from "./pages/private/PostFormPage";
+
+import { useAuth } from "./context/auth/useAuth";
 
 const GuestWrapper = () => {
   const { isAuthenticated, authLoading } = useAuth();

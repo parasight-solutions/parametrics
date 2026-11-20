@@ -5,8 +5,13 @@ import CustomSelect from "./ui/CustomSelect";
 import { useLocation } from "../context/location/useLocation";
 
 const Header = ({ onClick }) => {
-  const { locations, locationsLoading, handleLocationChange, activeLocation } =
-    useLocation();
+  const {
+    locations,
+    locationsLoading,
+    handleLocationChange,
+    activeLocation,
+    disableLocationUpdate,
+  } = useLocation();
 
   return (
     <div className="z-10 h-15 px-5 flex items-center justify-between md:justify-end gap-3 shadow-sm">
@@ -21,6 +26,7 @@ const Header = ({ onClick }) => {
           options={locations}
           onChange={handleLocationChange}
           loading={locationsLoading}
+          disabled={disableLocationUpdate}
         />
       </div>
     </div>

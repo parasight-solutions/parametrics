@@ -4,8 +4,10 @@ import { deletePostWithProvider } from "./postDeletion.js";
 import {
   buildGoogleRecoveryIdentity,
   buildImportedPost,
+  buildGoogleOwnedPostPatch,
   fetchAllGoogleLocalPosts,
   recoverGooglePosts,
+  syncGooglePosts,
   validateGooglePostName,
 } from "./postSync.js";
 
@@ -28,6 +30,24 @@ test("validateGooglePostName accepts only the selected Google location resource"
     ["accounts/999/locations/456/localPosts/789", "provider_post_name_scope_mismatch"],
     ["accounts/123/locations/999/localPosts/789", "provider_post_name_scope_mismatch"],
   ]) assert.deepEqual(validateGooglePostName(name, location), { valid: false, code });
+});
+
+test("buildGoogleOwnedPostPatch distinguishes omission from explicit provider removal", () => {
+  const existing = { summary: "Old", image_url: "https://old/image.jpg", call_to_action_type: "CALL", call_to_action_url: "https://old.example" };
+  assert.deepEqual(buildGoogleOwnedPostPatch({ googlePost: {}, existingPost: existing, now: new Date(0) }), {
+    synced_at: new Date(0), provider_sync_status: "present",
+  });
+  const patch = buildGoogleOwnedPostPatch({
+    googlePost: { summary: "New", media: [], callToAction: null, searchUrl: "https://google.example/post" },
+    existingPost: existing,
+    now: new Date(1),
+  });
+  assert.equal(patch.summary, "New");
+  assert.equal(patch.image_url, null);
+  assert.equal(patch.call_to_action_type, null);
+  assert.equal(patch.call_to_action_url, null);
+  assert.equal(patch.provider_post_url, "https://google.example/post");
+  for (const key of ["status", "scheduled_at", "user_id", "deletion_operation_id"]) assert.equal(Object.hasOwn(patch, key), false);
 });
 
 test("fetchAllGoogleLocalPosts follows every token and rejects repeated tokens", async () => {
@@ -183,6 +203,64 @@ test("recoverGooglePosts reports deterministic id and duplicate local references
   }
 });
 
+test("Phase 1 recovery skips an intentional-deletion tombstone", async () => {
+  const posts = memoryPosts();
+  const deps = recoveryDeps(posts, [{ localPosts: [{ name: postName }] }]);
+  deps.tombstones = { find: () => ({ toArray: async () => [{ provider_post_name: postName }] }) };
+  const result = await recoverGooglePosts({ location, integration: { id: location.integration_id }, apply: true }, deps);
+  assert.equal(result.tombstoneSkipped, 1);
+  assert.equal(result.inserted, 0);
+  assert.equal(posts.writes, 0);
+});
+
+test("Phase 1 removes a deterministic import when deletion wins during its upsert", async () => {
+  const posts = memoryPosts();
+  posts.deleteOne = async (filter) => {
+    const index = posts.docs.findIndex((doc) => doc._id === filter._id && doc.origin === "google_imported");
+    if (index < 0) return { deletedCount: 0 };
+    posts.docs.splice(index, 1); return { deletedCount: 1 };
+  };
+  let reads = 0;
+  const deps = recoveryDeps(posts, [{ localPosts: [{ name: postName }] }]);
+  deps.tombstones = { find: () => ({ toArray: async () => (++reads === 1 ? [] : [{ provider_post_name: postName }]) }) };
+  const result = await recoverGooglePosts({ location, integration: { id: location.integration_id }, apply: true }, deps);
+  assert.equal(result.tombstoneSkipped, 1);
+  assert.equal(result.inserted, 0);
+  assert.equal(posts.docs.length, 0);
+});
+
+test("manual sync imports, updates, and marks provider absence without changing lifecycle status", async () => {
+  const present = { _id: "present", id: "p1", ...location, location_id: location.id, provider_post_name: postName, status: "published", summary: "Old" };
+  const missing = { _id: "missing", id: "p2", ...location, location_id: location.id, provider_post_name: `${postName}-missing`, status: "published" };
+  const protectedPost = { _id: "queued", id: "p3", ...location, location_id: location.id, provider_post_name: `${postName}-queued`, status: "queued" };
+  const docs = [present, missing, protectedPost].map((doc) => structuredClone(doc));
+  const posts = {
+    async findRelevant() { return docs.map((doc) => structuredClone(doc)); },
+    async findScoped() { return docs.map((doc) => structuredClone(doc)); },
+    async findOne(filter) { return docs.find((doc) => doc._id === filter._id) || null; },
+    async updateOne(filter, update, options = {}) {
+      let doc = docs.find((item) => item._id === filter._id);
+      if (!doc && options.upsert) { doc = structuredClone(update.$setOnInsert); docs.push(doc); return { upsertedCount: 1, matchedCount: 0, modifiedCount: 0 }; }
+      if (!doc || (filter.status && doc.status !== filter.status)) return { matchedCount: 0, modifiedCount: 0 };
+      Object.assign(doc, update.$set || {}); for (const key of Object.keys(update.$unset || {})) delete doc[key];
+      return { matchedCount: 1, modifiedCount: 1, upsertedCount: 0 };
+    },
+    async deleteOne() { return { deletedCount: 0 }; },
+  };
+  const result = await syncGooglePosts(
+    { location, integration: { id: location.integration_id }, now: new Date("2026-11-19T12:00:00Z") },
+    recoveryDeps(posts, [{ localPosts: [{ name: postName, summary: "New" }, { name: `${postName}-queued` }, { name: `${postName}-new` }] }]),
+  );
+  assert.equal(result.summary.inserted, 1);
+  assert.equal(result.summary.updated, 1);
+  assert.equal(result.summary.missingOnGoogle, 1);
+  assert.equal(result.summary.conflicts, 1);
+  assert.equal(docs.find((doc) => doc._id === "present").summary, "New");
+  assert.equal(docs.find((doc) => doc._id === "missing").status, "published");
+  assert.equal(docs.find((doc) => doc._id === "missing").provider_sync_status, "missing");
+  assert.equal(docs.find((doc) => doc._id === "queued").status, "queued");
+});
+
 test("buildGoogleRecoveryIdentity is stable, scoped, versioned, and UUID-compatible", () => {
   const a = buildGoogleRecoveryIdentity({ locationId: location.id, providerPostName: postName });
   const again = buildGoogleRecoveryIdentity({ locationId: location.id, providerPostName: postName });
@@ -260,6 +338,7 @@ test("an imported post is accepted by the existing Google-first deletion flow", 
     getIntegrationById: async () => ({ id: location.integration_id }),
     ensureAccessToken: async () => ({ access_token: "token" }),
     deleteLocalPost: async (_access, name) => { deletedName = name; },
+    persistTombstone: async () => {},
   });
   assert.deepEqual(result, { ok: true, remote: "deleted" });
   assert.equal(deletedName, postName);

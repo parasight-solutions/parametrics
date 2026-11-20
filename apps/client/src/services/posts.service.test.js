@@ -1,14 +1,32 @@
-import { describe, expect, it } from "vitest";
-import { buildCreatePostFormData } from "./posts.service";
+import { describe, expect, it, vi } from "vitest";
+import api from "./api.service";
+import { buildCreatePostFormData, postsEndpoints } from "./posts.service";
+
+vi.mock("./api.service", () => ({ default: { post: vi.fn() } }));
 
 describe("buildCreatePostFormData", () => {
   it("serializes scalar values and gives a file priority over URL", () => {
     const file = new File(["x"], "x.png", { type: "image/png" });
-    const form = buildCreatePostFormData({ locationId: "l1", publishNow: false, scheduleAt: null, imageUrl: "https://example.com/x", imageFile: file });
+    const form = buildCreatePostFormData({
+      locationId: "l1",
+      publishNow: false,
+      scheduleAt: null,
+      imageUrl: "https://example.com/x",
+      imageFile: file,
+    });
     expect(form.get("locationId")).toBe("l1");
     expect(form.get("publishNow")).toBe("false");
     expect(form.get("scheduleAt")).toBeNull();
     expect(form.get("imageFile")).toBe(file);
     expect(form.get("imageUrl")).toBeNull();
+  });
+});
+
+describe("postsEndpoints.syncPosts", () => {
+  it("posts only the selected ParaMetrics location id", () => {
+    postsEndpoints.syncPosts({ locationId: "loc-1" });
+    expect(api.post).toHaveBeenCalledWith("/posts/sync", {
+      locationId: "loc-1",
+    });
   });
 });

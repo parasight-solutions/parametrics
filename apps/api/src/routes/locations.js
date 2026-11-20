@@ -15,6 +15,20 @@ import { requireOrganizationLocationAccess } from "../services/organizationAcces
 const router = Router();
 const LOCATION_MUTATION_ROLES = Object.freeze(["owner", "admin"]);
 
+export function serializeLocationForList(location) {
+  if (!location?.post_sync) return location;
+  const safeKeys = [
+    "last_success_at", "last_fetched_count", "last_inserted_count",
+    "last_updated_count", "last_unchanged_count", "last_missing_count",
+    "last_tombstone_skipped_count", "last_conflict_count",
+  ];
+  const safePostSync = Object.fromEntries(
+    safeKeys.filter((key) => Object.prototype.hasOwnProperty.call(location.post_sync, key))
+      .map((key) => [key, location.post_sync[key]]),
+  );
+  return { ...location, post_sync: safePostSync };
+}
+
 router.get("/", authenticate, async (req, res) => {
   try {
     const userId = req.user.user_id;
@@ -41,7 +55,7 @@ router.get("/", authenticate, async (req, res) => {
         .project({ _id: 0 })
         .toArray();
 
-      return res.json({ locations: list, activeIntegrationId: integ.id });
+      return res.json({ locations: list.map(serializeLocationForList), activeIntegrationId: integ.id });
     }
 
     if (integrationIdParam) q.integration_id = integrationIdParam;
@@ -52,7 +66,7 @@ router.get("/", authenticate, async (req, res) => {
       .project({ _id: 0 })
       .toArray();
 
-    return res.json({ locations: list, activeIntegrationId: null });
+    return res.json({ locations: list.map(serializeLocationForList), activeIntegrationId: null });
   } catch (e) {
     console.error("[locations/list] error", e);
     return res.status(500).json({ error: { code: "server_error" } });

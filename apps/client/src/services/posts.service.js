@@ -23,6 +23,8 @@ export const postsEndpoints = {
 
   getPost: (postId) => api.get(`/posts/${postId}`),
 
+  syncPosts: ({ locationId }) => api.post("/posts/sync", { locationId }),
+
   addPost: (body) =>
     api.post(`/posts`, buildCreatePostFormData(body), {
       headers: { "Content-Type": undefined },
