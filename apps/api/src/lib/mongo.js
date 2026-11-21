@@ -79,6 +79,31 @@ export async function col(name) {
   return db.collection(name);
 }
 
+export async function getMongoClient() {
+  await getDb();
+  return _client;
+}
+
+export async function withMongoTransaction(work, { client, transactionOptions } = {}) {
+  const mongoClient = client || await getMongoClient();
+  const session = mongoClient.startSession();
+  try {
+    let result;
+    await session.withTransaction(
+      async () => {
+        result = await work(session);
+      },
+      transactionOptions || {
+        readConcern: { level: "snapshot" },
+        writeConcern: { w: "majority" },
+      },
+    );
+    return result;
+  } finally {
+    await session.endSession();
+  }
+}
+
 export async function closeDb() {
   if (_client) {
     await _client.close();

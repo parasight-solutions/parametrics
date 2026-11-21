@@ -19,6 +19,7 @@ import Reports from "./pages/private/Reports";
 import OrganizationMembers from "./pages/private/OrganizationMembers";
 import RecurranceLab from "./pages/private/RecurranceLab";
 import PostFormPage from "./pages/private/PostFormPage";
+import PostAutoSyncSettings from "./pages/private/PostAutoSyncSettings";
 
 import { useAuth } from "./context/auth/useAuth";
 
@@ -68,6 +69,10 @@ const App = () => {
               element={<OrganizationMembers />}
             />
             <Route path="recurrence" element={<RecurranceLab />} />
+            <Route
+              path="settings/post-auto-sync"
+              element={<PostAutoSyncSettings />}
+            />
           </Route>
         </Route>
 

@@ -21,6 +21,9 @@ export function serializeLocationForList(location) {
     "last_success_at", "last_fetched_count", "last_inserted_count",
     "last_updated_count", "last_unchanged_count", "last_missing_count",
     "last_tombstone_skipped_count", "last_conflict_count",
+    "auto_enabled", "auto_state", "last_auto_attempt_at",
+    "last_auto_success_at", "last_auto_failure_at",
+    "last_auto_failure_code", "next_auto_sync_at",
   ];
   const safePostSync = Object.fromEntries(
     safeKeys.filter((key) => Object.prototype.hasOwnProperty.call(location.post_sync, key))

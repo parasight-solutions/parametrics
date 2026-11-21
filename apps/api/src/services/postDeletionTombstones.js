@@ -37,16 +37,47 @@ export function buildPostDeletionTombstone({ post, location, userId, providerOut
   };
 }
 
-export function upsertPostDeletionTombstone(tombstones, document) {
+export function upsertPostDeletionTombstone(tombstones, document, { session } = {}) {
   return tombstones.updateOne(
     { provider_resource_key: document.provider_resource_key },
     { $setOnInsert: document },
-    { upsert: true },
+    { upsert: true, ...(session ? { session } : {}) },
   );
 }
 
-export async function findPostDeletionTombstones(tombstones, { provider = "google", providerPostNames = [] }) {
+export async function persistPostDeletionTombstone(
+  { tombstones, locations, document, location },
+  { withTransaction },
+) {
+  return withTransaction(async (session) => {
+    await upsertPostDeletionTombstone(tombstones, document, { session });
+    const advanced = await locations.updateOne(
+      {
+        id: location.id,
+        user_id: location.user_id,
+        organization_id: location.organization_id,
+        client_id: location.client_id,
+      },
+      {
+        $inc: { "post_sync.tombstone_epoch": 1 },
+        $set: { "post_sync.last_tombstone_at": document.deleted_at },
+      },
+      { session },
+    );
+    if (Number(advanced?.matchedCount || 0) !== 1) {
+      const error = new Error("Location scope changed while recording deletion.");
+      error.code = "post_delete_tombstone_scope_changed";
+      throw error;
+    }
+    return document;
+  });
+}
+
+export async function findPostDeletionTombstones(tombstones, { provider = "google", providerPostNames = [], session } = {}) {
   if (!providerPostNames.length) return new Map();
-  const docs = await tombstones.find({ provider, provider_post_name: { $in: providerPostNames } }).toArray();
+  const docs = await tombstones.find(
+    { provider, provider_post_name: { $in: providerPostNames } },
+    { session },
+  ).toArray();
   return new Map(docs.map((doc) => [doc.provider_post_name, doc]));
 }

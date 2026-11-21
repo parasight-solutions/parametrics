@@ -14,4 +14,7 @@ export const connection = new IORedis({
 })
 
 export const makeQueue = (name) => new Queue(name, { connection })
-export const queues = { postPublish: makeQueue('post-publish') }
+export const queues = {
+  postPublish: makeQueue('post-publish'),
+  postSync: makeQueue('post-sync'),
+}

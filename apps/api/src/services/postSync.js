@@ -107,6 +107,9 @@ export async function fetchAllGoogleLocalPosts(
       location.provider_location_name,
       { pageSize, ...(pageToken ? { pageToken } : {}) },
     );
+    if (response?.localPosts != null && !Array.isArray(response.localPosts)) {
+      throw recoveryError("google_posts_invalid_response", "Google returned an invalid posts response.");
+    }
     pages += 1;
     posts.push(...(Array.isArray(response?.localPosts) ? response.localPosts : []));
     if (posts.length > maxPosts) throw recoveryError("google_posts_record_limit", "Google post record limit exceeded.");
@@ -130,12 +133,12 @@ function sameScope(doc, location) {
   ].every(([key, expected]) => doc[key] === expected);
 }
 
-async function findRelevantPosts(posts, names, ids) {
-  if (typeof posts.findRelevant === "function") return posts.findRelevant({ names, ids });
+async function findRelevantPosts(posts, names, ids, session) {
+  if (typeof posts.findRelevant === "function") return posts.findRelevant({ names, ids }, { session });
   const cursor = posts.find({ $or: [
     { provider_post_name: { $in: names } },
     { _id: { $in: ids } },
-  ] });
+  ] }, { session });
   return typeof cursor?.toArray === "function" ? cursor.toArray() : [];
 }
 
@@ -264,14 +267,14 @@ export async function recoverGooglePosts(
   };
 }
 
-async function findScopedPosts(posts, location) {
-  if (typeof posts.findScoped === "function") return posts.findScoped(location);
+async function findScopedPosts(posts, location, session) {
+  if (typeof posts.findScoped === "function") return posts.findScoped(location, { session });
   return posts.find({
     user_id: location.user_id,
     organization_id: location.organization_id,
     client_id: location.client_id,
     location_id: location.id,
-  }).toArray();
+  }, { session }).toArray();
 }
 
 function changedFields(existing, patch) {
@@ -280,7 +283,16 @@ function changedFields(existing, patch) {
 
 export async function syncGooglePosts(
   { location, integration, now = new Date() },
-  { posts, tombstones, ensureAccessToken, listAccounts, listLocations, listLocalPosts },
+  {
+    posts,
+    tombstones,
+    ensureAccessToken,
+    listAccounts,
+    listLocations,
+    listLocalPosts,
+    withTransaction,
+    assertOwnership,
+  },
 ) {
   if (!integration || integration.id !== location.integration_id) throw recoveryError("google_integration_mismatch");
   const token = await ensureAccessToken(integration);
@@ -290,18 +302,22 @@ export async function syncGooglePosts(
   const visibleLocations = await listLocations(access, location.provider_account_name);
   if (!(visibleLocations?.locations || []).some((item) => item?.name === location.provider_location_name)) throw recoveryError("google_location_inaccessible");
   const fetched = await fetchAllGoogleLocalPosts({ access, location }, { listLocalPosts });
+  const reconcile = async (session) => {
+  if (assertOwnership) await assertOwnership(session);
   const nameCounts = new Map();
   for (const remote of fetched.posts) if (remote?.name) nameCounts.set(remote.name, (nameCounts.get(remote.name) || 0) + 1);
   const valid = fetched.posts.filter((remote) => validateGooglePostName(remote?.name, location).valid && nameCounts.get(remote.name) === 1);
   const names = valid.map((remote) => remote.name);
   const identities = valid.map((remote) => buildGoogleRecoveryIdentity({ locationId: location.id, providerPostName: remote.name }));
-  const [relevant, scoped, initialTombstones] = await Promise.all([
-    findRelevantPosts(posts, names, identities.map((item) => item.mongoId)),
-    findScopedPosts(posts, location),
-    tombstones ? findPostDeletionTombstones(tombstones, { providerPostNames: names }) : new Map(),
-  ]);
+  const relevant = await findRelevantPosts(posts, names, identities.map((item) => item.mongoId), session);
+  const scoped = await findScopedPosts(posts, location, session);
+  const initialTombstones = tombstones
+    ? await findPostDeletionTombstones(tombstones, { providerPostNames: names, session })
+    : new Map();
   const summary = { fetched: fetched.posts.length, inserted: 0, updated: 0, unchanged: 0, missingOnGoogle: 0, tombstoneSkipped: 0, skipped: fetched.posts.length - valid.length, conflicts: 0 };
-  const remoteNames = new Set(names);
+  const remoteNames = new Set(fetched.posts
+    .filter((remote) => validateGooglePostName(remote?.name, location).valid)
+    .map((remote) => remote.name));
   for (let index = 0; index < valid.length; index += 1) {
     const remote = valid[index];
     const identity = identities[index];
@@ -314,10 +330,10 @@ export async function syncGooglePosts(
     const existing = matches[0] || idMatch;
     if (!existing) {
       const document = buildImportedPost({ googlePost: remote, location, identity, now });
-      const result = await posts.updateOne({ _id: identity.mongoId }, { $setOnInsert: document }, { upsert: true });
-      const after = tombstones ? await findPostDeletionTombstones(tombstones, { providerPostNames: [remote.name] }) : new Map();
+      const result = await posts.updateOne({ _id: identity.mongoId }, { $setOnInsert: document }, { upsert: true, session });
+      const after = tombstones ? await findPostDeletionTombstones(tombstones, { providerPostNames: [remote.name], session }) : new Map();
       if (after.has(remote.name)) {
-        await posts.deleteOne({ _id: identity.mongoId, provider_post_name: remote.name, location_id: location.id, origin: "google_imported", status: "published" });
+        await posts.deleteOne({ _id: identity.mongoId, provider_post_name: remote.name, location_id: location.id, origin: "google_imported", status: "published" }, { session });
         summary.tombstoneSkipped += 1;
       } else if (Number(result?.upsertedCount || 0) === 1) summary.inserted += 1;
       else summary.unchanged += 1;
@@ -339,7 +355,7 @@ export async function syncGooglePosts(
       provider_location_name: location.provider_location_name,
       status: "published",
       provider_post_name: remote.name,
-    }, update);
+    }, update, { session });
     if (Number(result?.matchedCount || 0) === 1) summary.updated += 1; else summary.conflicts += 1;
   }
   for (const existing of scoped) {
@@ -356,8 +372,11 @@ export async function syncGooglePosts(
         provider_post_name: existing.provider_post_name,
       },
       { $set: { provider_sync_status: "missing", provider_missing_since: existing.provider_missing_since || now, synced_at: now, updated_at: now } },
+      { session },
     );
     if (Number(result?.matchedCount || 0) === 1) summary.missingOnGoogle += 1; else summary.conflicts += 1;
   }
   return { summary, pages: fetched.pages };
+  };
+  return withTransaction ? withTransaction(reconcile) : reconcile(undefined);
 }

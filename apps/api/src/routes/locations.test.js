@@ -10,10 +10,18 @@ test("location list exposes completed sync metadata but hides active lease field
       operation_expires_at: new Date(),
       last_success_at: new Date("2026-11-19T12:00:00Z"),
       last_inserted_count: 2,
+      auto_enabled: true,
+      auto_state: "idle",
+      last_auto_success_at: new Date("2026-11-19T12:00:00Z"),
+      last_auto_failure_code: null,
+      next_auto_sync_at: new Date("2026-11-19T14:00:00Z"),
       internal_future_field: "must-not-leak",
     },
   });
   assert.equal(location.post_sync.last_inserted_count, 2);
+  assert.equal(location.post_sync.auto_enabled, true);
+  assert.equal(location.post_sync.auto_state, "idle");
+  assert.equal(location.post_sync.next_auto_sync_at.toISOString(), "2026-11-19T14:00:00.000Z");
   assert.equal(location.post_sync.operation_id, undefined);
   assert.equal(location.post_sync.operation_expires_at, undefined);
   assert.equal(location.post_sync.internal_future_field, undefined);

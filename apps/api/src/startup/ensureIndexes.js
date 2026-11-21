@@ -83,6 +83,15 @@ export async function ensurePostDeletionTombstoneIndexes(collection) {
   }, { name: "idx_post_deletion_tombstones_provider_resource" });
 }
 
+export async function ensurePostAutoSyncIndexes(collection) {
+  await ensureIndex(collection, {
+    provider: 1,
+    status: 1,
+    "post_sync.auto_enabled": 1,
+    "post_sync.next_auto_sync_at": 1,
+  }, { name: "idx_locations_post_auto_sync_due" });
+}
+
 export async function ensureIndexes() {
   // ---------------------------------------------------------------------------
   // auth_sessions
@@ -281,6 +290,8 @@ export async function ensureIndexes() {
   await ensureIndex(locations, { organization_id: 1, provider: 1, provider_location_name: 1 }, {
     name: "idx_locations_org_provider_location_name",
   });
+
+  await ensurePostAutoSyncIndexes(locations);
 
   // ---------------------------------------------------------------------------
   // posts

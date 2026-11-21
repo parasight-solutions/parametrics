@@ -70,6 +70,15 @@ test("fetchAllGoogleLocalPosts follows every token and rejects repeated tokens",
   );
 });
 
+test("fetchAllGoogleLocalPosts rejects a malformed successful listing", async () => {
+  await assert.rejects(
+    fetchAllGoogleLocalPosts({ access: "token", location }, {
+      listLocalPosts: async () => ({ localPosts: { unexpected: true } }),
+    }),
+    (error) => error.code === "google_posts_invalid_response",
+  );
+});
+
 test("fetchAllGoogleLocalPosts enforces page and record bounds", async () => {
   await assert.rejects(
     fetchAllGoogleLocalPosts({ access: "token", location, maxPages: 1 }, {
@@ -259,6 +268,50 @@ test("manual sync imports, updates, and marks provider absence without changing 
   assert.equal(docs.find((doc) => doc._id === "missing").status, "published");
   assert.equal(docs.find((doc) => doc._id === "missing").provider_sync_status, "missing");
   assert.equal(docs.find((doc) => doc._id === "queued").status, "queued");
+});
+
+test("provider pagination completes before transactional reconciliation and forwards its session", async () => {
+  const events = [];
+  const session = { id: "session-1" };
+  const existing = {
+    _id: "existing-1",
+    ...location,
+    location_id: location.id,
+    status: "published",
+    provider_post_name: postName,
+  };
+  const posts = {
+    findRelevant: async () => [],
+    findScoped: async () => [existing],
+    async updateOne(_filter, _update, options) {
+      events.push(["write", options?.session]);
+      return { matchedCount: 1 };
+    },
+  };
+  const result = await syncGooglePosts({ location, integration: { id: location.integration_id } }, {
+    posts,
+    ensureAccessToken: async () => ({ access_token: "token" }),
+    listAccounts: async () => ({ accounts: [{ name: location.provider_account_name }] }),
+    listLocations: async () => ({ locations: [{ name: location.provider_location_name }] }),
+    listLocalPosts: async () => {
+      events.push(["provider"]);
+      return { localPosts: [] };
+    },
+    withTransaction: async (work) => {
+      events.push(["transaction"]);
+      return work(session);
+    },
+    assertOwnership: async (receivedSession) => {
+      events.push(["ownership", receivedSession]);
+    },
+  });
+  assert.equal(result.summary.missingOnGoogle, 1);
+  assert.deepEqual(events, [
+    ["provider"],
+    ["transaction"],
+    ["ownership", session],
+    ["write", session],
+  ]);
 });
 
 test("buildGoogleRecoveryIdentity is stable, scoped, versioned, and UUID-compatible", () => {

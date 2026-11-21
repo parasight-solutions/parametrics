@@ -12,6 +12,7 @@ import {
   UsersRound,
   Repeat,
   Cog,
+  RefreshCw,
 } from "lucide-react";
 
 import { useAuth } from "../context/auth/useAuth";
@@ -46,6 +47,17 @@ const NAV_ITEMS = [
     name: "Members",
     path: "organization-members",
     icon: UsersRound,
+  },
+  {
+    name: "Settings",
+    icon: Cog,
+    children: [
+      {
+        name: "Post Auto-Sync",
+        path: "settings/post-auto-sync",
+        icon: RefreshCw,
+      },
+    ],
   },
   {
     name: "Tools",

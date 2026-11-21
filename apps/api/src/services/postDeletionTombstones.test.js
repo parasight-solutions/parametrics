@@ -4,6 +4,7 @@ import {
   buildPostDeletionTombstone,
   buildPostDeletionTombstoneIdentity,
   findPostDeletionTombstones,
+  persistPostDeletionTombstone,
   upsertPostDeletionTombstone,
 } from "./postDeletionTombstones.js";
 
@@ -20,6 +21,49 @@ test("tombstone identity is deterministic and provider-resource scoped", () => {
   assert.deepEqual(a, buildPostDeletionTombstoneIdentity({ provider: "google", providerPostName }));
   assert.match(a.id, /^post-deletion-tombstone:v1:[0-9a-f]{64}$/);
   assert.notDeepEqual(a, buildPostDeletionTombstoneIdentity({ provider: "google", providerPostName: `${providerPostName}-2` }));
+});
+
+test("tombstone persistence and location coordination epoch share one transaction", async () => {
+  const session = { id: "session-1" };
+  const events = [];
+  const tombstones = {
+    async updateOne(_filter, update, options) {
+      events.push(["tombstone", update, options]);
+      return { upsertedCount: 1 };
+    },
+  };
+  const locations = {
+    async updateOne(filter, update, options) {
+      events.push(["location", filter, update, options]);
+      return { matchedCount: 1 };
+    },
+  };
+  const document = buildPostDeletionTombstone({
+    post, location, userId: "user-1", providerOutcome: "deleted", deletedAt: new Date(),
+  });
+  await persistPostDeletionTombstone({ tombstones, locations, document, location }, {
+    withTransaction: async (work) => work(session),
+  });
+  assert.equal(events[0][0], "tombstone");
+  assert.equal(events[0][2].session, session);
+  assert.equal(events[1][0], "location");
+  assert.equal(events[1][2].$inc["post_sync.tombstone_epoch"], 1);
+  assert.equal(events[1][3].session, session);
+});
+
+test("tombstone persistence fails when the scoped location cannot advance", async () => {
+  const document = buildPostDeletionTombstone({
+    post, location, userId: "user-1", providerOutcome: "deleted", deletedAt: new Date(),
+  });
+  await assert.rejects(
+    persistPostDeletionTombstone({
+      tombstones: { updateOne: async () => ({ upsertedCount: 1 }) },
+      locations: { updateOne: async () => ({ matchedCount: 0 }) },
+      document,
+      location,
+    }, { withTransaction: async (work) => work({}) }),
+    (error) => error.code === "post_delete_tombstone_scope_changed",
+  );
 });
 
 test("tombstone stores only scope and minimal deletion audit data", () => {

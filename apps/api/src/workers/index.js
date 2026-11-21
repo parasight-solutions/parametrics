@@ -4,10 +4,12 @@ import "../startup/env.js";
 import "./postGenerate.worker.js";
 import "./postPublish.worker.js";
 import "./reviewSync.worker.js";
+import "./postSync.worker.js";
 
-console.log("[workers] started: post-generate, post-publish, review-sync");
+console.log("[workers] started: post-generate, post-publish, review-sync, post-sync");
 
 // Optional: keep exports if anything elsewhere imports from workers/index.js
 export * from "./postGenerate.worker.js";
 export * from "./postPublish.worker.js";
 export * from "./reviewSync.worker.js";
+export * from "./postSync.worker.js";

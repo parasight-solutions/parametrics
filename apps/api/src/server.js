@@ -21,6 +21,7 @@ import locationOrgRouter from "./routes/locationOrg.js";
 import recurrenceRouter from "./routes/recurrence.js";
 import googleAuthRouter from "./routes/auth.google.js";
 import reportsRouter from "./routes/reports.js";
+import postSyncSettingsRouter from "./routes/postSyncSettings.js";
 import { validateReportStorageConfig } from "./services/reportStorage.js";
 import { validateRequestOrigin } from "./middleware/validateRequestOrigin.js";
 import { resolvePostUploadConfig, validatePostImageStorageConfig } from "./services/postImageStorage.js";
@@ -61,6 +62,7 @@ app.use("/api/v1/posts", postsRoutes)
 app.use("/api/v1/reviews", reviewsRoutes)
 app.use("/api/v1/uploads", uploads)
 app.use("/api/v1/reports", reportsRouter)
+app.use("/api/v1/post-sync-settings", postSyncSettingsRouter)
 
 // Debug
 app.use("/api/v1", debugRoutes)

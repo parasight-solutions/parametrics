@@ -1,7 +1,7 @@
 // apps/api/src/routes/posts.js
 import { Router } from "express";
 import crypto from "crypto";
-import { col } from "../lib/mongo.js";
+import { col, withMongoTransaction } from "../lib/mongo.js";
 import { authenticate } from "../middleware/auth.js";
 import {
   getGoogleIntegrationById,
@@ -46,7 +46,10 @@ import {
   markPostPublished,
 } from "../services/postPublishLifecycle.js";
 import { deletePostWithProvider } from "../services/postDeletion.js";
-import { buildPostDeletionTombstone, upsertPostDeletionTombstone } from "../services/postDeletionTombstones.js";
+import {
+  buildPostDeletionTombstone,
+  persistPostDeletionTombstone,
+} from "../services/postDeletionTombstones.js";
 import { buildGoogleRecoveryIdentity, syncGooglePosts } from "../services/postSync.js";
 import { runManualPostSync } from "../services/manualPostSync.js";
 
@@ -908,7 +911,12 @@ router.delete("/:id", authenticate, mutationRateLimit, async (req, res) => {
           const document = buildPostDeletionTombstone({
             post: claimed, location: loc, userId, providerOutcome, deletedAt,
           });
-          return upsertPostDeletionTombstone(await col("post_deletion_tombstones"), document);
+          return persistPostDeletionTombstone({
+            tombstones: await col("post_deletion_tombstones"),
+            locations: await col("locations"),
+            document,
+            location: loc,
+          }, { withTransaction: withMongoTransaction });
         },
         removeRecoveryImport: async ({ post: claimed }) => {
           const identity = buildGoogleRecoveryIdentity({
