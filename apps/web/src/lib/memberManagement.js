@@ -232,8 +232,8 @@ export function isCurrentUserMember(member, currentUserId) {
 
 export function describeBackendError(err) {
   if (!err) return "Unknown error.";
-  const code = err.code || err.error?.code || "";
-  const message = err.message || err.error?.message || "";
+  const code = err.errors?.[0]?.code || "";
+  const message = err.message || err.errors?.[0]?.message || "";
   if (code && message) return `${code}: ${message}`;
   return message || code || "Request failed.";
 }
@@ -255,40 +255,43 @@ function encodeSegment(value) {
 
 export async function listOrganizations() {
   const out = await api("/orgs");
-  return Array.isArray(out?.orgs) ? out.orgs : [];
+  return Array.isArray(out?.data?.orgs) ? out.data.orgs : [];
 }
 
 export async function listOrgMembers(orgId) {
   const out = await api(`/orgs/${encodeSegment(orgId)}/members`);
-  const rows = Array.isArray(out?.members) ? out.members : [];
+  const rows = Array.isArray(out?.data?.members) ? out.data.members : [];
   return rows.map((row) => normalizeMemberRow(row));
 }
 
 export async function searchMemberCandidates(orgId, query, limit) {
   const qs = buildCandidateQuery(query, limit);
   const out = await api(`/orgs/${encodeSegment(orgId)}/member-candidates?${qs}`);
-  const rows = Array.isArray(out?.users) ? out.users : [];
+  const rows = Array.isArray(out?.data?.users) ? out.data.users : [];
   return rows.map((row) => normalizeCandidateRow(row));
 }
 
 export async function createOrgMember(orgId, payload) {
-  return api(`/orgs/${encodeSegment(orgId)}/members`, {
+  const out = await api(`/orgs/${encodeSegment(orgId)}/members`, {
     method: "POST",
     body: payload,
   });
+  return out.data;
 }
 
 export async function updateOrgMember(orgId, memberId, patch) {
-  return api(`/orgs/${encodeSegment(orgId)}/members/${encodeSegment(memberId)}`, {
+  const out = await api(`/orgs/${encodeSegment(orgId)}/members/${encodeSegment(memberId)}`, {
     method: "PATCH",
     body: patch,
   });
+  return out.data;
 }
 
 export async function disableOrgMember(orgId, memberId, reason) {
   const body = reason ? { reason: String(reason) } : undefined;
-  return api(`/orgs/${encodeSegment(orgId)}/members/${encodeSegment(memberId)}/disable`, {
+  const out = await api(`/orgs/${encodeSegment(orgId)}/members/${encodeSegment(memberId)}/disable`, {
     method: "POST",
     body,
   });
+  return out.data;
 }

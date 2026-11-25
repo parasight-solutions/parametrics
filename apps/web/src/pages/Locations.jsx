@@ -9,7 +9,7 @@ export default function Locations() {
     setErr("");
     try {
       const r = await api("/locations");
-      setRows(r.locations || []);
+      setRows(r.data?.locations || []);
     } catch (e) {
       setErr(e?.message || e?.code || "Failed to load");
     }

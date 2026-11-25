@@ -1,5 +1,6 @@
 // apps/api/src/routes/recurrence.js
 import { Router } from "express";
+import { sendError, sendSuccess } from "../utils/apiResponse.js";
 import crypto from "crypto";
 import { col } from "../lib/mongo.js";
 import { authenticate } from "../middleware/auth.js";
@@ -13,6 +14,12 @@ import { requireOwnedOrganizationLocationAccess } from "../services/organization
 import { auditFailure, auditSuccess } from "../services/auditLog.js";
 
 const router = Router();
+
+const badRequest = (res, message) => sendError(res, {
+  statusCode: 400,
+  message,
+  errors: [{ code: "bad_request", message }],
+});
 const LOCATION_READ_ROLES = Object.freeze(["owner", "admin", "manager", "viewer"]);
 const LOCATION_OPERATION_ROLES = Object.freeze(["owner", "admin", "manager"]);
 
@@ -51,7 +58,7 @@ router.get("/", authenticate, async (req, res) => {
     const userId = req.user.user_id;
     const locationId = String(req.query.locationId || "").trim();
     if (!locationId) {
-      return res.status(400).json({ error: { code: "bad_request", message: "locationId required" } });
+      return badRequest(res, "locationId required");
     }
 
     const { location: loc } = await requireOwnedOrganizationLocationAccess({
@@ -67,7 +74,7 @@ router.get("/", authenticate, async (req, res) => {
       { projection: { _id: 0 } }
     );
 
-    return res.json({ rule: rule || null });
+    return sendSuccess(res, { data: { rule: rule || null }, message: "Recurrence rule loaded" });
   } catch (e) {
     return toApiError(res, e);
   }
@@ -79,7 +86,7 @@ router.put("/", authenticate, mutationRateLimit, async (req, res) => {
     const userId = req.user.user_id;
     const locationId = String(req.query.locationId || "").trim();
     if (!locationId) {
-      return res.status(400).json({ error: { code: "bad_request", message: "locationId required" } });
+      return badRequest(res, "locationId required");
     }
 
     const { location: loc, membership } = await requireOwnedOrganizationLocationAccess({
@@ -118,30 +125,30 @@ router.put("/", authenticate, mutationRateLimit, async (req, res) => {
     const templateTopicType = template.topicType ?? body.template_topic_type ?? "STANDARD";
 
     if (!MODE.has(mode)) {
-      return res.status(400).json({ error: { code: "bad_request", message: "mode must be auto|manual" } });
+      return badRequest(res, "mode must be auto|manual");
     }
     if (!FREQ.has(frequency)) {
-      return res.status(400).json({ error: { code: "bad_request", message: "frequency must be daily|weekly|monthly|yearly" } });
+      return badRequest(res, "frequency must be daily|weekly|monthly|yearly");
     }
     if (!count) {
-      return res.status(400).json({ error: { code: "bad_request", message: "count must be 1..30" } });
+      return badRequest(res, "count must be 1..30");
     }
     if (!isValidTz(timezone)) {
-      return res.status(400).json({ error: { code: "bad_request", message: "invalid timezone" } });
+      return badRequest(res, "invalid timezone");
     }
     if (!windowStart || !windowEnd) {
-      return res.status(400).json({ error: { code: "bad_request", message: "windowStart/windowEnd must be HH:MM" } });
+      return badRequest(res, "windowStart/windowEnd must be HH:MM");
     }
     if (windowEnd <= windowStart) {
-      return res.status(400).json({ error: { code: "bad_request", message: "windowEnd must be after windowStart" } });
+      return badRequest(res, "windowEnd must be after windowStart");
     }
     if (enabled && !templateSummary) {
-      return res.status(400).json({ error: { code: "bad_request", message: "template.summary is required when enabled" } });
+      return badRequest(res, "template.summary is required when enabled");
     }
 
     const MAX_PER_DAY = 10;
     if (frequency === "daily" && count > MAX_PER_DAY) {
-      return res.status(400).json({ error: { code: "bad_request", message: `daily count too high (max ${MAX_PER_DAY})` } });
+      return badRequest(res, `daily count too high (max ${MAX_PER_DAY})`);
     }
 
     const rules = await col("recurrence_rules");
@@ -242,7 +249,7 @@ router.put("/", authenticate, mutationRateLimit, async (req, res) => {
       metadata: { ...(auditTarget.metadata || {}), enabled, mode, frequency, count },
     });
 
-    return res.json({ rule: saved });
+    return sendSuccess(res, { data: { rule: saved }, message: "Recurrence rule saved" });
   } catch (e) {
     await auditFailure(req, "recurrence.rule.upsert", {
       ...auditTarget,
@@ -257,7 +264,7 @@ router.get("/posts", authenticate, async (req, res) => {
     const userId = req.user.user_id;
     const locationId = String(req.query.locationId || "").trim();
     if (!locationId) {
-      return res.status(400).json({ error: { code: "bad_request", message: "locationId required" } });
+      return badRequest(res, "locationId required");
     }
 
     const { location: loc } = await requireOwnedOrganizationLocationAccess({
@@ -283,7 +290,7 @@ router.get("/posts", authenticate, async (req, res) => {
       .limit(200)
       .toArray();
 
-    return res.json({ posts: rows });
+    return sendSuccess(res, { data: { posts: rows }, message: "Recurring posts loaded" });
   } catch (e) {
     return toApiError(res, e);
   }
@@ -295,7 +302,7 @@ router.post("/plan-now", authenticate, generationRateLimit, async (req, res) => 
     const userId = req.user.user_id;
     const locationId = String(req.query.locationId || "").trim();
     if (!locationId) {
-      return res.status(400).json({ error: { code: "bad_request", message: "locationId required" } });
+      return badRequest(res, "locationId required");
     }
 
     const { location: loc, membership } = await requireOwnedOrganizationLocationAccess({
@@ -323,7 +330,7 @@ router.post("/plan-now", authenticate, generationRateLimit, async (req, res) => 
     );
 
     if (!rule) {
-      return res.status(404).json({ error: { code: "not_found", message: "enabled rule not found" } });
+      return sendError(res, { statusCode: 404, message: "enabled rule not found", errors: [{ code: "not_found", message: "enabled rule not found" }] });
     }
 
     const out = await planForRule(rule);
@@ -336,7 +343,7 @@ router.post("/plan-now", authenticate, generationRateLimit, async (req, res) => 
         skipped: out?.skipped ?? null,
       },
     });
-    return res.json({ ok: true, ...out });
+    return sendSuccess(res, { data: { ok: true, ...out }, message: "Recurrence plan queued" });
   } catch (e) {
     await auditFailure(req, "recurrence.plan_now", {
       ...auditTarget,

@@ -361,7 +361,11 @@ export default function Dashboard({ onLogout }) {
       storage: "session",
     });
 
-  const metrics = useMemo(() => data?.metrics || [], [data?.metrics]);
+  const dashboardData = data?.data;
+  const metrics = useMemo(
+    () => dashboardData?.metrics || [],
+    [dashboardData?.metrics],
+  );
   const byName = useMemo(() => {
     const m = new Map();
     for (const x of metrics) m.set(x.metric, x);
@@ -373,13 +377,13 @@ export default function Dashboard({ onLogout }) {
 
   const reportDisabledReason = useMemo(() => {
     if (!locationId) return "Pick a location before generating a report.";
-    if (!data) return "Load dashboard data before generating a report.";
+    if (!dashboardData) return "Load dashboard data before generating a report.";
     if (!activeLocation?.organization_id || !activeLocation?.client_id) {
       return "This location needs organization and client bindings before backend reports can run.";
     }
     if (rangeError) return rangeError;
     return "";
-  }, [activeLocation, data, locationId, rangeError]);
+  }, [activeLocation, dashboardData, locationId, rangeError]);
 
   const canGenerateBackendReport = !reportGenerating && !reportDisabledReason;
 
@@ -392,7 +396,7 @@ export default function Dashboard({ onLogout }) {
   }
 
   async function exportCsv() {
-    if (!data) return;
+    if (!dashboardData) return;
 
     // Build a date -> metric -> value map for points
     const metricKeys = metrics.map((m) => m.metric);
@@ -407,9 +411,9 @@ export default function Dashboard({ onLogout }) {
     const rows = [];
     rows.push([`ParaMetrics Dashboard Export`]);
     rows.push([`Location ID`, locationId]);
-    rows.push([`Range Start`, data?.range?.start || startStr]);
-    rows.push([`Range End`, data?.range?.end || endStr]);
-    rows.push([`Days`, data?.range?.days || daysLabel]);
+    rows.push([`Range Start`, dashboardData?.range?.start || startStr]);
+    rows.push([`Range End`, dashboardData?.range?.end || endStr]);
+    rows.push([`Days`, dashboardData?.range?.days || daysLabel]);
     rows.push([]);
     rows.push([`Totals`]);
     rows.push([`Metric`, `Total`]);
@@ -437,7 +441,7 @@ export default function Dashboard({ onLogout }) {
   }
 
   async function exportPng() {
-    if (!data) return;
+    if (!dashboardData) return;
 
     try {
       const svg = buildDashboardSvg({ metrics, locationId, startStr, endStr });
@@ -463,7 +467,7 @@ export default function Dashboard({ onLogout }) {
   }
 
   async function exportPdf() {
-    if (!data) return;
+    if (!dashboardData) return;
 
     try {
       const svg = buildDashboardSvg({ metrics, locationId, startStr, endStr });
@@ -522,7 +526,7 @@ export default function Dashboard({ onLogout }) {
   }
 
   function exportSvg() {
-    if (!data) return;
+    if (!dashboardData) return;
 
     const svg = buildDashboardSvg({ metrics, locationId, startStr, endStr });
 
@@ -554,7 +558,7 @@ export default function Dashboard({ onLogout }) {
         body,
       });
 
-      const downloaded = downloadReportFiles(result.files || []);
+      const downloaded = downloadReportFiles(result.data?.files || []);
       setReportStatus(
         downloaded.length
           ? `Generated ${downloaded.length} backend report file${downloaded.length === 1 ? "" : "s"}.`

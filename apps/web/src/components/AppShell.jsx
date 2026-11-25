@@ -48,7 +48,9 @@ export default function AppShell({ title, subtitle, onLogout, actions, tools, ch
   function dismissBanner() {
     try {
       sessionStorage.setItem("reauth_required_dismissed", "1");
-    } catch {}
+    } catch {
+      // Dismissing the banner remains best-effort in restricted storage contexts.
+    }
     setDismissed(true);
   }
 

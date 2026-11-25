@@ -1,5 +1,6 @@
 // apps/api/src/routes/auth.google.js
 import { Router } from "express";
+import { sendError } from "../utils/apiResponse.js";
 import crypto from "crypto";
 import { config } from "../config.js";
 import { signJwt, verifyJwt } from "../lib/jwt.js";
@@ -171,11 +172,10 @@ router.get("/start", oauthRateLimit, (_req, res) => {
   const clientSecret = cleanStr(process.env.GOOGLE_OIDC_CLIENT_SECRET, 500);
 
   if (!clientId || !clientSecret) {
-    return res.status(500).json({
-      error: {
-        code: "google_oidc_not_configured",
-        message: "Google OIDC client credentials are missing",
-      },
+    return sendError(res, {
+      statusCode: 500,
+      message: "Google sign-in is not configured",
+      errors: [{ code: "google_oidc_not_configured", message: "Google sign-in is not configured" }],
     });
   }
 

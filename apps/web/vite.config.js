@@ -1,6 +1,8 @@
 import { defineConfig, loadEnv } from 'vite'
 import react from '@vitejs/plugin-react'
 
+/* global process */
+
 function parsePort(value, fallback) {
   const port = Number.parseInt(String(value || ""), 10)
   return Number.isInteger(port) && port > 0 && port < 65536 ? port : fallback

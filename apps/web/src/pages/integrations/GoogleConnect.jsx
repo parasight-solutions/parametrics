@@ -41,7 +41,7 @@ export default function GoogleConnectPage() {
       })
       .then((data) => {
         if (!data) return;
-        const list = data.accounts || [];
+        const list = data.data?.accounts || [];
         setAccounts(list);
         localStorage.setItem(key, JSON.stringify({ ts: Date.now(), data: list }));
       })

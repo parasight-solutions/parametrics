@@ -1,4 +1,5 @@
 import { isAllowedCorsOrigin } from "../lib/corsConfig.js";
+import { sendError } from "../utils/apiResponse.js";
 
 const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
 
@@ -13,11 +14,10 @@ export function createValidateRequestOrigin({
     const origin = req.headers?.origin;
     if (!origin || isAllowedOrigin(origin)) return next();
 
-    return res.status(403).json({
-      error: {
-        code: "origin_forbidden",
-        message: "Request origin is not allowed",
-      },
+    return sendError(res, {
+      statusCode: 403,
+      message: "Request origin is not allowed",
+      errors: [{ code: "origin_forbidden", message: "Request origin is not allowed" }],
     });
   };
 }

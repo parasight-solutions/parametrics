@@ -8,15 +8,12 @@ describe("getPostDeleteErrorMessage", () => {
   it("uses the actionable backend error message", () => {
     expect(
       getPostDeleteErrorMessage({
-        response: {
-          data: {
-            error: {
-              code: "google_post_delete_rate_limited",
-              message:
-                "Google temporarily rate-limited this deletion. Please retry later.",
-            },
-          },
-        },
+        statusCode: 429,
+        message: "Google temporarily rate-limited this deletion. Please retry later.",
+        errors: [{
+          code: "google_post_delete_rate_limited",
+          message: "Google temporarily rate-limited this deletion. Please retry later.",
+        }],
       }),
     ).toBe(
       "Google temporarily rate-limited this deletion. Please retry later.",

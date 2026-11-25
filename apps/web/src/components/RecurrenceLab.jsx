@@ -13,8 +13,13 @@ async function api(path, opts = {}) {
     credentials: "include",
   });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data?.error?.message || data?.message || "Request failed");
-  return data;
+  if (!res.ok) {
+    const error = new Error(data?.message || data?.errors?.[0]?.message || "Request failed");
+    error.statusCode = data?.statusCode ?? res.status;
+    error.code = data?.errors?.[0]?.code || "";
+    throw error;
+  }
+  return data?.data || {};
 }
 
 function fmtDate(v) {

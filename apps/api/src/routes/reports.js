@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { sendSuccess } from "../utils/apiResponse.js";
 import { authenticate } from "../middleware/auth.js";
 import {
   generationRateLimit,
@@ -554,10 +555,10 @@ router.get("/runs", authenticate, reportListRateLimit, async (req, res) => {
 
     await auditSuccess(req, "report.run.list", buildListAuditDetails(query, result));
 
-    return res.json({
+    return sendSuccess(res, { data: {
       report_runs: result.report_runs,
       pagination: result.pagination,
-    });
+    }, message: "Report runs loaded" });
   } catch (error) {
     const mapped = mapValidationError(error);
     await auditFailure(req, "report.run.list_failed", buildListFailureAuditDetails(query, mapped));
@@ -588,7 +589,7 @@ router.post("/dashboard-snapshot", authenticate, generationRateLimit, async (req
       membership_role: membershipRole,
     }));
 
-    return res.json(result);
+    return sendSuccess(res, { data: result, message: "Report generated" });
   } catch (error) {
     await auditFailure(req, "report.dashboard_snapshot.generate", {
       ...auditDetailsFromRun(error.reportRun || req.body, {

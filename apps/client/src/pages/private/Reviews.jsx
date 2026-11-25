@@ -1,5 +1,5 @@
-import CustomButton from "../../components/ui/CustomButton";
 import PageHeader from "../../components/ui/PageHeader";
+import CustomButton from "../../components/ui/CustomButton";
 
 const Reviews = () => {
   return (
@@ -8,7 +8,7 @@ const Reviews = () => {
         heading="Reviews"
         subHeading="Sync Google Business Profile reviews and reply"
       >
-        <CustomButton name="Sync from Google" />
+        <CustomButton name="Sync Reviews" />
       </PageHeader>
     </div>
   );

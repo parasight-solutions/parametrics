@@ -1,13 +1,13 @@
 // apps/api/src/middleware/auth.js
 import { col } from "../lib/mongo.js";
 import { readSessionToken, resolveSession } from "../services/authSessions.js";
+import { sendError } from "../utils/apiResponse.js";
 
 function sendUnauthorized(res) {
-  return res.status(401).json({
-    error: {
-      code: "unauthorized",
-      message: "Unauthorized",
-    },
+  return sendError(res, {
+    statusCode: 401,
+    message: "Authentication required",
+    errors: [{ code: "unauthorized", message: "Authentication required" }],
   });
 }
 
@@ -47,8 +47,10 @@ export function createAuthenticate({
       return next();
     } catch (error) {
       console.error("[auth] session lookup failed", error);
-      return res.status(500).json({
-        error: { code: "server_error", message: "Authentication unavailable" },
+      return sendError(res, {
+        statusCode: 500,
+        message: "Unable to authenticate request",
+        errors: [{ code: "server_error", message: "Unable to authenticate request" }],
       });
     }
   };

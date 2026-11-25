@@ -49,5 +49,10 @@ test("origin validation rejects an unsafe request from a disallowed origin", () 
   );
 
   assert.equal(res.statusCode, 403);
-  assert.equal(res.body.error.code, "origin_forbidden");
+  assert.deepEqual(res.body, {
+    statusCode: 403,
+    message: "Request origin is not allowed",
+    success: false,
+    errors: [{ code: "origin_forbidden", message: "Request origin is not allowed" }],
+  });
 });

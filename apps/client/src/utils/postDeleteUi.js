@@ -1,5 +1,7 @@
 export function getPostDeleteErrorMessage(error) {
-  const message = error?.response?.data?.error?.message;
+  const message = Number.isInteger(error?.statusCode)
+    ? error?.message || error?.errors?.[0]?.message
+    : null;
 
   return typeof message === "string" && message.trim()
     ? message.trim()

@@ -8,7 +8,7 @@ const SESSION_UI_KEYS = [
   "reauth_required_dismissed",
   "auth_expired_alerted",
 ];
-const SESSION_UI_PREFIXES = ["cache:v1:", "dashRange:v1:"];
+const SESSION_UI_PREFIXES = ["cache:v1:", "cache:v2:", "dashRange:v1:"];
 
 function removeKeys(storage, exactKeys, prefixes = []) {
   if (!storage) return;

@@ -27,9 +27,9 @@ export default function GoogleLocationsImport() {
     setAccountsErr(null);
     try {
       const data = await apiFetch("/api/v1/integrations/google/accounts", { token });
-      setAccounts(Array.isArray(data?.accounts) ? data.accounts : []);
+      setAccounts(Array.isArray(data?.data?.accounts) ? data.data.accounts : []);
     } catch (e) {
-      setAccountsErr(e?.body?.error?.code || e.message || "accounts_failed");
+      setAccountsErr(e?.errors?.[0]?.code || e.message || "accounts_failed");
     } finally {
       setLoadingAccounts(false);
     }
@@ -44,9 +44,9 @@ export default function GoogleLocationsImport() {
       if (integrationId) qs.set("integrationId", integrationId);
 
       const data = await apiFetch(`/api/v1/integrations/google/locations?${qs.toString()}`, { token });
-      setLocations(Array.isArray(data?.locations) ? data.locations : []);
+      setLocations(Array.isArray(data?.data?.locations) ? data.data.locations : []);
     } catch (e) {
-      setLocationsErr(e?.body?.error?.code || e.message || "locations_failed");
+      setLocationsErr(e?.errors?.[0]?.code || e.message || "locations_failed");
     } finally {
       setLoadingLocations(false);
     }
@@ -68,12 +68,12 @@ export default function GoogleLocationsImport() {
           integrationId: selectedObj.integrationId || null,
         },
       });
-      setImportResult(data);
+      setImportResult(data.data);
 
       // refresh locations list after import
       await loadLocations(selectedObj.accountName, selectedObj.integrationId);
     } catch (e) {
-      setImportErr(e?.body?.error?.code || e.message || "import_failed");
+      setImportErr(e?.errors?.[0]?.code || e.message || "import_failed");
     } finally {
       setImporting(false);
     }

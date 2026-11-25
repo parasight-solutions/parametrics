@@ -130,8 +130,8 @@ export default function Reviews({ onLogout }) {
     setLoading(true);
     try {
       const out = await api(`/reviews?locationId=${encodeURIComponent(locationId)}`);
-      setReviews(out.reviews || []);
-      setSync(out.sync || null);
+      setReviews(out.data?.reviews || []);
+      setSync(out.data?.sync || null);
     } finally {
       setLoading(false);
     }
@@ -168,7 +168,6 @@ export default function Reviews({ onLogout }) {
     setReplying({});
     setEditing({});
     setBusyId("");
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [locationId]);
 
   useEffect(() => {

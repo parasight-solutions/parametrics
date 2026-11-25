@@ -20,9 +20,9 @@ export default function GoogleAccounts() {
     setLoading(true); setErr(null);
     try {
       const data = await apiFetch("/api/v1/integrations/google/accounts", { token });
-      setAccounts(data.accounts || []);
+      setAccounts(data.data?.accounts || []);
     } catch (e) {
-      setErr(e?.body?.error?.code || e.message);
+      setErr(e?.errors?.[0]?.code || e.message);
     } finally {
       setLoading(false);
     }

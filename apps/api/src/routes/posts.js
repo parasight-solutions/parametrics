@@ -49,6 +49,7 @@ import { deletePostWithProvider } from "../services/postDeletion.js";
 import { buildPostDeletionTombstone, upsertPostDeletionTombstone } from "../services/postDeletionTombstones.js";
 import { buildGoogleRecoveryIdentity, syncGooglePosts } from "../services/postSync.js";
 import { runManualPostSync } from "../services/manualPostSync.js";
+import { sendError, sendSuccess } from "../utils/apiResponse.js";
 
 const router = Router();
 const publishQueue = makeQueue("post-publish");
@@ -63,6 +64,10 @@ const LOCATION_OPERATION_ROLES = Object.freeze(["owner", "admin", "manager"]);
 const postImageConfig = resolvePostUploadConfig();
 const postImageStorage = createPostImageStorage(postImageConfig);
 const parsePostImage = createImageUploadMiddleware(postImageConfig);
+
+function postError(res, statusCode, code, message = code) {
+  return sendError(res, { statusCode, message, errors: [{ code, message }] });
+}
 
 async function removePublishJob(postId) {
   const jobId = PUBLISH_JOB_ID(postId);
@@ -363,7 +368,7 @@ router.get("/", authenticate, async (req, res) => {
       };
     });
 
-    return res.json({
+    return sendSuccess(res, { data: {
       posts,
       pagination: {
         page,
@@ -371,7 +376,7 @@ router.get("/", authenticate, async (req, res) => {
         total,
         totalPages: total ? Math.ceil(total / perPage) : 0,
       },
-    });
+    }, message: "Posts loaded" });
   } catch (e) {
     return toApiError(res, e);
   }
@@ -382,9 +387,7 @@ router.get("/provider", authenticate, syncRateLimit, async (req, res) => {
     const userId = req.user.user_id;
     const locationId = String(req.query.locationId || "").trim();
     if (!locationId) {
-      return res.status(400).json({
-        error: { code: "bad_request", message: "locationId required" },
-      });
+      return postError(res, 400, "bad_request", "locationId required");
     }
 
     const { location: loc } = await requireOwnedOrganizationLocationAccess({
@@ -396,14 +399,12 @@ router.get("/provider", authenticate, syncRateLimit, async (req, res) => {
 
     const integrationId = loc.integration_id;
     if (!integrationId) {
-      return res.status(409).json({ error: { code: "location_not_bound" } });
+      return postError(res, 409, "location_not_bound", "Location is not bound to Google");
     }
 
     const integ = await getGoogleIntegrationById(userId, integrationId);
     if (!integ) {
-      return res
-        .status(409)
-        .json({ error: { code: "no_integration_for_location" } });
+      return postError(res, 409, "no_integration_for_location", "Google connection for this location not found");
     }
 
     const { access_token } = await ensureAccessToken(integ);
@@ -414,10 +415,10 @@ router.get("/provider", authenticate, syncRateLimit, async (req, res) => {
       { pageSize: 20 },
     );
 
-    return res.json({
+    return sendSuccess(res, { data: {
       provider_posts: data?.localPosts || [],
       nextPageToken: data?.nextPageToken || null,
-    });
+    }, message: "Provider posts loaded" });
   } catch (e) {
     return toApiError(res, e);
   }
@@ -443,7 +444,7 @@ router.post("/sync", authenticate, syncRateLimit, async (req, res) => {
         },
       },
     );
-    return res.json(result);
+    return sendSuccess(res, { data: result, message: "Posts synchronized" });
   } catch (error) {
     return toApiError(res, error);
   }
@@ -463,7 +464,7 @@ router.get("/:id", authenticate, async (req, res) => {
       },
     );
 
-    return res.json({ post });
+    return sendSuccess(res, { data: { post }, message: "Post loaded" });
   } catch (error) {
     return toApiError(res, error);
   }
@@ -482,21 +483,15 @@ router.post(
 
       if (!b.publishNow && b.scheduleAt) {
         if (Number.isNaN(b.scheduleAt.getTime())) {
-          return res.status(400).json({
-            error: { code: "bad_request", message: "invalid scheduleAt" },
-          });
+          return postError(res, 400, "bad_request", "invalid scheduleAt");
         }
       }
 
       if (!b.locationId) {
-        return res.status(400).json({
-          error: { code: "bad_request", message: "locationId required" },
-        });
+        return postError(res, 400, "bad_request", "locationId required");
       }
       if (!b.summary) {
-        return res.status(400).json({
-          error: { code: "bad_request", message: "summary required" },
-        });
+        return postError(res, 400, "bad_request", "summary required");
       }
 
       const { location: loc, membership } =
@@ -507,13 +502,7 @@ router.post(
           allowedRoles: LOCATION_OPERATION_ROLES,
         });
       if (!loc.integration_id) {
-        return res.status(409).json({
-          error: {
-            code: "location_not_bound",
-            message:
-              "This location is not bound to a Google connection. Re-import locations after connecting Google.",
-          },
-        });
+        return postError(res, 409, "location_not_bound", "This location is not bound to a Google connection. Re-import locations after connecting Google.");
       }
 
       try {
@@ -522,12 +511,7 @@ router.post(
           loc.integration_id,
         );
         if (!integ) {
-          return res.status(409).json({
-            error: {
-              code: "no_integration_for_location",
-              message: "Google connection for this location not found",
-            },
-          });
+          return postError(res, 409, "no_integration_for_location", "Google connection for this location not found");
         }
 
         const tokenObj = await ensureAccessToken(integ);
@@ -537,21 +521,10 @@ router.post(
         await assertLocationAccessible(accessToken, loc);
       } catch (e) {
         if (e?.code === "account_mismatch") {
-          return res.status(409).json({
-            error: {
-              code: "account_mismatch",
-              message:
-                "This location belongs to a different Google account. Switch connection and re-import locations.",
-              data: e.data || null,
-            },
-          });
+          return postError(res, 409, "account_mismatch", "This location belongs to a different Google account. Switch connection and re-import locations.");
         }
-        return res.status(500).json({
-          error: {
-            code: "server_error",
-            message: e?.message || "server_error",
-          },
-        });
+        console.error("[posts/create] Google location check failed", e);
+        return postError(res, 500, "server_error", "Unable to validate Google location");
       }
 
       const imageSource = await resolvePostImageSource({
@@ -631,7 +604,7 @@ router.post(
         },
       });
 
-      return res.json({
+      return sendSuccess(res, { data: {
         post: {
           ...doc,
           location: {
@@ -640,7 +613,7 @@ router.post(
               loc.title || loc.name || loc.provider_location_name || loc.id,
           },
         },
-      });
+      }, message: "Post created" });
     } catch (e) {
       if (storedImage?.filename)
         await postImageStorage
@@ -655,14 +628,10 @@ router.post(
           "missing_file",
         ].includes(e?.code)
       ) {
-        return res
-          .status(400)
-          .json({ error: { code: e.code, message: e.message } });
+        return postError(res, 400, e.code, e.message);
       }
       if (e?.code === "image_too_large") {
-        return res
-          .status(413)
-          .json({ error: { code: e.code, message: e.message } });
+        return postError(res, 413, e.code, e.message);
       }
       return toApiError(res, e);
     }
@@ -677,9 +646,7 @@ router.patch("/:id", authenticate, generationRateLimit, async (req, res) => {
 
     const post = await posts.findOne({ id, user_id: userId });
     if (!post) {
-      return res
-        .status(404)
-        .json({ error: { code: "not_found", message: "post not found" } });
+      return postError(res, 404, "not_found", "post not found");
     }
 
     const { location: loc, membership } =
@@ -692,21 +659,11 @@ router.patch("/:id", authenticate, generationRateLimit, async (req, res) => {
     assertDocMatchesLocationScope(post, loc, "post");
 
     if (post.status === "publishing") {
-      return res.status(409).json({
-        error: {
-          code: "conflict",
-          message: "post is publishing; cannot edit now",
-        },
-      });
+      return postError(res, 409, "conflict", "post is publishing; cannot edit now");
     }
 
     if (post.status === "published") {
-      return res.status(409).json({
-        error: {
-          code: "conflict",
-          message: "published posts cannot be edited",
-        },
-      });
+      return postError(res, 409, "conflict", "published posts cannot be edited");
     }
 
     const body = req.body || {};
@@ -730,9 +687,7 @@ router.patch("/:id", authenticate, generationRateLimit, async (req, res) => {
       if (scheduleAtRaw) {
         const dt = new Date(scheduleAtRaw);
         if (Number.isNaN(dt.getTime())) {
-          return res.status(400).json({
-            error: { code: "bad_request", message: "invalid scheduleAt" },
-          });
+          return postError(res, 400, "bad_request", "invalid scheduleAt");
         }
         $set.status = "scheduled";
         $set.scheduled_at = dt;
@@ -785,7 +740,7 @@ router.patch("/:id", authenticate, generationRateLimit, async (req, res) => {
       },
     });
 
-    return res.json({ post: updated });
+    return sendSuccess(res, { data: { post: updated }, message: "Post updated" });
   } catch (e) {
     return toApiError(res, e);
   }
@@ -803,9 +758,7 @@ router.post(
 
       const post = await posts.findOne({ id, user_id: userId });
       if (!post) {
-        return res
-          .status(404)
-          .json({ error: { code: "not_found", message: "post not found" } });
+        return postError(res, 404, "not_found", "post not found");
       }
 
       const { location: loc, membership } =
@@ -818,12 +771,7 @@ router.post(
       assertDocMatchesLocationScope(post, loc, "post");
 
       if (post.status !== "failed") {
-        return res.status(409).json({
-          error: {
-            code: "conflict",
-            message: "only failed posts can be retried",
-          },
-        });
+        return postError(res, 409, "conflict", "only failed posts can be retried");
       }
 
       const rebind = {};
@@ -867,7 +815,7 @@ router.post(
         metadata: { reason: "manual-retry", membership_role: membership.role },
       });
 
-      return res.json({ ok: true });
+      return sendSuccess(res, { data: { ok: true }, message: "Post retry queued" });
     } catch (e) {
       return toApiError(res, e);
     }
@@ -882,9 +830,7 @@ router.delete("/:id", authenticate, mutationRateLimit, async (req, res) => {
 
     const post = await posts.findOne({ id, user_id: userId });
     if (!post) {
-      return res
-        .status(404)
-        .json({ error: { code: "not_found", message: "post not found" } });
+      return postError(res, 404, "not_found", "post not found");
     }
 
     const { location: loc, membership } =
@@ -940,7 +886,7 @@ router.delete("/:id", authenticate, mutationRateLimit, async (req, res) => {
       metadata: { membership_role: membership.role, remote: deletion.remote },
     });
 
-    return res.json(deletion);
+    return sendSuccess(res, { data: deletion, message: "Post deleted" });
   } catch (e) {
     return toApiError(res, e);
   }

@@ -121,12 +121,13 @@ export default function Posts({ onLogout }) {
     try {
       const out = await api(`/posts${query}`);
       if (requestId !== latestRequestId.current) return;
+      const payload = out.data || {};
 
-      const nextPagination = out.pagination || {
+      const nextPagination = payload.pagination || {
         page,
         perPage,
-        total: (out.posts || []).length,
-        totalPages: (out.posts || []).length ? 1 : 0,
+        total: (payload.posts || []).length,
+        totalPages: (payload.posts || []).length ? 1 : 0,
       };
 
       if (nextPagination.totalPages > 0 && page > nextPagination.totalPages) {
@@ -134,7 +135,7 @@ export default function Posts({ onLogout }) {
         return;
       }
 
-      setPosts(out.posts || []);
+      setPosts(payload.posts || []);
       setPagination(nextPagination);
       setLastRefreshedAt(new Date());
     } finally {

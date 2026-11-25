@@ -13,6 +13,7 @@ import {
   revokeSession as defaultRevokeSession,
   setSessionCookie as defaultSetSessionCookie,
 } from "../services/authSessions.js";
+import { sendError, sendSuccess } from "../utils/apiResponse.js";
 
 function publicUser(user) {
   return {
@@ -48,7 +49,11 @@ export function createAuthRouter({
             reason: "missing_credentials",
           },
         });
-        return res.status(400).json({ error: { code: "bad_request" } });
+        return sendError(res, {
+          statusCode: 400,
+          message: "Email and password are required",
+          errors: [{ code: "bad_request", message: "Email and password are required" }],
+        });
       }
 
       const normalized = String(email).trim().toLowerCase();
@@ -63,7 +68,11 @@ export function createAuthRouter({
           target_id: user?.id,
           metadata: { email: normalized, reason: "invalid_credentials" },
         });
-        return res.status(401).json({ error: { code: "invalid" } });
+        return sendError(res, {
+          statusCode: 401,
+          message: "Invalid email or password",
+          errors: [{ code: "invalid", message: "Invalid email or password" }],
+        });
       }
 
       const currentToken = readSessionToken(req);
@@ -81,10 +90,14 @@ export function createAuthRouter({
         metadata: { email: normalized },
       });
 
-      return res.json({ user: userData });
+      return sendSuccess(res, { data: { user: userData }, message: "Login successful" });
     } catch (error) {
       console.error("[auth/login] error", error);
-      return res.status(500).json({ error: { code: "server_error" } });
+      return sendError(res, {
+        statusCode: 500,
+        message: "Unable to log in",
+        errors: [{ code: "server_error", message: "Unable to log in" }],
+      });
     }
   });
 
@@ -92,11 +105,22 @@ export function createAuthRouter({
     try {
       const users = await getUsers();
       const user = await users.findOne({ id: String(req.user.user_id) });
-      if (!user) return res.status(401).json({ error: { code: "unauthorized" } });
-      return res.json({ user: publicUser(user) });
+      if (!user) return sendError(res, {
+        statusCode: 401,
+        message: "Authentication required",
+        errors: [{ code: "unauthorized", message: "Authentication required" }],
+      });
+      return sendSuccess(res, {
+        data: { user: publicUser(user) },
+        message: "Session restored",
+      });
     } catch (error) {
       console.error("[auth/session] error", error);
-      return res.status(500).json({ error: { code: "server_error" } });
+      return sendError(res, {
+        statusCode: 500,
+        message: "Unable to restore session",
+        errors: [{ code: "server_error", message: "Unable to restore session" }],
+      });
     }
   });
 

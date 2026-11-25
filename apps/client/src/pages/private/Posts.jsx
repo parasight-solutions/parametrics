@@ -159,7 +159,8 @@ const Posts = () => {
         },
         onError: (error) => {
           notify.msgError(
-            error?.response?.data?.error?.message ||
+            error?.message ||
+              error?.errors?.[0]?.message ||
               "Posts could not be synchronized. Please try again.",
           );
         },
@@ -370,7 +371,7 @@ const Posts = () => {
 
         <div className="col-span-12 md:col-span-6 self-center">
           <span className="font-medium">Last synced: </span>
-          <span>{formatDateInAlphaNumericWithTime(lastSyncedAt)}</span>
+          <span>{formatDateInAlphaNumericWithTime(lastSyncedAt) || "-"}</span>
         </div>
       </div>
 

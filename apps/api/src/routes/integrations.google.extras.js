@@ -11,6 +11,7 @@ import {
 } from '../integrations/google.js';
 import { auditFailure, auditSuccess } from '../services/auditLog.js';
 import { requireOwnedOrganizationLocationAccess } from '../services/organizationAccess.js';
+import { sendError, sendSuccess } from '../utils/apiResponse.js';
 
 const router = express.Router();
 const LOCATION_READ_ROLES = Object.freeze(['owner', 'admin', 'manager', 'viewer']);
@@ -53,25 +54,28 @@ function isGoogleAuthFailure(e) {
 
 function sendGoogleFailure(res, e, fallbackCode = 'google_error') {
   const upstreamStatus = Number(e?.status || 502);
-  const body = e?.body || null;
 
   if (e?.code === 'reauth_required' || isGoogleAuthFailure(e)) {
-    return res.status(409).json({
-      error: {
+    const reason = upstreamStatus === 403 ? 'permission_denied' : 'access_revoked';
+    return sendError(res, {
+      statusCode: 409,
+      message: 'Google connection expired, revoked, or no longer has access. Please reconnect Google.',
+      errors: [{
         code: 'reauth_required',
         message: 'Google connection expired, revoked, or no longer has access. Please reconnect Google.',
-        details: body,
-      },
+        details: { provider: 'google', reason },
+      }],
     });
   }
 
-  return res.status(502).json({
-    error: {
+  console.error('[google] provider request failed', e);
+  return sendError(res, {
+    statusCode: 502,
+    message: 'Google request failed',
+    errors: [{
       code: fallbackCode,
-      message: e?.message || fallbackCode,
-      status: upstreamStatus,
-      body,
-    },
+      message: 'Google request failed',
+    }],
   });
 }
 
@@ -80,11 +84,13 @@ function sendAccessFailure(res, e) {
   const code = String(e?.code || '').trim();
   if (!status || status >= 500 || !LOCAL_ACCESS_CODES.has(code)) return false;
 
-  return res.status(status).json({
-    error: {
+  return sendError(res, {
+    statusCode: status,
+    message: e?.message || e?.code || 'Access denied',
+    errors: [{
       code,
-      message: e?.message || e?.code || 'forbidden',
-    },
+      message: e?.message || e?.code || 'Access denied',
+    }],
   });
 }
 
@@ -230,7 +236,7 @@ router.get('/performance-series', authenticate, async (req, res) => {
     const locationId = req.query.locationId || req.query.location_id;
 
     if (!locationId) {
-      return res.status(400).json({ error: { code: 'bad_request', message: 'locationId required' } });
+      return sendError(res, { statusCode: 400, message: 'locationId required', errors: [{ code: 'bad_request', message: 'locationId required' }] });
     }
 
     const { location: loc } = await getOwnedLocationAccess(userId, locationId, LOCATION_READ_ROLES);
@@ -262,15 +268,15 @@ router.get('/performance-series', authenticate, async (req, res) => {
       end = parseYmdStrict(qsEndDate);
 
       if (!start || !end) {
-        return res.status(400).json({ error: { code: 'bad_request', message: 'startDate/endDate must be YYYY-MM-DD' } });
+        return sendError(res, { statusCode: 400, message: 'startDate/endDate must be YYYY-MM-DD', errors: [{ code: 'bad_request', message: 'startDate/endDate must be YYYY-MM-DD' }] });
       }
       if (end.getTime() < start.getTime()) {
-        return res.status(400).json({ error: { code: 'bad_request', message: 'endDate must be >= startDate' } });
+        return sendError(res, { statusCode: 400, message: 'endDate must be >= startDate', errors: [{ code: 'bad_request', message: 'endDate must be >= startDate' }] });
       }
 
       const days = Math.floor((end.getTime() - start.getTime()) / 86400000) + 1;
       if (days < 1 || days > 366) {
-        return res.status(400).json({ error: { code: 'bad_request', message: 'range too large (max 366 days)' } });
+        return sendError(res, { statusCode: 400, message: 'range too large (max 366 days)', errors: [{ code: 'bad_request', message: 'range too large (max 366 days)' }] });
       }
     } else {
       const days = clampDays(req.query.days);
@@ -334,46 +340,36 @@ router.get('/performance-series', authenticate, async (req, res) => {
       return { metric: g.key, total, points };
     });
 
-    return res.json({
+    return sendSuccess(res, { data: {
       location: { id: loc.id, title: loc.title, provider: loc.provider },
       range: { start: ymd(start), end: ymd(end), days: daysFinal },
       metrics: series,
       expanded_metrics_used: expanded,
-    });
+    }, message: 'Performance series loaded' });
   } catch (e) {
     if (sendAccessFailure(res, e)) return;
 
     if (e?.code === 'reauth_required') {
-      return res.status(409).json({
-        error: {
+      return sendError(res, { statusCode: 409, message: 'Google connection expired/revoked. Please reconnect Google.', errors: [{
           code: 'reauth_required',
           message: 'Google connection expired/revoked. Please reconnect Google.',
-          details: e?.body || null,
-        },
-      });
+          details: { provider: 'google', reason: 'access_revoked' },
+        }] });
     }
 
     if (e?.code === 'invalid_metric') {
-      return res.status(400).json({
-        error: {
+      return sendError(res, { statusCode: 400, message: `Invalid metric: ${e.metric}`, errors: [{
           code: 'bad_request',
           message: `Invalid metric: ${e.metric}`,
-          allowed: e.allowed,
-        },
-      });
+        }] });
     }
 
     if (e?.message === 'google_http_error') {
       return sendGoogleFailure(res, e, 'performance_failed');
     }
 
-    return res.status(500).json({
-      error: {
-        code: 'server_error',
-        message: e?.message || 'server_error',
-        data: e?.data || null,
-      },
-    });
+    console.error('[google/performance-series] error', e);
+    return sendError(res, { statusCode: 500, message: 'Unable to load performance series', errors: [{ code: 'server_error', message: 'Unable to load performance series' }] });
   }
 });
 
@@ -383,7 +379,7 @@ router.get('/reviews', authenticate, syncRateLimit, async (req, res) => {
     const locationId = req.query.locationId || req.query.location_id;
 
     if (!locationId) {
-      return res.status(400).json({ error: { code: 'bad_request', message: 'locationId required' } });
+      return sendError(res, { statusCode: 400, message: 'locationId required', errors: [{ code: 'bad_request', message: 'locationId required' }] });
     }
 
     const { location: loc } = await getOwnedLocationAccess(userId, locationId, LOCATION_READ_ROLES);
@@ -397,34 +393,27 @@ router.get('/reviews', authenticate, syncRateLimit, async (req, res) => {
       { pageSize: 50, orderBy: 'updateTime desc' }
     );
 
-    return res.json({
+    return sendSuccess(res, { data: {
       reviews: data.reviews || [],
       nextPageToken: data.nextPageToken || null,
-    });
+    }, message: 'Reviews loaded' });
   } catch (e) {
     if (sendAccessFailure(res, e)) return;
 
     if (e?.code === 'reauth_required') {
-      return res.status(409).json({
-        error: {
+      return sendError(res, { statusCode: 409, message: 'Google connection expired/revoked. Please reconnect Google.', errors: [{
           code: 'reauth_required',
           message: 'Google connection expired/revoked. Please reconnect Google.',
-          details: e?.body || null,
-        },
-      });
+          details: { provider: 'google', reason: 'access_revoked' },
+        }] });
     }
 
     if (e?.message === 'google_http_error') {
       return sendGoogleFailure(res, e, 'reviews_failed');
     }
 
-    return res.status(500).json({
-      error: {
-        code: 'server_error',
-        message: e?.message || 'server_error',
-        data: e?.data || null,
-      },
-    });
+    console.error('[google/reviews] error', e);
+    return sendError(res, { statusCode: 500, message: 'Unable to load reviews', errors: [{ code: 'server_error', message: 'Unable to load reviews' }] });
   }
 });
 
@@ -435,12 +424,10 @@ router.put('/reviews/reply', authenticate, mutationRateLimit, async (req, res) =
     const { locationId, reviewName, comment } = req.body || {};
 
     if (!locationId || !reviewName || !comment) {
-      return res.status(400).json({
-        error: {
+      return sendError(res, { statusCode: 400, message: 'locationId + reviewName + comment required', errors: [{
           code: 'bad_request',
           message: 'locationId + reviewName + comment required',
-        },
-      });
+        }] });
     }
 
     const { location: loc, membership } = await getOwnedLocationAccess(userId, locationId, LOCATION_OPERATION_ROLES);
@@ -458,7 +445,7 @@ router.put('/reviews/reply', authenticate, mutationRateLimit, async (req, res) =
     await auditSuccess(req, 'review.reply.attempt', auditTarget);
     const out = await updateReviewReply(reviewName, comment, accessToken);
     await auditSuccess(req, 'review.reply', auditTarget);
-    return res.json({ reply: out });
+    return sendSuccess(res, { data: { reply: out }, message: 'Review reply updated' });
   } catch (e) {
     await auditFailure(req, 'review.reply', {
       ...auditTarget,
@@ -467,26 +454,19 @@ router.put('/reviews/reply', authenticate, mutationRateLimit, async (req, res) =
     if (sendAccessFailure(res, e)) return;
 
     if (e?.code === 'reauth_required') {
-      return res.status(409).json({
-        error: {
+      return sendError(res, { statusCode: 409, message: 'Google connection expired/revoked. Please reconnect Google.', errors: [{
           code: 'reauth_required',
           message: 'Google connection expired/revoked. Please reconnect Google.',
-          details: e?.body || null,
-        },
-      });
+          details: { provider: 'google', reason: 'access_revoked' },
+        }] });
     }
 
     if (e?.message === 'google_http_error') {
       return sendGoogleFailure(res, e, 'review_reply_failed');
     }
 
-    return res.status(500).json({
-      error: {
-        code: 'server_error',
-        message: e?.message || 'server_error',
-        data: e?.data || null,
-      },
-    });
+    console.error('[google/reviews/reply] error', e);
+    return sendError(res, { statusCode: 500, message: 'Unable to update review reply', errors: [{ code: 'server_error', message: 'Unable to update review reply' }] });
   }
 });
 
@@ -496,7 +476,7 @@ router.get('/media', authenticate, syncRateLimit, async (req, res) => {
     const locationId = req.query.locationId || req.query.location_id;
 
     if (!locationId) {
-      return res.status(400).json({ error: { code: 'bad_request', message: 'locationId required' } });
+      return sendError(res, { statusCode: 400, message: 'locationId required', errors: [{ code: 'bad_request', message: 'locationId required' }] });
     }
 
     const { location: loc } = await getOwnedLocationAccess(userId, locationId, LOCATION_READ_ROLES);
@@ -509,31 +489,24 @@ router.get('/media', authenticate, syncRateLimit, async (req, res) => {
       { pageSize: 10 }
     );
 
-    return res.json({ mediaItems: data.mediaItems || [] });
+    return sendSuccess(res, { data: { mediaItems: data.mediaItems || [] }, message: 'Media loaded' });
   } catch (e) {
     if (sendAccessFailure(res, e)) return;
 
     if (e?.code === 'reauth_required') {
-      return res.status(409).json({
-        error: {
+      return sendError(res, { statusCode: 409, message: 'Google connection expired/revoked. Please reconnect Google.', errors: [{
           code: 'reauth_required',
           message: 'Google connection expired/revoked. Please reconnect Google.',
-          details: e?.body || null,
-        },
-      });
+          details: { provider: 'google', reason: 'access_revoked' },
+        }] });
     }
 
     if (e?.message === 'google_http_error') {
       return sendGoogleFailure(res, e, 'media_failed');
     }
 
-    return res.status(500).json({
-      error: {
-        code: 'server_error',
-        message: e?.message || 'server_error',
-        data: e?.data || null,
-      },
-    });
+    console.error('[google/media] error', e);
+    return sendError(res, { statusCode: 500, message: 'Unable to load media', errors: [{ code: 'server_error', message: 'Unable to load media' }] });
   }
 });
 

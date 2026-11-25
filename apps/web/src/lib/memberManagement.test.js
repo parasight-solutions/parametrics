@@ -93,7 +93,11 @@ describe("roleSupportsAssignments", () => {
 
 describe("describeBackendError", () => {
   it("formats a sanitized backend error with code and message", () => {
-    expect(describeBackendError({ code: "organization_role_required", message: "nope" }))
+    expect(describeBackendError({
+      statusCode: 403,
+      message: "nope",
+      errors: [{ code: "organization_role_required", message: "nope" }],
+    }))
       .toBe("organization_role_required: nope");
   });
 
@@ -102,11 +106,19 @@ describe("describeBackendError", () => {
   });
 
   it("falls back to code when message is missing", () => {
-    expect(describeBackendError({ code: "bad_request" })).toBe("bad_request");
+    expect(describeBackendError({
+      statusCode: 400,
+      message: "",
+      errors: [{ code: "bad_request", message: "" }],
+    })).toBe("bad_request");
   });
 
-  it("handles nested error envelopes from the API client", () => {
-    expect(describeBackendError({ error: { code: "last_owner_required", message: "x" } }))
+  it("handles standardized error arrays from the API client", () => {
+    expect(describeBackendError({
+      statusCode: 409,
+      message: "x",
+      errors: [{ code: "last_owner_required", message: "x" }],
+    }))
       .toBe("last_owner_required: x");
   });
 

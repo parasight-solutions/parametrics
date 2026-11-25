@@ -8,6 +8,7 @@ import {
   resolveCanonicalLocationScope,
 } from "../services/locationBinding.js";
 import { auditSuccess } from "../services/auditLog.js";
+import { sendError, sendSuccess } from "../utils/apiResponse.js";
 
 const router = Router();
 
@@ -34,9 +35,7 @@ router.get("/", authenticate, async (req, res) => {
   const locationId = cleanStr(req.query.locationId, 200);
 
   if (!locationId) {
-    return res.status(400).json({
-      error: { code: "bad_request", message: "locationId required" },
-    });
+    return sendError(res, { statusCode: 400, message: "locationId required", errors: [{ code: "bad_request", message: "locationId required" }] });
   }
 
   const locations = await col("locations");
@@ -59,7 +58,7 @@ router.get("/", authenticate, async (req, res) => {
     { projection: { _id: 0 } }
   );
 
-  if (!loc && !map) return res.json({ map: null, org: null, binding: null });
+  if (!loc && !map) return sendSuccess(res, { data: { map: null, org: null, binding: null }, message: "Location binding loaded" });
 
   const binding = resolveCanonicalLocationScope(loc, map);
   const orgId = cleanStr(binding.effective.organization_id, 200);
@@ -72,7 +71,7 @@ router.get("/", authenticate, async (req, res) => {
     )
     : null;
 
-  return res.json({ map: map || null, org: org || null, binding });
+  return sendSuccess(res, { data: { map: map || null, org: org || null, binding }, message: "Location binding loaded" });
 });
 
 router.put("/", authenticate, async (req, res) => {
@@ -81,15 +80,11 @@ router.put("/", authenticate, async (req, res) => {
   const orgId = cleanStr(req.body?.orgId, 200);
 
   if (!locationId) {
-    return res.status(400).json({
-      error: { code: "bad_request", message: "locationId required" },
-    });
+    return sendError(res, { statusCode: 400, message: "locationId required", errors: [{ code: "bad_request", message: "locationId required" }] });
   }
 
   if (!orgId) {
-    return res.status(400).json({
-      error: { code: "bad_request", message: "orgId required" },
-    });
+    return sendError(res, { statusCode: 400, message: "orgId required", errors: [{ code: "bad_request", message: "orgId required" }] });
   }
 
   const locations = await col("locations");
@@ -98,9 +93,7 @@ router.put("/", authenticate, async (req, res) => {
     { projection: { _id: 0, id: 1, title: 1 } }
   );
   if (!loc) {
-    return res.status(404).json({
-      error: { code: "not_found", message: "location not found" },
-    });
+    return sendError(res, { statusCode: 404, message: "location not found", errors: [{ code: "not_found", message: "location not found" }] });
   }
 
   const orgs = await col("orgs");
@@ -109,9 +102,7 @@ router.put("/", authenticate, async (req, res) => {
     { projection: { _id: 0 } }
   );
   if (!org) {
-    return res.status(404).json({
-      error: { code: "not_found", message: "org not found" },
-    });
+    return sendError(res, { statusCode: 404, message: "org not found", errors: [{ code: "not_found", message: "org not found" }] });
   }
 
   const defaultClient = await getOrCreateDefaultClientForOrganization({
@@ -170,11 +161,11 @@ router.put("/", authenticate, async (req, res) => {
     location_id: locationId,
   });
 
-  return res.json({
+  return sendSuccess(res, { data: {
     map,
     org,
     binding,
-  });
+  }, message: "Location bound to organization" });
 });
 
 export default router;

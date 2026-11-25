@@ -18,12 +18,12 @@ export default function Login({ onAuthed }) {
     e.preventDefault();
     setErr("");
     try {
-      const data = await api("/auth/login", {
+      const result = await api("/auth/login", {
         method: "POST",
         body: { email, password },
         auth: false,
       });
-      onAuthed(data.user);
+      onAuthed(result.data.user);
       navigate("/", { replace: true });
     } catch (e) {
       setErr(e?.message || "Login failed");

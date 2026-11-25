@@ -53,6 +53,7 @@ describe("cookie-session browser cleanup", () => {
     localStorage.setItem("active_location_id", "location-1");
     localStorage.setItem("gbp.accounts.cache", "cached");
     sessionStorage.setItem("cache:v1:GET:/stale", "cached");
+    sessionStorage.setItem("cache:v2:GET:/current", "cached");
     sessionStorage.setItem("reauth_required", "google");
 
     clearAuthSession();
@@ -60,6 +61,7 @@ describe("cookie-session browser cleanup", () => {
     expect(localStorage.getItem("active_location_id")).toBeNull();
     expect(localStorage.getItem("gbp.accounts.cache")).toBeNull();
     expect(sessionStorage.getItem("cache:v1:GET:/stale")).toBeNull();
+    expect(sessionStorage.getItem("cache:v2:GET:/current")).toBeNull();
     expect(sessionStorage.getItem("reauth_required")).toBeNull();
   });
 });
