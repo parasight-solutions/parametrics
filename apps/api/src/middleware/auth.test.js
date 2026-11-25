@@ -56,7 +56,12 @@ test("authenticate returns 401 for missing invalid and disabled sessions", async
     await authenticate({ headers: {} }, res, () => assert.fail("next called"));
 
     assert.equal(res.statusCode, 401);
-    assert.equal(res.body.error.code, "unauthorized");
+    assert.deepEqual(res.body, {
+      statusCode: 401,
+      message: "Authentication required",
+      success: false,
+      errors: [{ code: "unauthorized", message: "Authentication required" }],
+    });
   }
 });
 
@@ -73,5 +78,10 @@ test("authenticate returns 500 when session storage fails", async () => {
   await authenticate({ headers: {} }, res, () => assert.fail("next called"));
 
   assert.equal(res.statusCode, 500);
-  assert.equal(res.body.error.code, "server_error");
+  assert.deepEqual(res.body, {
+    statusCode: 500,
+    message: "Unable to authenticate request",
+    success: false,
+    errors: [{ code: "server_error", message: "Unable to authenticate request" }],
+  });
 });

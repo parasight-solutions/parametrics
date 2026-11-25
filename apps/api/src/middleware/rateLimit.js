@@ -124,12 +124,14 @@ export function checkRateLimit({
 function sendRateLimited(res, outcome) {
   const retryAfter = Math.max(1, Number(outcome.retryAfterSeconds || 1));
   res.set?.("Retry-After", String(retryAfter));
-  return res.status(429).json({
-    error: {
+  return sendError(res, {
+    statusCode: 429,
+    message: "Too many requests",
+    errors: [{
       code: "rate_limited",
-      message: "Too many requests. Please retry later.",
-      retry_after_seconds: retryAfter,
-    },
+      message: "Too many requests",
+      details: { retryAfterSeconds: retryAfter },
+    }],
   });
 }
 
@@ -213,4 +215,6 @@ export const reportDownloadRateLimit = createRateLimiter({
   max: config.limits.report_download,
   windowSeconds: config.windowSeconds,
 });
+
+import { sendError } from "../utils/apiResponse.js";
 

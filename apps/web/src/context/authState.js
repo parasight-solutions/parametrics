@@ -1,9 +1,12 @@
 export async function restoreAuthenticatedUser(requestSession) {
   try {
-    const data = await requestSession();
-    return data?.user || null;
+    const result = await requestSession();
+    return result?.data?.user || null;
   } catch (error) {
-    if (error?.status === 401 || error?.code === "unauthorized") return null;
+    if (
+      error?.statusCode === 401 &&
+      ["unauthorized", "invalid"].includes(error?.errors?.[0]?.code)
+    ) return null;
     throw error;
   }
 }

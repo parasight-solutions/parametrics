@@ -167,7 +167,11 @@ describe("describeReportHistoryError", () => {
 
   it("formats code+message envelopes", () => {
     expect(
-      describeReportHistoryError({ code: "organization_role_required", message: "nope" }),
+      describeReportHistoryError({
+        statusCode: 403,
+        message: "nope",
+        errors: [{ code: "organization_role_required", message: "nope" }],
+      }),
     ).toBe("organization_role_required: nope");
   });
 
@@ -175,9 +179,13 @@ describe("describeReportHistoryError", () => {
     expect(describeReportHistoryError({ message: "Boom" })).toBe("Boom");
   });
 
-  it("handles nested error envelopes from the API client", () => {
+  it("handles standardized error arrays from the API client", () => {
     expect(
-      describeReportHistoryError({ error: { code: "report_run_not_found", message: "x" } }),
+      describeReportHistoryError({
+        statusCode: 404,
+        message: "x",
+        errors: [{ code: "report_run_not_found", message: "x" }],
+      }),
     ).toBe("report_run_not_found: x");
   });
 });
@@ -340,7 +348,15 @@ describe("downloadReportOutput", () => {
         ok: false,
         status: 403,
         headers: { "Content-Type": "application/json" },
-        jsonBody: { error: { code: "organization_scope_required", message: "nope" } },
+        jsonBody: {
+          success: false,
+          statusCode: 403,
+          message: "nope",
+          errors: [{
+            code: "organization_scope_required",
+            message: "nope",
+          }],
+        },
       }),
     );
 
@@ -353,9 +369,9 @@ describe("downloadReportOutput", () => {
         fetchImpl,
       }),
     ).rejects.toMatchObject({
-      code: "organization_scope_required",
+      errors: [{ code: "organization_scope_required", message: "nope" }],
       message: "nope",
-      status: 403,
+      statusCode: 403,
     });
   });
 });

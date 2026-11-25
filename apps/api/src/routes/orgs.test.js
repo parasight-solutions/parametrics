@@ -805,7 +805,7 @@ test("unauthenticated member-candidates request returns 401, not Express Cannot 
     const text = await res.text();
     assert.equal(res.status, 401);
     assert.ok(!text.includes("Cannot GET"), "must not be the Express default 404 page");
-    assert.equal(JSON.parse(text).error.code, "unauthorized");
+    assert.equal(JSON.parse(text).errors[0].code, "unauthorized");
   } finally {
     await new Promise((resolve) => server.close(resolve));
   }

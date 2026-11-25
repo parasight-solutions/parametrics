@@ -61,7 +61,7 @@ test("createRateLimiter uses the report_list bucket and key", () => {
 
   assert.equal(nextCount, 1);
   assert.equal(res.statusCode, 429);
-  assert.equal(res.body.error.code, "rate_limited");
+  assert.equal(res.body.errors[0].code, "rate_limited");
   assert.equal(Array.from(store.keys())[0], "report_list:user:user_x");
 });
 
@@ -91,7 +91,7 @@ test("createRateLimiter uses the report_download bucket and key", () => {
 
   assert.equal(nextCount, 1);
   assert.equal(res.statusCode, 429);
-  assert.equal(res.body.error.code, "rate_limited");
+  assert.equal(res.body.errors[0].code, "rate_limited");
   assert.equal(Array.from(store.keys())[0], "report_download:user:user_y");
 });
 
@@ -161,8 +161,16 @@ test("middleware returns consistent JSON 429", () => {
 
   assert.equal(nextCount, 1);
   assert.equal(res.statusCode, 429);
-  assert.equal(res.body.error.code, "rate_limited");
-  assert.equal(res.body.error.retry_after_seconds, 10);
+  assert.deepEqual(res.body, {
+    statusCode: 429,
+    message: "Too many requests",
+    success: false,
+    errors: [{
+      code: "rate_limited",
+      message: "Too many requests",
+      details: { retryAfterSeconds: 10 },
+    }],
+  });
   assert.equal(res.headers["Retry-After"], "10");
 });
 

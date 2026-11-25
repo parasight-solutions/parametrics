@@ -74,9 +74,12 @@ test("login creates a cookie session and returns only the user", async () => {
 
   assert.deepEqual(res.cookies[0], ["pm_session", "raw-session"]);
   assert.deepEqual(res.body, {
-    user: { id: "user-1", email: "user@example.com", role: "admin" },
+    statusCode: 200,
+    data: { user: { id: "user-1", email: "user@example.com", role: "admin" } },
+    message: "Login successful",
+    success: true,
   });
-  assert.equal("token" in res.body, false);
+  assert.equal("token" in res.body.data, false);
 });
 
 test("session returns the authenticated user without exposing session data", async () => {
@@ -97,7 +100,31 @@ test("session returns the authenticated user without exposing session data", asy
   );
 
   assert.deepEqual(res.body, {
-    user: { id: "user-1", email: "user@example.com", role: "user" },
+    statusCode: 200,
+    data: { user: { id: "user-1", email: "user@example.com", role: "user" } },
+    message: "Session restored",
+    success: true,
+  });
+});
+
+test("login keeps invalid credentials at 401 with a structured code", async () => {
+  const router = createAuthRouter({
+    getUsers: async () => createUsers(null),
+    auditFailure: async () => {},
+  });
+  const res = response();
+
+  await routeHandler(router, "/login", "post")(
+    { body: { email: "missing@example.com", password: "wrong" }, headers: {} },
+    res,
+  );
+
+  assert.equal(res.statusCode, 401);
+  assert.deepEqual(res.body, {
+    statusCode: 401,
+    message: "Invalid email or password",
+    success: false,
+    errors: [{ code: "invalid", message: "Invalid email or password" }],
   });
 });
 

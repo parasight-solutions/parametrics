@@ -16,6 +16,7 @@ import {
   searchMemberCandidates,
   updateOrganizationMember,
 } from "../services/organizationMembers.js";
+import { normalizeApiError, sendError, sendSuccess } from "../utils/apiResponse.js";
 
 const router = Router();
 const ORGANIZATION_MUTATION_ROLES = Object.freeze(["owner", "admin"]);
@@ -59,10 +60,7 @@ function makeRouteError(status, code, message) {
 }
 
 function sendRouteError(res, error) {
-  const status = Number(error?.status || error?.statusCode || 500);
-  const code = cleanStr(error?.code, 120) || "server_error";
-  const message = cleanStr(error?.message, 500) || "server_error";
-  return res.status(status).json({ error: { code, message } });
+  return sendError(res, normalizeApiError(error));
 }
 
 async function resolveOrgCollections(options = {}) {
@@ -583,7 +581,7 @@ export async function saveOrganizationForUser(
 router.get("/", authenticate, async (req, res) => {
   try {
     const rows = await listAccessibleOrganizations({ userId: req.user.user_id });
-    return res.json({ orgs: rows });
+    return sendSuccess(res, { data: { orgs: rows }, message: "Organizations loaded" });
   } catch (error) {
     return sendRouteError(res, error);
   }
@@ -596,7 +594,7 @@ router.post("/", authenticate, async (req, res) => {
 
   try {
     const result = await saveOrganizationForUser({ userId, body });
-    return res.json({ org: result.org });
+    return sendSuccess(res, { data: { org: result.org }, message: "Organization saved" });
   } catch (error) {
     return sendRouteError(res, error);
   }
@@ -610,7 +608,7 @@ router.get("/:orgId/member-candidates", authenticate, async (req, res) => {
       search: req.query?.search,
       limit: req.query?.limit,
     });
-    return res.json({ users: result.users });
+    return sendSuccess(res, { data: { users: result.users }, message: "Member candidates loaded" });
   } catch (error) {
     return sendRouteError(res, error);
   }
@@ -623,7 +621,7 @@ router.get("/:orgId/members", authenticate, async (req, res) => {
       organizationId: req.params.orgId,
       limit: req.query?.limit,
     });
-    return res.json({ members: result.members });
+    return sendSuccess(res, { data: { members: result.members }, message: "Organization members loaded" });
   } catch (error) {
     return sendRouteError(res, error);
   }
@@ -642,7 +640,7 @@ router.post("/:orgId/members", authenticate, async (req, res) => {
       organization_id: req.params.orgId,
       metadata: memberAuditMetadata(result, { created: !!result.created }),
     });
-    return res.json({ member: result.member, created: result.created });
+    return sendSuccess(res, { data: { member: result.member, created: result.created }, message: "Organization member saved" });
   } catch (error) {
     return sendRouteError(res, error);
   }
@@ -662,7 +660,7 @@ router.patch("/:orgId/members/:memberId", authenticate, async (req, res) => {
       organization_id: req.params.orgId,
       metadata: memberAuditMetadata(result, { updated: !!result.updated }),
     });
-    return res.json({ member: result.member, updated: result.updated });
+    return sendSuccess(res, { data: { member: result.member, updated: result.updated }, message: "Organization member updated" });
   } catch (error) {
     return sendRouteError(res, error);
   }
@@ -684,7 +682,7 @@ router.post("/:orgId/members/:memberId/disable", authenticate, async (req, res) 
         reason: cleanStr(req.body?.reason, 200),
       }),
     });
-    return res.json({ member: result.member, disabled: result.disabled });
+    return sendSuccess(res, { data: { member: result.member, disabled: result.disabled }, message: "Organization member disabled" });
   } catch (error) {
     return sendRouteError(res, error);
   }
@@ -704,12 +702,10 @@ router.post("/bind-location", authenticate, async (req, res) => {
   const oId = cleanStr(orgId, 200);
 
   if (!locId || !oId) {
-    return res.status(400).json({
-      error: {
+    return sendError(res, { statusCode: 400, message: "locationId and orgId required", errors: [{
         code: "bad_request",
         message: "locationId and orgId required",
-      },
-    });
+      }] });
   }
 
   let org;
@@ -726,9 +722,7 @@ router.post("/bind-location", authenticate, async (req, res) => {
     { projection: { _id: 0, id: 1 } }
   );
   if (!existingLocation) {
-    return res.status(404).json({
-      error: { code: "not_found", message: "location not found" },
-    });
+    return sendError(res, { statusCode: 404, message: "location not found", errors: [{ code: "not_found", message: "location not found" }] });
   }
 
   const defaultClient = await getOrCreateDefaultClientForOrganization({
@@ -782,10 +776,10 @@ router.post("/bind-location", authenticate, async (req, res) => {
     location_id: locId,
   });
 
-  return res.json({
+  return sendSuccess(res, { data: {
     ok: true,
     binding,
-  });
+  }, message: "Location bound to organization" });
 });
 
 export default router;

@@ -4,9 +4,9 @@ import { getLoginErrorMessage, getPostLoginPath } from "./loginHelpers";
 
 describe("getPostLoginPath", () => {
   it("returns the internal route requested by the private-route guard", () => {
-    expect(
-      getPostLoginPath({ pathname: "/reports", search: "?page=2" }),
-    ).toBe("/reports?page=2");
+    expect(getPostLoginPath({ pathname: "/reports", search: "?page=2" })).toBe(
+      "/reports?page=2",
+    );
   });
 
   it("falls back to the dashboard for missing or external destinations", () => {
@@ -20,7 +20,9 @@ describe("getLoginErrorMessage", () => {
   it("uses a backend message when one is provided", () => {
     expect(
       getLoginErrorMessage({
-        response: { data: { error: { message: "Account is disabled" } } },
+        statusCode: 403,
+        message: "Account is disabled",
+        errors: [{ code: "account_disabled", message: "Account is disabled" }],
       }),
     ).toBe("Account is disabled");
   });
@@ -28,7 +30,9 @@ describe("getLoginErrorMessage", () => {
   it("uses a clear credentials message for the backend invalid code", () => {
     expect(
       getLoginErrorMessage({
-        response: { data: { error: { code: "invalid" } } },
+        statusCode: 401,
+        message: "Invalid email or password",
+        errors: [{ code: "invalid", message: "Invalid email or password" }],
       }),
     ).toBe("Invalid email or password.");
   });

@@ -11,6 +11,7 @@ import {
   toApiError,
 } from "../services/ownership.js";
 import { requireOrganizationLocationAccess } from "../services/organizationAccess.js";
+import { sendError, sendSuccess } from "../utils/apiResponse.js";
 
 const router = Router();
 const LOCATION_MUTATION_ROLES = Object.freeze(["owner", "admin"]);
@@ -46,7 +47,7 @@ router.get("/", authenticate, async (req, res) => {
         ? await getGoogleIntegrationById(userId, integrationIdParam)
         : await getActiveGoogleIntegration(userId);
 
-      if (!integ) return res.json({ locations: [], activeIntegrationId: null });
+      if (!integ) return sendSuccess(res, { data: { locations: [], activeIntegrationId: null }, message: "Locations loaded" });
 
       q.integration_id = integ.id;
       const list = await locations
@@ -55,7 +56,7 @@ router.get("/", authenticate, async (req, res) => {
         .project({ _id: 0 })
         .toArray();
 
-      return res.json({ locations: list.map(serializeLocationForList), activeIntegrationId: integ.id });
+      return sendSuccess(res, { data: { locations: list.map(serializeLocationForList), activeIntegrationId: integ.id }, message: "Locations loaded" });
     }
 
     if (integrationIdParam) q.integration_id = integrationIdParam;
@@ -66,10 +67,10 @@ router.get("/", authenticate, async (req, res) => {
       .project({ _id: 0 })
       .toArray();
 
-    return res.json({ locations: list.map(serializeLocationForList), activeIntegrationId: null });
+    return sendSuccess(res, { data: { locations: list.map(serializeLocationForList), activeIntegrationId: null }, message: "Locations loaded" });
   } catch (e) {
     console.error("[locations/list] error", e);
-    return res.status(500).json({ error: { code: "server_error" } });
+    return sendError(res, { statusCode: 500, message: "Unable to load locations", errors: [{ code: "server_error", message: "Unable to load locations" }] });
   }
 });
 
@@ -95,7 +96,7 @@ router.delete("/:id", authenticate, async (req, res) => {
       client_id: loc.client_id,
     });
 
-    return res.json({ ok: true });
+    return sendSuccess(res, { data: { ok: true }, message: "Location deleted" });
   } catch (e) {
     return toApiError(res, e);
   }

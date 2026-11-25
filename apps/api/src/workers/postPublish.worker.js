@@ -14,15 +14,9 @@ const postPublishQueue = new Queue("post-publish", { connection });
 
 function pickGoogleError(e) {
   const status = e?.status || null;
-  const body = e?.body || null;
-  const msg =
-    body?.error?.message ||
-    body?.error?.status ||
-    e?.message ||
-    "publish_failed";
   return {
-    message: String(msg),
-    detail: { status, body },
+    message: "Google post publishing failed",
+    detail: { status, code: "publish_failed" },
   };
 }
 

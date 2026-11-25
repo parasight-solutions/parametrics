@@ -24,6 +24,7 @@ import { mutationRateLimit, oauthRateLimit, syncRateLimit } from '../middleware/
 import { ensureGoogleIntegrationIndexes } from "../integrations/google.indexes.js";
 import { auditFailure, auditSuccess } from "../services/auditLog.js";
 import { requireOwnedOrganizationLocationAccess } from "../services/organizationAccess.js";
+import { sendError, sendSuccess } from "../utils/apiResponse.js";
 
 const router = Router()
 const LOCATION_READ_ROLES = Object.freeze(["owner", "admin", "manager", "viewer"]);
@@ -57,12 +58,20 @@ function sendAccessFailure(res, err) {
   const code = String(err?.code || "").trim();
   if (!status || status >= 500 || !LOCAL_ACCESS_CODES.has(code)) return false;
 
-  return res.status(status).json({
-    error: {
+  return sendError(res, {
+    statusCode: status,
+    message: err?.message || err?.code || "Access denied",
+    errors: [{
       code,
-      message: err?.message || err?.code || "forbidden",
-    },
+      message: err?.message || err?.code || "Access denied",
+    }],
   });
+}
+
+function googleError(res, statusCode, code, message, reason) {
+  const entry = { code, message };
+  if (reason) entry.details = { provider: "google", reason };
+  return sendError(res, { statusCode, message, errors: [entry] });
 }
 
 // Prefer env for prod, but in dev compute from actual request host+port (prevents 5000 vs 5050 mismatch)
@@ -210,7 +219,7 @@ router.get('/start', authenticate, oauthRateLimit, (req, res) => {
       provider: "google",
       metadata: { reason: "missing_client_id" },
     });
-    return res.status(500).json({ error: { code: 'config', message: 'GOOGLE_CLIENT_ID missing in .env' } });
+    return googleError(res, 500, 'config', 'Google integration is not configured');
   }
 
   const u = req.user;
@@ -220,7 +229,7 @@ router.get('/start', authenticate, oauthRateLimit, (req, res) => {
       provider: "google",
       metadata: { reason: "unauthorized" },
     });
-    return res.status(401).json({ error: { code: 'unauthorized', message: 'Unauthorized' } });
+    return googleError(res, 401, 'unauthorized', 'Authentication required');
   }
 
   const ru = computeRedirectUri(req);
@@ -439,14 +448,14 @@ router.get("/status", authenticate, async (req, res) => {
     const integ = await getActiveGoogleIntegration(userId);
 
     if (!integ) {
-      return res.json({
+      return sendSuccess(res, { data: {
         connected: false,
         needs_reauth: false,
         email: null,
         scopes: [],
         updated_at: null,
         activeIntegrationId: null,
-      });
+      }, message: "Google connection status loaded" });
     }
 
     let email = integ.provider_email || null;
@@ -460,40 +469,34 @@ router.get("/status", authenticate, async (req, res) => {
       await ensureAccessToken(integ);
     } catch (e) {
       if (e?.code === "reauth_required") {
-        return res.json({
+        return sendSuccess(res, { data: {
           connected: false,
           needs_reauth: true,
           email,
           scopes: integ.scopes || [],
           updated_at: integ.updated_at || null,
           activeIntegrationId: integ.id || null,
-        });
+        }, message: "Google connection requires reconnection" });
       }
 
-      return res.status(502).json({
-        error: {
-          code: "status_failed",
-          message: e?.message || "status_failed",
-          status: e?.status || 502,
-          body: e?.body || null,
-        },
-      });
+      console.error("[integrations.google/status] token check failed", e);
+      return googleError(res, 502, "status_failed", "Unable to load Google connection status");
     }
 
     // Re-read after ensureAccessToken may have cleared flags
     const fresh = await getActiveGoogleIntegration(userId);
 
-    return res.json({
+    return sendSuccess(res, { data: {
       connected: true,
       needs_reauth: false,
       email,
       scopes: fresh?.scopes || integ.scopes || [],
       updated_at: fresh?.updated_at || integ.updated_at || null,
       activeIntegrationId: fresh?.id || integ.id || null,
-    });
+    }, message: "Google connection status loaded" });
   } catch (e) {
     console.error("[integrations.google/status] failed", e);
-    return res.status(502).json({ error: { code: "status_failed" } });
+    return googleError(res, 502, "status_failed", "Unable to load Google connection status");
   }
 });
 
@@ -516,7 +519,7 @@ router.get("/connections", authenticate, async (req, res) => {
 
     updated_at: x.updated_at || null,
   }));
-  res.json({ connections });
+  return sendSuccess(res, { data: { connections }, message: "Google connections loaded" });
 });
 
 router.post("/connections/:id/activate", authenticate, mutationRateLimit, async (req, res) => {
@@ -529,14 +532,14 @@ router.post("/connections/:id/activate", authenticate, mutationRateLimit, async 
         provider: "google",
         metadata: { reason: "connection_not_found" },
       });
-      return res.status(404).json({ error: { code: "connection_not_found" } });
+      return googleError(res, 404, "connection_not_found", "Google connection not found");
     }
     await auditSuccess(req, "google.connection.activate", {
       target_type: "integration",
       target_id: updated.id,
       provider: "google",
     });
-    return res.json({ ok: true, activeIntegrationId: updated.id });
+    return sendSuccess(res, { data: { ok: true, activeIntegrationId: updated.id }, message: "Google connection activated" });
   } catch (e) {
     console.error("[integrations.google/activate] failed", e);
     await auditFailure(req, "google.connection.activate", {
@@ -545,7 +548,7 @@ router.post("/connections/:id/activate", authenticate, mutationRateLimit, async 
       provider: "google",
       metadata: { reason: e?.message || "server_error" },
     });
-    return res.status(500).json({ error: { code: "server_error" } });
+    return googleError(res, 500, "server_error", "Unable to activate Google connection");
   }
 });
 
@@ -574,7 +577,7 @@ router.post("/disconnect", authenticate, mutationRateLimit, async (req, res) => 
       provider: "google",
     });
 
-    return res.json({ ok: true });
+    return sendSuccess(res, { data: { ok: true }, message: "Google disconnected" });
   } catch (e) {
     console.error("[integrations.google/disconnect] failed", e);
     await auditFailure(req, "google.connection.disconnect", {
@@ -582,7 +585,7 @@ router.post("/disconnect", authenticate, mutationRateLimit, async (req, res) => 
       provider: "google",
       metadata: { reason: e?.message || "server_error" },
     });
-    return res.status(500).json({ error: { code: "server_error" } });
+    return googleError(res, 500, "server_error", "Unable to disconnect Google");
   }
 });
 
@@ -681,10 +684,9 @@ async function listAllAccountsForUser(userId) {
       errors.push({
         integration_id: integ?.id || null,
         provider_email: integ?.provider_email || null,
-        code: e?.code || null,
+        code: "integration_failed",
         status: e?.status || null,
-        message: e?.message || "integration_failed",
-        body: e?.body || null,
+        message: "Google account access failed",
       });
     }
   }
@@ -715,27 +717,20 @@ router.get('/accounts', authenticate, syncRateLimit, async (req, res) => {
   const now = Date.now()
 
   if (entry.cooldownUntil && now < entry.cooldownUntil) {
-    if (entry.data) return res.json({ accounts: entry.data.accounts || [], errors: entry.data.errors || [] })
-    return res.status(502).json({ error: { code: 'accounts_list_failed' } })
+    if (entry.data) return sendSuccess(res, { data: { accounts: entry.data.accounts || [], errors: entry.data.errors || [] }, message: 'Google accounts loaded' })
+    return googleError(res, 502, 'accounts_list_failed', 'Unable to load Google accounts')
   }
 
   const fresh = entry.ts && (now - entry.ts < ACCOUNTS_TTL_MS)
-  if (fresh && entry.data) return res.json({ accounts: entry.data.accounts || [], errors: entry.data.errors || [] })
+  if (fresh && entry.data) return sendSuccess(res, { data: { accounts: entry.data.accounts || [], errors: entry.data.errors || [] }, message: 'Google accounts loaded' })
 
   if (entry.inflight) {
     try {
       const data = await entry.inflight
-      return res.json({ accounts: data.accounts || [], errors: data.errors || [] })
+      return sendSuccess(res, { data: { accounts: data.accounts || [], errors: data.errors || [] }, message: 'Google accounts loaded' })
     } catch (err) {
       console.error("[integrations.google/accounts] inflight failed", err?.status || "", err?.body || err?.message || err)
-      return res.status(502).json({
-        error: {
-          code: "accounts_list_failed",
-          message: err?.message || "accounts_list_failed",
-          status: err?.status || null,
-          body: err?.body || null,
-        },
-      })
+      return googleError(res, 502, "accounts_list_failed", "Unable to load Google accounts")
     }
   }
 
@@ -758,17 +753,10 @@ router.get('/accounts', authenticate, syncRateLimit, async (req, res) => {
 
   try {
     const data = await p
-    return res.json({ accounts: data.accounts || [], errors: data.errors || [] })
+    return sendSuccess(res, { data: { accounts: data.accounts || [], errors: data.errors || [] }, message: 'Google accounts loaded' })
   } catch (err) {
     console.error('[integrations.google/accounts] failed', err?.status || '', err?.body || err?.message || err)
-    return res.status(502).json({
-      error: {
-        code: "accounts_list_failed",
-        message: err?.message || "accounts_list_failed",
-        status: err?.status || null,
-        body: err?.body || null,
-      },
-    })
+    return googleError(res, 502, "accounts_list_failed", "Unable to load Google accounts")
   }
 })
 
@@ -782,35 +770,26 @@ router.get('/locations', authenticate, syncRateLimit, async (req, res) => {
     try {
       accountName = normalizeAccountResourceName(req.query.accountName);
     } catch (e) {
-      return res.status(e.http_status || 400).json({ error: { code: e.code || "bad_request", message: e.message } });
+      return googleError(res, e.http_status || 400, e.code || "bad_request", e.message || "Invalid account name");
     }
 
     if (!accountName) {
-      return res.status(400).json({ error: { code: 'bad_request', message: 'accountName required' } });
+      return googleError(res, 400, 'bad_request', 'accountName required');
     }
 
     const integrationId = String(req.query.integrationId || "") || null;
     const { access_token } = await getAccessTokenForAccount(req.user.user_id, accountName, integrationId);
     const data = await listLocations(access_token, accountName);
 
-    return res.json({ locations: (data.locations || []).map(normalizeLocation) });
+    return sendSuccess(res, { data: { locations: (data.locations || []).map(normalizeLocation) }, message: 'Google locations loaded' });
   } catch (err) {
     console.error('[integrations.google/locations] failed', err?.status || '', err?.body || err?.message || err);
 
     if (err?.code === "reauth_required") {
-      return res.status(409).json({
-        error: { code: "reauth_required", message: "Google connection expired/revoked. Please reconnect Google." },
-      });
+      return googleError(res, 409, "reauth_required", "Google connection expired/revoked. Please reconnect Google.", "access_revoked");
     }
 
-    return res.status(502).json({
-      error: {
-        code: 'locations_list_failed',
-        message: err?.message || 'locations_list_failed',
-        status: err?.status || 502,
-        body: err?.body || null,
-      }
-    });
+    return googleError(res, 502, 'locations_list_failed', 'Unable to load Google locations');
   }
 });
 
@@ -824,11 +803,11 @@ router.post('/locations/import', authenticate, syncRateLimit, async (req, res) =
     try {
       accountName = normalizeAccountResourceName(req.body?.accountName);
     } catch (e) {
-      return res.status(e.http_status || 400).json({ error: { code: e.code || "bad_request", message: e.message } });
+      return googleError(res, e.http_status || 400, e.code || "bad_request", e.message || "Invalid account name");
     }
 
     if (!accountName) {
-      return res.status(400).json({ error: { code: 'bad_request', message: 'accountName required' } });
+      return googleError(res, 400, 'bad_request', 'accountName required');
     }
 
     // const integ = await getActiveGoogleIntegration(req.user.user_id)
@@ -840,7 +819,7 @@ router.post('/locations/import', authenticate, syncRateLimit, async (req, res) =
         provider: "google",
         metadata: { accountName, reason: "no_integration" },
       });
-      return res.status(404).json({ error: { code: 'no_integration' } })
+      return googleError(res, 404, 'no_integration', 'Google connection not found')
     }
 
     // const { access_token } = await ensureAccessToken(integ)
@@ -887,7 +866,7 @@ router.post('/locations/import', authenticate, syncRateLimit, async (req, res) =
       metadata: { accountName, integration_id: integ.id, upserted },
     });
 
-    return res.json({ inserted: upserted })
+    return sendSuccess(res, { data: { inserted: upserted }, message: 'Google locations imported' })
   } catch (err) {
     console.error('[integrations.google/locations.import] failed', err?.status || '', err?.body || err?.message || err)
     await auditFailure(req, "google.locations.import", {
@@ -895,14 +874,7 @@ router.post('/locations/import', authenticate, syncRateLimit, async (req, res) =
       provider: "google",
       metadata: { reason: err?.message || "locations_import_failed", status: err?.status || null },
     });
-    return res.status(err?.http_status || err?.status || 502).json({
-      error: {
-        code: 'locations_import_failed',
-        message: err?.message || 'locations_import_failed',
-        status: err?.status || null,
-        body: err?.body || null,
-      }
-    })
+    return googleError(res, err?.http_status || err?.status || 502, 'locations_import_failed', 'Unable to import Google locations')
   }
 })
 
@@ -917,7 +889,7 @@ router.post("/locations/reconcile", authenticate, syncRateLimit, async (req, res
         provider: "google",
         metadata: { reason: "no_integration" },
       });
-      return res.status(409).json({ error: { code: "no_integration", message: "Google not connected" } });
+      return googleError(res, 409, "no_integration", "Google not connected");
     }
 
     // Build accountName -> integrationId mapping
@@ -934,9 +906,9 @@ router.post("/locations/reconcile", authenticate, syncRateLimit, async (req, res
       } catch (e) {
         errors.push({
           integration_id: integ.id,
-          message: e?.message || "integration_failed",
+          code: "integration_failed",
+          message: "Google account access failed",
           status: e?.status || null,
-          body: e?.body || null,
         });
       }
     }
@@ -976,13 +948,13 @@ router.post("/locations/reconcile", authenticate, syncRateLimit, async (req, res
       },
     });
 
-    return res.json({
+    return sendSuccess(res, { data: {
       scanned: rows.length,
       updated,
       unmatched,
       integrations_checked: integrations.length,
       errors,
-    });
+    }, message: "Google locations reconciled" });
   } catch (err) {
     console.error("[integrations.google/locations.reconcile] failed", err);
     await auditFailure(req, "google.locations.reconcile", {
@@ -990,7 +962,7 @@ router.post("/locations/reconcile", authenticate, syncRateLimit, async (req, res
       provider: "google",
       metadata: { reason: err?.message || "server_error" },
     });
-    return res.status(500).json({ error: { code: "server_error", message: err?.message || "server_error" } });
+    return googleError(res, 500, "server_error", "Unable to reconcile Google locations");
   }
 });
 
@@ -1002,13 +974,13 @@ router.get('/location-media', authenticate, syncRateLimit, async (req, res) => {
     const accountName = String(req.query.accountName || '')
     const locationName = String(req.query.locationName || '')
     if (!accountName || !locationName) {
-      return res.status(400).json({ error: { code: 'bad_request', message: 'accountName and locationName required' } })
+      return googleError(res, 400, 'bad_request', 'accountName and locationName required')
     }
 
     const integ =
       (await pickIntegrationForAccount(req.user.user_id, accountName)) ||
       (await getActiveGoogleIntegration(req.user.user_id));
-    if (!integ) return res.status(404).json({ error: { code: 'no_integration' } })
+    if (!integ) return googleError(res, 404, 'no_integration', 'Google connection not found')
 
     const { access_token } = await ensureAccessToken(integ)
     const data = await listLocationMedia(accountName, locationName, access_token, { pageSize: 10 })
@@ -1020,14 +992,14 @@ router.get('/location-media', authenticate, syncRateLimit, async (req, res) => {
     const profile = pick('PROFILE') || pick('LOGO') || null
     const cover = pick('COVER') || null
 
-    return res.json({
+    return sendSuccess(res, { data: {
       profilePhotoUrl: profile?.googleUrl || profile?.mediaFormat?.googleUrl || null,
       coverPhotoUrl: cover?.googleUrl || cover?.mediaFormat?.googleUrl || null,
       count: items.length
-    })
+    }, message: 'Google location media loaded' })
   } catch (err) {
     console.error('[integrations.google/location-media] failed', err?.status || '', err?.body || err?.message || err)
-    return res.status(502).json({ error: { code: 'location_media_failed' } })
+    return googleError(res, 502, 'location_media_failed', 'Unable to load Google location media')
   }
 })
 
@@ -1121,7 +1093,7 @@ router.get('/performance', authenticate, async (req, res) => {
     const days = Math.max(1, Math.min(90, Number(req.query.days || 30)))
 
     if (!locationId) {
-      return res.status(400).json({ error: { code: 'bad_request', message: 'locationId required' } })
+      return googleError(res, 400, 'bad_request', 'locationId required')
     }
 
     const { location: loc } = await requireOwnedOrganizationLocationAccess({
@@ -1144,7 +1116,7 @@ router.get('/performance', authenticate, async (req, res) => {
     }
 
     if (!integ) {
-      return res.status(404).json({ error: { code: "no_integration" } });
+      return googleError(res, 404, "no_integration", "Google connection not found");
     }
 
     const { access_token } = await ensureAccessToken(integ);
@@ -1174,23 +1146,20 @@ router.get('/performance', authenticate, async (req, res) => {
       return { metric: g.key, total }
     })
 
-    return res.json({
+    return sendSuccess(res, { data: {
       range: { days },
       metrics: out,
       // optional debug field (remove if you don’t want)
       expanded_metrics_used: expanded,
-    })
+    }, message: 'Google performance loaded' })
   } catch (err) {
     if (sendAccessFailure(res, err)) return;
 
     if (err?.code === 'invalid_metric') {
-      return res.status(400).json({
-        error: {
+      return sendError(res, { statusCode: 400, message: `Invalid metric: ${err.metric}`, errors: [{
           code: 'bad_request',
           message: `Invalid metric: ${err.metric}`,
-          allowed: err.allowed,
-        },
-      })
+        }] })
     }
 
     const status = err?.status || 502
@@ -1202,14 +1171,7 @@ router.get('/performance', authenticate, async (req, res) => {
       'body=', body || err?.message || err
     )
 
-    return res.status(502).json({
-      error: {
-        code: 'performance_failed',
-        message: err?.message || 'performance_failed',
-        status,
-        body,
-      }
-    })
+    return googleError(res, 502, 'performance_failed', 'Unable to load Google performance')
   }
 })
 

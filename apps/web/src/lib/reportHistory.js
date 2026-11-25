@@ -169,15 +169,15 @@ export function normalizeReportRunRow(rawRow) {
 
 export function describeReportHistoryError(err) {
   if (!err) return "Unknown error.";
-  const code = err.code || err.error?.code || "";
-  const message = err.message || err.error?.message || "";
+  const code = err.errors?.[0]?.code || "";
+  const message = err.message || err.errors?.[0]?.message || "";
   if (code && message) return `${code}: ${message}`;
   return message || code || "Request failed.";
 }
 
 export async function listOrganizationsForReports(apiImpl = api) {
   const out = await apiImpl("/orgs");
-  return Array.isArray(out?.orgs) ? out.orgs : [];
+  return Array.isArray(out?.data?.orgs) ? out.data.orgs : [];
 }
 
 export async function listReportRunsForUser(params = {}, apiImpl = api) {
@@ -186,8 +186,8 @@ export async function listReportRunsForUser(params = {}, apiImpl = api) {
     throw new Error("organization_id is required");
   }
   const out = await apiImpl(`/reports/runs${qs}`);
-  const rows = Array.isArray(out?.report_runs) ? out.report_runs.map(normalizeReportRunRow) : [];
-  const pagination = (out && typeof out.pagination === "object" && out.pagination) || {
+  const rows = Array.isArray(out?.data?.report_runs) ? out.data.report_runs.map(normalizeReportRunRow) : [];
+  const pagination = (out?.data && typeof out.data.pagination === "object" && out.data.pagination) || {
     limit: clampReportListLimit(params.limit),
     has_more: false,
     next_cursor: null,
@@ -232,11 +232,15 @@ export async function downloadReportOutput({
     } catch {
       // Body may be empty or non-JSON; fall back to a synthetic envelope below.
     }
-    const err = (parsed && (parsed.error || parsed)) || {
-      code: "http_error",
-      message: `HTTP ${res.status}`,
-    };
-    if (typeof err.status !== "number") err.status = res.status;
+    const err =
+      parsed?.success === false && Array.isArray(parsed?.errors)
+        ? parsed
+        : {
+            success: false,
+            statusCode: res.status,
+            message: `HTTP ${res.status}`,
+            errors: [{ code: "http_error", message: `HTTP ${res.status}` }],
+          };
     throw err;
   }
 

@@ -20,6 +20,7 @@ const useApi = (defaults) => {
       try {
         const res = await api();
 
+        console.log("Response: ", res);
         await onSuccess?.(res);
         return res;
       } catch (error) {

@@ -15,7 +15,7 @@ export default function ActiveLocationPicker({ value, onChange }) {
       setLoading(true);
       try {
         const r = await api("/locations");
-        setLocations(r.locations || []);
+        setLocations(r.data?.locations || []);
         setLoaded(true);
       } catch {
         setLoaded(false);

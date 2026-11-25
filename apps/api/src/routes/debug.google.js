@@ -1,17 +1,19 @@
 import { Router } from 'express'
 import { authenticate } from '../middleware/auth.js'
 import { getActiveGoogleIntegration, ensureAccessToken } from '../integrations/google.store.js'
+import { sendError, sendSuccess } from '../utils/apiResponse.js'
 
 const r = Router()
 
 r.get('/google/status', authenticate, async (req,res)=>{
   try {
     const integ = await getActiveGoogleIntegration(req.user.user_id)
-    if (!integ) return res.json({ ok:false, reason:'no_integration' })
+    if (!integ) return sendSuccess(res, { data: { ok: false, reason: 'no_integration' }, message: 'No Google integration found' })
     const at = await ensureAccessToken(integ)
-    res.json({ ok:true, token_present: !!at.access_token, token_prefix: (at.access_token||'').slice(0,10) })
+    return sendSuccess(res, { data: { ok: true, token_present: Boolean(at.access_token) }, message: 'Google token check completed' })
   } catch (e) {
-    res.json({ ok:false, reason:e?.message || 'error' })
+    console.error('[debug/google] error', e)
+    return sendError(res, { statusCode: 502, message: 'Google token check failed', errors: [{ code: 'google_token_check_failed', message: 'Google token check failed' }] })
   }
 })
 

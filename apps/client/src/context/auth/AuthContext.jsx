@@ -31,12 +31,11 @@ export const AuthProvider = ({ children }) => {
   useEffect(() => {
     callApi("authLoading", authEndpoints.session, {
       onSuccess: (res) => {
-        const user = res?.data?.user ?? res?.user ?? null;
+        const user = res?.data?.user ?? null;
         setUser(user);
       },
       onError: (error) => {
-        if (error?.response?.status === 401 || error?.status === 401)
-          setUser(null);
+        if (error?.statusCode === 401) setUser(null);
       },
     });
   }, [callApi]);

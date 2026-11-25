@@ -53,21 +53,23 @@ export default function Integrations({ onLogout }) {
     setLoading(true);
     try {
       const s = await api("/integrations/google/status");
-      setStatus(s);
+      setStatus(s.data);
 
       const c = await api("/integrations/google/connections");
-      setConnections(c.connections || []);
+      setConnections(c.data?.connections || []);
 
-      if (s.connected) {
+      if (s.data?.connected) {
         // If this succeeds, refresh token flow is working → clear banners.
         const a = await api("/integrations/google/accounts");
-        setAccounts(a.accounts || []);
+        setAccounts(a.data?.accounts || []);
 
         try {
           sessionStorage.removeItem("reauth_required");
           sessionStorage.removeItem("reauth_required_alerted");
           sessionStorage.removeItem("reauth_required_dismissed");
-        } catch {}
+        } catch {
+          // Reauth marker cleanup is best-effort.
+        }
         setReauth(null);
       } else {
         setAccounts([]);
@@ -87,7 +89,6 @@ export default function Integrations({ onLogout }) {
 
   useEffect(() => {
     loadAll();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // If redirected here with ?reauth=google (or reauth exists), auto-scroll to Google card + focus CTA.
@@ -122,7 +123,9 @@ export default function Integrations({ onLogout }) {
       sessionStorage.removeItem("reauth_required");
       sessionStorage.removeItem("reauth_required_alerted");
       sessionStorage.removeItem("reauth_required_dismissed");
-    } catch {}
+    } catch {
+      // Reauth marker cleanup is best-effort.
+    }
     setReauth(null);
 
     window.location.href = "/api/v1/integrations/google/start";
@@ -147,7 +150,7 @@ export default function Integrations({ onLogout }) {
     setMsg("");
     try {
       const out = await api("/integrations/google/locations/reconcile", { method: "POST" });
-      setMsg(`Reconcile complete. scanned=${out.scanned}, updated=${out.updated}, unmatched=${out.unmatched}`);
+      setMsg(`Reconcile complete. scanned=${out.data?.scanned}, updated=${out.data?.updated}, unmatched=${out.data?.unmatched}`);
     } catch (e) {
       setMsg(e?.message || "Reconcile failed");
     } finally {
@@ -162,7 +165,7 @@ export default function Integrations({ onLogout }) {
     setMsg("");
     try {
       const r = await api(`/integrations/google/locations?accountName=${encodeURIComponent(accountName)}`);
-      setLocations(r.locations || []);
+      setLocations(r.data?.locations || []);
     } catch (e) {
       setMsg(e?.message || "Failed to load locations");
     } finally {
@@ -179,7 +182,7 @@ export default function Integrations({ onLogout }) {
         method: "POST",
         body: { accountName: selectedAccount },
       });
-      setMsg(`Imported/updated: inserted=${r.inserted || 0}, updated=${r.updated || 0}`);
+      setMsg(`Imported/updated: inserted=${r.data?.inserted || 0}, updated=${r.data?.updated || 0}`);
     } catch (e) {
       setMsg(e?.message || "Import failed");
     } finally {
@@ -190,7 +193,9 @@ export default function Integrations({ onLogout }) {
   function dismissReauth() {
     try {
       sessionStorage.setItem("reauth_required_dismissed", "1");
-    } catch {}
+    } catch {
+      // Reauth dismissal is best-effort.
+    }
     setReauth(null);
   }
 

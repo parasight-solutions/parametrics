@@ -13,9 +13,9 @@ const log = pino({ name: "reviewSync" });
 
 function safeErr(e) {
   return {
-    message: e?.message || "review_sync_failed",
+    code: "review_sync_failed",
+    message: "Google review synchronization failed",
     status: e?.status || null,
-    body: e?.body || null,
   };
 }
 

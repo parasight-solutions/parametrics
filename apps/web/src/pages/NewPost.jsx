@@ -22,7 +22,7 @@ export default function NewPost({ onLogout }) {
     const res = await fetch('/api/v1/uploads', { method: 'POST', body: fd })
     if (!res.ok) throw new Error('Upload failed')
     const d = await res.json()
-    setImageUrl(d.url)
+    setImageUrl(d.data?.url || "")
   }
 
   async function submit(e) {

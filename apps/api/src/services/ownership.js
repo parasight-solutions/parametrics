@@ -1,5 +1,6 @@
 // apps/api/src/services/ownership.js
 import { col } from "../lib/mongo.js";
+import { normalizeApiError, sendError } from "../utils/apiResponse.js";
 
 function cleanStr(value, max = 500) {
     const v = String(value ?? "").trim();
@@ -15,15 +16,12 @@ function makeError(status, code, message, data = null) {
     return err;
 }
 
-export function toApiError(res, err, fallbackCode = "server_error") {
-    const status = Number(err?.status || 500);
-    const code = cleanStr(err?.code, 120) || fallbackCode;
-    const message = cleanStr(err?.message, 500) || fallbackCode;
-
-    const body = { error: { code, message } };
-    if (err?.data) body.error.data = err.data;
-
-    return res.status(status).json(body);
+export function toApiError(res, err, defaults = {}) {
+    const normalizedDefaults = typeof defaults === "string"
+        ? { code: defaults }
+        : defaults;
+    const normalized = normalizeApiError(err, normalizedDefaults);
+    return sendError(res, normalized);
 }
 
 export function ensureLocationTenancy(locationDoc) {

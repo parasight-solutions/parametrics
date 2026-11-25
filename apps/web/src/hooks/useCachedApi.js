@@ -18,6 +18,82 @@ function now() {
     return Date.now();
 }
 
+const sharedRequests = new Map();
+
+export function buildCacheKeys(path, apiOptions = {}) {
+    const method = (apiOptions?.method || "GET").toUpperCase();
+    const bodyKey = apiOptions?.body ? stableStringify(apiOptions.body) : "";
+    const suffix = `${method}:${path}:${bodyKey}`;
+    return {
+        current: `cache:v2:${suffix}`,
+        legacy: `cache:v1:${suffix}`,
+    };
+}
+
+function isSuccessEnvelope(payload) {
+    return (
+        payload?.success === true &&
+        Number.isInteger(payload?.statusCode) &&
+        typeof payload?.message === "string" &&
+        Object.hasOwn(payload, "data")
+    );
+}
+
+export function readCacheEntry(store, keys, currentTime = now()) {
+    try {
+        store.removeItem(keys.legacy);
+    } catch {
+        // Legacy cache removal is best-effort.
+    }
+
+    const raw = store.getItem(keys.current);
+    if (!raw) return null;
+
+    const parsed = safeJsonParse(raw);
+    if (!parsed || parsed.v !== 2 || !isSuccessEnvelope(parsed.data)) {
+        try { store.removeItem(keys.current); } catch {
+            // Invalid cache removal is best-effort.
+        }
+        return null;
+    }
+
+    const fetchedAt = Number(parsed.fetchedAt || 0);
+    const cachedTtl = Number(parsed.ttlMs || 0);
+    return {
+        data: parsed.data,
+        fetchedAt: fetchedAt || null,
+        isFresh: Boolean(
+            fetchedAt &&
+            cachedTtl &&
+            (currentTime - fetchedAt) < cachedTtl
+        ),
+    };
+}
+
+export function writeCacheEntry(store, key, payload, ttlMs, fetchedAt = now()) {
+    if (!isSuccessEnvelope(payload)) return null;
+    const entry = { v: 2, fetchedAt, ttlMs, data: payload };
+    store.setItem(key, JSON.stringify(entry));
+    return fetchedAt;
+}
+
+export function runDedupedRequest(key, factory) {
+    const existing = sharedRequests.get(key);
+    if (existing) return existing;
+
+    const request = Promise.resolve(factory());
+    sharedRequests.set(key, request);
+    const cleanup = () => {
+        if (sharedRequests.get(key) === request) sharedRequests.delete(key);
+    };
+    request.then(cleanup, cleanup);
+    return request;
+}
+
+export function shouldInvalidateCache(error) {
+    return error?.statusCode === 404;
+}
+
 /**
  * Stale-while-revalidate caching for `api()` calls.
  *
@@ -37,12 +113,13 @@ export function useCachedApi(
 ) {
     const store = useMemo(() => getStorage(storage), [storage]);
 
-    const key = useMemo(() => {
+    const apiMethod = apiOptions?.method;
+    const apiBody = apiOptions?.body;
+    const cacheKeys = useMemo(() => {
         if (!path) return null;
-        const method = (apiOptions?.method || "GET").toUpperCase();
-        const bodyKey = apiOptions?.body ? stableStringify(apiOptions.body) : "";
-        return `cache:v1:${method}:${path}:${bodyKey}`;
-    }, [path, apiOptions?.method, apiOptions?.body]);
+        return buildCacheKeys(path, { method: apiMethod, body: apiBody });
+    }, [path, apiMethod, apiBody]);
+    const key = cacheKeys?.current ?? null;
 
     const [data, setData] = useState(null);
     const [loading, setLoading] = useState(false);       // only when no cache shown
@@ -56,35 +133,15 @@ export function useCachedApi(
 
     const readCache = useCallback(() => {
         if (!key) return null;
-        const raw = store.getItem(key);
-        if (!raw) return null;
-
-        const parsed = safeJsonParse(raw);
-        if (!parsed || parsed.v !== 1) return null;
-
-        const fetchedAt = Number(parsed.fetchedAt || 0);
-        const cachedTtl = Number(parsed.ttlMs || 0);
-        const isFresh = fetchedAt && cachedTtl && (now() - fetchedAt) < cachedTtl;
-
-        return {
-            data: parsed.data ?? null,
-            fetchedAt: fetchedAt || null,
-            isFresh,
-        };
-    }, [key, store]);
+        return readCacheEntry(store, cacheKeys);
+    }, [cacheKeys, key, store]);
 
     const writeCache = useCallback(
         (payload) => {
             if (!key) return;
             const fetchedAt = now();
-            const entry = {
-                v: 1,
-                fetchedAt,
-                ttlMs,
-                data: payload ?? null,
-            };
             try {
-                store.setItem(key, JSON.stringify(entry));
+                writeCacheEntry(store, key, payload, ttlMs, fetchedAt);
             } catch {
                 // ignore quota/serialization issues; app still works without cache
             }
@@ -125,6 +182,7 @@ export function useCachedApi(
                     }
 
                     const out = await api(path, { ...apiOptions, signal: controller.signal });
+                    if (abortRef.current !== controller) return null;
 
                     setError(null);
                     setData(out);
@@ -135,7 +193,7 @@ export function useCachedApi(
                     if (e?.name === "AbortError") return null;
 
                     setError(e);
-                    if (e?.status === 404) {
+                    if (shouldInvalidateCache(e)) {
                         try { store.removeItem(key); } catch {
                             // Cache eviction failure should not keep stale UI data alive.
                         }

@@ -3,6 +3,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import multer from "multer";
 import { isIP } from "node:net";
+import { sendError } from "../utils/apiResponse.js";
 
 export const DEFAULT_POST_IMAGE_MAX_BYTES = 5 * 1024 * 1024;
 const codedError = (code, message = code) => Object.assign(new Error(message), { code });
@@ -142,6 +143,13 @@ export function createImageUploadMiddleware({ maxBytes = resolvePostUploadConfig
   return (req, res, next) => parser(req, res, (error) => {
     if (!error) return next();
     const tooLarge = error.code === "LIMIT_FILE_SIZE";
-    return res.status(tooLarge ? 413 : 400).json({ error: { code: tooLarge ? "image_too_large" : "invalid_upload" } });
+    const statusCode = tooLarge ? 413 : 400;
+    const code = tooLarge ? "image_too_large" : "invalid_upload";
+    const message = tooLarge ? "Image is too large" : "Invalid image upload";
+    return sendError(res, {
+      statusCode,
+      message,
+      errors: [{ code, message, field: fieldName }],
+    });
   });
 }
