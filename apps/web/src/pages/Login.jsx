@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api } from "../apiClient";
 import GoogleLoginButton from "../components/GoogleLoginButton";
@@ -8,25 +8,31 @@ import GoogleLoginButton from "../components/GoogleLoginButton";
 // the wrong credentials during local review (S2-31.3).
 export const LOGIN_INITIAL_FORM = Object.freeze({ email: "", password: "" });
 
-export default function Login({ onAuthed }) {
+export default function Login({ onAuthed, onLoginStart }) {
   const [email, setEmail] = useState(LOGIN_INITIAL_FORM.email);
   const [password, setPassword] = useState(LOGIN_INITIAL_FORM.password);
   const [err, setErr] = useState("");
+  const latestAttemptRef = useRef(null);
   const navigate = useNavigate();
 
   async function submit(e) {
     e.preventDefault();
     setErr("");
+    const attempt = onLoginStart();
+    latestAttemptRef.current = attempt;
     try {
       const result = await api("/auth/login", {
         method: "POST",
         body: { email, password },
         auth: false,
       });
-      onAuthed(result.data.user);
-      navigate("/", { replace: true });
+      if (onAuthed(result.data.user, attempt)) {
+        navigate("/", { replace: true });
+      }
     } catch (e) {
-      setErr(e?.message || "Login failed");
+      if (latestAttemptRef.current === attempt) {
+        setErr(e?.message || "Login failed");
+      }
     }
   }
 

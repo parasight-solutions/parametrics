@@ -15,7 +15,7 @@ import ReportHistory from "./pages/ReportHistory";
 import { useAuth } from "./context/useAuth";
 
 export default function App() {
-  const { authLoading, isAuthenticated: authed, login, logout } = useAuth();
+  const { authLoading, beginLogin, isAuthenticated: authed, login, logout } = useAuth();
 
   if (authLoading) {
     return <div className="min-h-screen flex items-center justify-center">Loading…</div>;
@@ -34,7 +34,16 @@ export default function App() {
         <Route path="/reports/history" element={authed ? <ReportHistory onLogout={logout} /> : <Navigate to="/login" />} />
 
         <Route path="/integrations/google/connected" element={<GoogleConnected />} />
-        <Route path="/login" element={authed ? <Navigate to="/" /> : <Login onAuthed={login} />} />
+        <Route
+          path="/login"
+          element={
+            authed ? (
+              <Navigate to="/" />
+            ) : (
+              <Login onLoginStart={beginLogin} onAuthed={login} />
+            )
+          }
+        />
         <Route path="/" element={authed ? <Dashboard onLogout={logout} /> : <Navigate to="/login" />} />
         <Route path="*" element={<Navigate to={authed ? "/" : "/login"} />} />
       </Routes>

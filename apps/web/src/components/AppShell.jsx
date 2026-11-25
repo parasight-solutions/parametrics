@@ -1,6 +1,7 @@
 // apps/web/src/components/AppShell.jsx
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
+import { useAuth } from "../context/useAuth";
 
 const nav = [
   { to: "/", label: "Dashboard" },
@@ -25,6 +26,7 @@ function readReauth() {
 
 export default function AppShell({ title, subtitle, onLogout, actions, tools, children }) {
   const loc = useLocation();
+  const { clearLogoutError, logoutError, logoutLoading } = useAuth();
   const isActive = (to) => (to === "/" ? loc.pathname === "/" : loc.pathname.startsWith(to));
 
   const [reauth, setReauth] = useState(null);
@@ -97,19 +99,31 @@ export default function AppShell({ title, subtitle, onLogout, actions, tools, ch
             </HeaderMenu>
 
             {onLogout ? (
-              <HeaderMenu label="Account" align="right">
+              <HeaderMenu label="Account" align="right" closeOnSelect={false}>
                 <button
                   type="button"
-                  onClick={onLogout}
+                  onClick={() => {
+                    clearLogoutError();
+                    void onLogout();
+                  }}
+                  disabled={logoutLoading}
                   role="menuitem"
-                  className="block w-full px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-100"
+                  className="block w-full px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-60"
                 >
-                  Logout
+                  {logoutLoading ? "Logging out…" : "Logout"}
                 </button>
               </HeaderMenu>
             ) : null}
           </div>
         </div>
+
+        {logoutError ? (
+          <div className="border-t bg-red-50" role="alert">
+            <div className="max-w-6xl mx-auto px-6 py-3 text-sm text-red-700">
+              {logoutError}
+            </div>
+          </div>
+        ) : null}
 
         {showBanner ? (
           <div className="border-t bg-amber-50">
@@ -156,7 +170,7 @@ export default function AppShell({ title, subtitle, onLogout, actions, tools, ch
   );
 }
 
-function HeaderMenu({ label, children, align = "left" }) {
+function HeaderMenu({ label, children, align = "left", closeOnSelect = true }) {
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
 
@@ -195,7 +209,9 @@ function HeaderMenu({ label, children, align = "left" }) {
       {open ? (
         <div
           role="menu"
-          onClickCapture={() => setOpen(false)}
+          onClickCapture={() => {
+            if (closeOnSelect) setOpen(false);
+          }}
           className={`absolute top-full mt-2 w-44 rounded-lg border bg-white py-1 shadow-lg ${
             align === "right" ? "right-0" : "left-0"
           }`}

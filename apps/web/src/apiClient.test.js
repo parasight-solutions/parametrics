@@ -90,6 +90,10 @@ describe("api response contract", () => {
     const { api } = await loadApiClient();
 
     await expect(api("/auth/logout", { method: "POST" })).resolves.toBeNull();
+    expect(fetch).toHaveBeenCalledWith(
+      expect.stringMatching(/\/api\/v1\/auth\/logout$/),
+      expect.objectContaining({ method: "POST", credentials: "include" }),
+    );
   });
 
   it("normalizes a non-contract HTTP response", async () => {
