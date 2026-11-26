@@ -11,6 +11,7 @@ import useApi from "../hooks/useApi";
 import { reviewsEndpoints } from "../services/reviews.service";
 
 import { useNotify } from "../context/notification/useNotify";
+import ExpandableText from "./ExpandableText";
 
 const STAR_RATING = {
   ONE: 1,
@@ -64,7 +65,7 @@ const ReviewCard = ({ review, onReply }) => {
           notify.msgSuccess(res?.message || "Reply posted!");
         },
         onError: (error) => {
-          notify.msgSuccess(error?.message || "Error posting reply!");
+          notify.msgError(error?.message || "Error posting reply!");
         },
       },
     );
@@ -101,7 +102,7 @@ const ReviewCard = ({ review, onReply }) => {
         </div>
       </div>
 
-      <p className="px-1 line-clamp-3">{comment || "-"}</p>
+      <ExpandableText text={comment} />
 
       <div className="w-full border-b border-gray-300" />
 
