@@ -2,6 +2,7 @@
 import "../startup/env.js";
 import { Worker } from "bullmq";
 import pino from "pino";
+import { buildReviewSyncDocument } from "../services/reviewSyncDocument.js";
 import crypto from "crypto";
 
 import { connection } from "../lib/queues.js";
@@ -139,25 +140,12 @@ export const reviewSyncWorker = new Worker(
           }
         }
 
-        const doc = {
-          user_id: userId,
-          location_id: locationId,
-          provider: "google",
-
-          integration_id: loc.integration_id,
-          provider_account_name: loc.provider_account_name || null,
-          provider_location_name: loc.provider_location_name || null,
-
-          provider_review_name,
-          starRating: r?.starRating || null,
-          comment: r?.comment || null,
-          reviewer: r?.reviewer || null,
-          createTime: r?.createTime || null,
-          updateTime: r?.updateTime || null,
-          reviewReply: r?.reviewReply || null,
-
-          updated_at: new Date(),
-        };
+        const doc = buildReviewSyncDocument({
+          userId,
+          locationId,
+          location: loc,
+          review: r,
+        });
 
         ops.push({
           updateOne: {

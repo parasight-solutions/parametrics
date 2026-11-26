@@ -83,6 +83,46 @@ export async function ensurePostDeletionTombstoneIndexes(collection) {
   }, { name: "idx_post_deletion_tombstones_provider_resource" });
 }
 
+export async function ensureReviewIndexes(reviews) {
+  const revIdx = await listIdx(reviews);
+  const legacyReviewsKey = { location_id: 1, provider_review_name: 1 };
+  const legacyReviews = revIdx.find(
+    (ix) => ix.unique && keyEq(ix.key, legacyReviewsKey)
+  );
+  if (legacyReviews) {
+    console.warn(
+      "[indexes] dropping legacy unique index on reviews:",
+      legacyReviews.name
+    );
+    await dropIndexIfExists(reviews, legacyReviews.name);
+  }
+
+  await ensureIndex(
+    reviews,
+    { user_id: 1, location_id: 1, provider_review_name: 1 },
+    {
+      unique: true,
+      name: "uniq_reviews_user_location_provider_review",
+    }
+  );
+
+  await ensureIndex(
+    reviews,
+    { user_id: 1, location_id: 1, provider: 1, updateTime: -1, createTime: -1, _id: -1 },
+    {
+      name: "idx_reviews_user_location_provider_updateTime",
+    }
+  );
+
+  await ensureIndex(
+    reviews,
+    { organization_id: 1, client_id: 1, location_id: 1, updateTime: -1, createTime: -1 },
+    {
+      name: "idx_reviews_org_client_location_updateTime",
+    }
+  );
+}
+
 export async function ensureIndexes() {
   // ---------------------------------------------------------------------------
   // auth_sessions
@@ -307,44 +347,7 @@ export async function ensureIndexes() {
   // reviews
   // ---------------------------------------------------------------------------
   const reviews = await col("reviews");
-
-  const revIdx = await listIdx(reviews);
-  const legacyReviewsKey = { location_id: 1, provider_review_name: 1 };
-  const legacyReviews = revIdx.find(
-    (ix) => ix.unique && keyEq(ix.key, legacyReviewsKey)
-  );
-  if (legacyReviews) {
-    console.warn(
-      "[indexes] dropping legacy unique index on reviews:",
-      legacyReviews.name
-    );
-    await dropIndexIfExists(reviews, legacyReviews.name);
-  }
-
-  await ensureIndex(
-    reviews,
-    { user_id: 1, location_id: 1, provider_review_name: 1 },
-    {
-      unique: true,
-      name: "uniq_reviews_user_location_provider_review",
-    }
-  );
-
-  await ensureIndex(
-    reviews,
-    { user_id: 1, location_id: 1, provider: 1, updateTime: -1, createTime: -1 },
-    {
-      name: "idx_reviews_user_location_provider_updateTime",
-    }
-  );
-
-  await ensureIndex(
-    reviews,
-    { organization_id: 1, client_id: 1, location_id: 1, updateTime: -1, createTime: -1 },
-    {
-      name: "idx_reviews_org_client_location_updateTime",
-    }
-  );
+  await ensureReviewIndexes(reviews);
 
   // ---------------------------------------------------------------------------
   // review_sync_state

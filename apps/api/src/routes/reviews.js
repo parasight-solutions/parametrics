@@ -15,6 +15,11 @@ import {
 } from "../services/ownership.js";
 import { requireOwnedOrganizationLocationAccess } from "../services/organizationAccess.js";
 import { auditFailure, auditQueued, auditSuccess } from "../services/auditLog.js";
+import {
+  buildReviewListPipeline,
+  normalizeReviewListQuery,
+  readReviewListFacet,
+} from "../services/reviewList.js";
 import { sendError, sendSuccess } from "../utils/apiResponse.js";
 
 const router = Router();
@@ -25,16 +30,16 @@ const LOCATION_OPERATION_ROLES = Object.freeze(["owner", "admin", "manager"]);
 const reviewError = (res, statusCode, code, message = code) =>
   sendError(res, { statusCode, message, errors: [{ code, message }] });
 
-async function getSyncStateForLocation(loc) {
-  const c = await col("review_sync_state");
+async function getSyncStateForLocation(loc, getCollection = col) {
+  const c = await getCollection("review_sync_state");
   return c.findOne(
     buildLocationScopeFilter(loc),
     { projection: { _id: 0 } }
   );
 }
 
-async function setSyncQueuedForLocation(loc, patch = {}) {
-  const c = await col("review_sync_state");
+async function setSyncQueuedForLocation(loc, patch = {}, getCollection = col) {
+  const c = await getCollection("review_sync_state");
   const now = new Date();
 
   await c.updateOne(
@@ -56,8 +61,10 @@ async function setSyncQueuedForLocation(loc, patch = {}) {
   );
 }
 
-// GET /api/v1/reviews?locationId=...
-router.get("/", authenticate, async (req, res) => {
+export async function getReviews(req, res, {
+  getCollection = col,
+  requireAccess = requireOwnedOrganizationLocationAccess,
+} = {}) {
   try {
     const userId = req.user.user_id;
     const locationId = String(req.query.locationId || req.query.location_id || "").trim();
@@ -65,33 +72,42 @@ router.get("/", authenticate, async (req, res) => {
       return reviewError(res, 400, "bad_request", "locationId required");
     }
 
-    const { location: loc } = await requireOwnedOrganizationLocationAccess({
+    const { location: loc } = await requireAccess({
       userId,
       locationId,
       provider: "google",
       allowedRoles: LOCATION_READ_ROLES,
     });
 
-    const c = await col("reviews");
-    const rows = await c
-      .find(
-        buildLocationScopeFilter(loc, { provider: "google" }),
-        { projection: { _id: 0 } }
-      )
-      .sort({ updateTime: -1, createTime: -1 })
-      .limit(200)
-      .toArray();
+    const query = normalizeReviewListQuery(req.query);
+    const c = await getCollection("reviews");
+    const facetResult = await c.aggregate(buildReviewListPipeline({
+      baseFilter: buildLocationScopeFilter(loc, { provider: "google" }),
+      query,
+    })).toArray();
+    const list = readReviewListFacet(facetResult, query);
 
-    const sync = await getSyncStateForLocation(loc);
+    const sync = await getSyncStateForLocation(loc, getCollection);
 
-    return sendSuccess(res, { data: { reviews: rows, sync: sync || null }, message: "Reviews loaded" });
+    return sendSuccess(res, {
+      data: { ...list, sync: sync || null },
+      message: "Reviews fetched successfully",
+    });
   } catch (e) {
     return toApiError(res, e);
   }
-});
+}
 
-// POST /api/v1/reviews/sync  { locationId, force?: boolean }
-router.post("/sync", authenticate, syncRateLimit, async (req, res) => {
+// GET /api/v1/reviews?locationId=...
+router.get("/", authenticate, getReviews);
+
+export async function queueReviewSync(req, res, {
+  getCollection = col,
+  requireAccess = requireOwnedOrganizationLocationAccess,
+  queue = reviewSyncQueue,
+  auditQueued: writeQueuedAudit = auditQueued,
+  auditFailure: writeFailureAudit = auditFailure,
+} = {}) {
   let auditTarget = {};
   try {
     const userId = req.user.user_id;
@@ -102,7 +118,7 @@ router.post("/sync", authenticate, syncRateLimit, async (req, res) => {
       return reviewError(res, 400, "bad_request", "locationId required");
     }
 
-    const { location: loc, membership } = await requireOwnedOrganizationLocationAccess({
+    const { location: loc, membership } = await requireAccess({
       userId,
       locationId,
       provider: "google",
@@ -122,14 +138,14 @@ router.post("/sync", authenticate, syncRateLimit, async (req, res) => {
       return reviewError(res, 409, "location_not_bound", "Location is not bound to Google");
     }
 
-    const syncState = await getSyncStateForLocation(loc);
+    const syncState = await getSyncStateForLocation(loc, getCollection);
 
     const STALE_MS = 60 * 60 * 1000;
     const lastUpdMs = syncState?.updated_at ? new Date(syncState.updated_at).getTime() : 0;
     const isStale = !syncState || !lastUpdMs || (Date.now() - lastUpdMs) > STALE_MS;
 
     if (!force && !isStale && (syncState?.status === "running" || syncState?.status === "queued")) {
-      await auditQueued(req, "review.sync.queue", {
+      await writeQueuedAudit(req, "review.sync.queue", {
         ...auditTarget,
         metadata: {
           ...(auditTarget.metadata || {}),
@@ -151,7 +167,7 @@ router.post("/sync", authenticate, syncRateLimit, async (req, res) => {
 
     const jobId = `reviewSync_${userId}_${locationId}`;
 
-    const job = await reviewSyncQueue.add(
+    const job = await queue.add(
       "sync-location-reviews",
       {
         userId,
@@ -174,25 +190,35 @@ router.post("/sync", authenticate, syncRateLimit, async (req, res) => {
       since,
       organization_id: loc.organization_id,
       client_id: loc.client_id,
-    });
+    }, getCollection);
 
-    await auditQueued(req, "review.sync.queue", {
+    await writeQueuedAudit(req, "review.sync.queue", {
       ...auditTarget,
       metadata: { ...(auditTarget.metadata || {}), jobId: String(job.id), force, since },
     });
 
     return sendSuccess(res, { data: { queued: true, jobId: String(job.id), since }, message: "Review synchronization queued" });
   } catch (e) {
-    await auditFailure(req, "review.sync.queue", {
+    await writeFailureAudit(req, "review.sync.queue", {
       ...auditTarget,
       metadata: { ...(auditTarget.metadata || {}), reason: e?.message || e?.code || "server_error" },
     });
     return toApiError(res, e);
   }
-});
+}
 
-// PUT /api/v1/reviews/:id/reply { comment }
-router.put("/:id/reply", authenticate, mutationRateLimit, async (req, res) => {
+// POST /api/v1/reviews/sync  { locationId, force?: boolean }
+router.post("/sync", authenticate, syncRateLimit, queueReviewSync);
+
+export async function replyToReview(req, res, {
+  getCollection = col,
+  requireAccess = requireOwnedOrganizationLocationAccess,
+  getIntegration = getGoogleIntegrationById,
+  ensureToken = ensureAccessToken,
+  updateProviderReply = updateReviewReply,
+  auditSuccess: writeSuccessAudit = auditSuccess,
+  auditFailure: writeFailureAudit = auditFailure,
+} = {}) {
   let auditTarget = {};
   try {
     const userId = req.user.user_id;
@@ -203,14 +229,14 @@ router.put("/:id/reply", authenticate, mutationRateLimit, async (req, res) => {
       return reviewError(res, 400, "bad_request", "comment required");
     }
 
-    const c = await col("reviews");
+    const c = await getCollection("reviews");
     const review = await c.findOne({ id, user_id: userId, provider: "google" });
 
     if (!review) {
       return reviewError(res, 404, "not_found", "review not found");
     }
 
-    const { location: loc, membership } = await requireOwnedOrganizationLocationAccess({
+    const { location: loc, membership } = await requireAccess({
       userId,
       locationId: review.location_id,
       provider: "google",
@@ -231,14 +257,14 @@ router.put("/:id/reply", authenticate, mutationRateLimit, async (req, res) => {
       return reviewError(res, 409, "location_not_bound", "Location is not bound to Google");
     }
 
-    const integ = await getGoogleIntegrationById(userId, loc.integration_id);
+    const integ = await getIntegration(userId, loc.integration_id);
     if (!integ) {
       return reviewError(res, 409, "no_integration_for_location", "Google connection for this location not found");
     }
 
-    const { access_token } = await ensureAccessToken(integ);
+    const { access_token } = await ensureToken(integ);
 
-    await auditSuccess(req, "review.reply.attempt", {
+    await writeSuccessAudit(req, "review.reply.attempt", {
       ...auditTarget,
       metadata: {
         ...(auditTarget.metadata || {}),
@@ -246,7 +272,7 @@ router.put("/:id/reply", authenticate, mutationRateLimit, async (req, res) => {
       },
     });
 
-    await updateReviewReply(review.provider_review_name, comment, access_token);
+    await updateProviderReply(review.provider_review_name, comment, access_token);
 
     await c.updateOne(
       {
@@ -264,7 +290,7 @@ router.put("/:id/reply", authenticate, mutationRateLimit, async (req, res) => {
       }
     );
 
-    await auditSuccess(req, "review.reply", {
+    await writeSuccessAudit(req, "review.reply", {
       ...auditTarget,
       metadata: {
         ...(auditTarget.metadata || {}),
@@ -274,12 +300,15 @@ router.put("/:id/reply", authenticate, mutationRateLimit, async (req, res) => {
 
     return sendSuccess(res, { data: { ok: true }, message: "Review reply updated" });
   } catch (e) {
-    await auditFailure(req, "review.reply", {
+    await writeFailureAudit(req, "review.reply", {
       ...auditTarget,
       metadata: { ...(auditTarget.metadata || {}), reason: e?.message || e?.code || "server_error" },
     });
     return toApiError(res, e);
   }
-});
+}
+
+// PUT /api/v1/reviews/:id/reply { comment }
+router.put("/:id/reply", authenticate, mutationRateLimit, replyToReview);
 
 export default router;
