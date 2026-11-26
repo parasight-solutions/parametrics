@@ -38,27 +38,55 @@ async function getSyncStateForLocation(loc, getCollection = col) {
   );
 }
 
-async function setSyncQueuedForLocation(loc, patch = {}, getCollection = col) {
-  const c = await getCollection("review_sync_state");
-  const now = new Date();
+function toIsoTimestamp(value) {
+  if (!value) return null;
+  const date = value instanceof Date ? value : new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date.toISOString();
+}
 
-  await c.updateOne(
-    buildLocationScopeFilter(loc),
-    {
-      $set: {
-        status: "queued",
-        last_error: null,
-        queued_at: now,
-        updated_at: now,
-        ...patch,
-      },
-      $setOnInsert: {
-        id: crypto.randomUUID(),
-        created_at: now,
-      },
+async function setSyncQueuedForLocation(loc, patch = {}, getCollection = col, runId = null, queuedAt = new Date()) {
+  const c = await getCollection("review_sync_state");
+  const now = queuedAt;
+  const identity = { user_id: loc.user_id, location_id: loc.id };
+  const filter = {
+    ...identity,
+    $or: [
+      { updated_at: { $lt: queuedAt } },
+      { updated_at: { $exists: false } },
+    ],
+  };
+  if (runId) filter.last_run_id = { $ne: runId };
+  const queued = {
+    status: "queued",
+    last_error: null,
+    queued_at: now,
+    updated_at: now,
+    ...patch,
+  };
+
+  await c.updateOne(filter, { $set: queued }, { upsert: false });
+  await c.updateOne(identity, {
+    $setOnInsert: {
+      ...queued,
+      id: crypto.randomUUID(),
+      created_at: now,
     },
-    { upsert: true }
-  );
+  }, { upsert: true });
+}
+
+const ACTIVE_JOB_STATES = new Set(["active", "waiting", "delayed", "prioritized", "waiting-children"]);
+const TERMINAL_JOB_STATES = new Set(["completed", "failed"]);
+
+async function inspectExistingSyncJob(queue, jobId) {
+  if (typeof queue.getJob !== "function") return null;
+  const job = await queue.getJob(jobId);
+  if (!job) return null;
+  const state = await job.getState();
+  if (TERMINAL_JOB_STATES.has(state)) {
+    await job.remove();
+    return null;
+  }
+  return ACTIVE_JOB_STATES.has(state) ? job : null;
 }
 
 export async function getReviews(req, res, {
@@ -90,7 +118,11 @@ export async function getReviews(req, res, {
     const sync = await getSyncStateForLocation(loc, getCollection);
 
     return sendSuccess(res, {
-      data: { ...list, sync: sync || null },
+      data: {
+        ...list,
+        lastSyncedAt: toIsoTimestamp(sync?.last_synced_at),
+        sync: sync || null,
+      },
       message: "Reviews fetched successfully",
     });
   } catch (e) {
@@ -105,6 +137,7 @@ export async function queueReviewSync(req, res, {
   getCollection = col,
   requireAccess = requireOwnedOrganizationLocationAccess,
   queue = reviewSyncQueue,
+  randomUUID = crypto.randomUUID,
   auditQueued: writeQueuedAudit = auditQueued,
   auditFailure: writeFailureAudit = auditFailure,
 } = {}) {
@@ -138,35 +171,29 @@ export async function queueReviewSync(req, res, {
       return reviewError(res, 409, "location_not_bound", "Location is not bound to Google");
     }
 
-    const syncState = await getSyncStateForLocation(loc, getCollection);
-
-    const STALE_MS = 60 * 60 * 1000;
-    const lastUpdMs = syncState?.updated_at ? new Date(syncState.updated_at).getTime() : 0;
-    const isStale = !syncState || !lastUpdMs || (Date.now() - lastUpdMs) > STALE_MS;
-
-    if (!force && !isStale && (syncState?.status === "running" || syncState?.status === "queued")) {
+    const jobId = `reviewSync_${userId}_${locationId}`;
+    const runId = randomUUID();
+    const existingJob = await inspectExistingSyncJob(queue, jobId);
+    if (existingJob) {
       await writeQueuedAudit(req, "review.sync.queue", {
         ...auditTarget,
         metadata: {
           ...(auditTarget.metadata || {}),
           alreadyRunning: true,
           force,
-          since: syncState?.since || null,
+          mode: "full",
+          since: null,
         },
       });
       return sendSuccess(res, { data: {
         queued: true,
         alreadyRunning: true,
-        jobId: syncState?.last_job_id || null,
-        since: syncState?.since || null,
+        jobId: String(existingJob.id),
+        since: null,
       }, message: "Review synchronization already queued" });
     }
 
-    const cursor = syncState?.last_success_started_at || syncState?.last_synced_at || null;
-    const since = !force && cursor ? new Date(cursor).toISOString() : null;
-
-    const jobId = `reviewSync_${userId}_${locationId}`;
-
+    const queuedAt = new Date();
     const job = await queue.add(
       "sync-location-reviews",
       {
@@ -174,7 +201,9 @@ export async function queueReviewSync(req, res, {
         locationId,
         organizationId: loc.organization_id,
         clientId: loc.client_id,
-        since,
+        runId,
+        mode: "full",
+        since: null,
       },
       {
         jobId,
@@ -184,20 +213,49 @@ export async function queueReviewSync(req, res, {
         removeOnFail: true,
       }
     );
+    const persistedJob = typeof queue.getJob === "function"
+      ? await queue.getJob(String(job.id))
+      : job;
+    const acceptedRunId = persistedJob
+      ? String(persistedJob.data?.runId || job.data?.runId || runId)
+      : null;
 
-    await setSyncQueuedForLocation(loc, {
-      last_job_id: String(job.id),
-      since,
-      organization_id: loc.organization_id,
-      client_id: loc.client_id,
-    }, getCollection);
+    if (acceptedRunId && acceptedRunId !== runId) {
+      await writeQueuedAudit(req, "review.sync.queue", {
+        ...auditTarget,
+        metadata: {
+          ...(auditTarget.metadata || {}),
+          alreadyRunning: true,
+          force,
+          mode: "full",
+          since: null,
+        },
+      });
+      return sendSuccess(res, { data: {
+        queued: true,
+        alreadyRunning: true,
+        jobId: String(persistedJob.id || job.id),
+        since: null,
+      }, message: "Review synchronization already queued" });
+    }
+
+    if (acceptedRunId) {
+      await setSyncQueuedForLocation(loc, {
+        last_job_id: String(job.id),
+        last_run_id: acceptedRunId,
+        mode: "full",
+        since: null,
+        organization_id: loc.organization_id,
+        client_id: loc.client_id,
+      }, getCollection, acceptedRunId, queuedAt);
+    }
 
     await writeQueuedAudit(req, "review.sync.queue", {
       ...auditTarget,
-      metadata: { ...(auditTarget.metadata || {}), jobId: String(job.id), force, since },
+      metadata: { ...(auditTarget.metadata || {}), jobId: String(job.id), force, mode: "full", since: null },
     });
 
-    return sendSuccess(res, { data: { queued: true, jobId: String(job.id), since }, message: "Review synchronization queued" });
+    return sendSuccess(res, { data: { queued: true, jobId: String(job.id), since: null }, message: "Review synchronization queued" });
   } catch (e) {
     await writeFailureAudit(req, "review.sync.queue", {
       ...auditTarget,

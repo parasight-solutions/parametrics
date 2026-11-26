@@ -2,6 +2,23 @@ export const REVIEW_LIST_DEFAULT_PER_PAGE = 10;
 export const REVIEW_LIST_MAX_PER_PAGE = 100;
 
 const REVIEW_STATUSES = new Set(["all", "replied", "unreplied"]);
+const REVIEW_STAR_RATINGS = Object.freeze({
+  ONE: 1,
+  TWO: 2,
+  THREE: 3,
+  FOUR: 4,
+  FIVE: 5,
+});
+
+export function normalizeReviewStarRating(value) {
+  if (typeof value !== "string" && typeof value !== "number") return null;
+  const normalized = typeof value === "string" ? value.trim() : value;
+  const mapped = typeof normalized === "string"
+    ? REVIEW_STAR_RATINGS[normalized.toUpperCase()]
+    : undefined;
+  const rating = mapped ?? Number(normalized);
+  return Number.isInteger(rating) && rating >= 1 && rating <= 5 ? rating : null;
+}
 
 function badRequest(message) {
   const error = new Error(message);
@@ -145,7 +162,12 @@ export function readReviewListFacet(result, query) {
   const facet = result?.[0] || {};
   const total = countOf(facet.matching);
   return {
-    reviews: Array.isArray(facet.reviews) ? facet.reviews : [],
+    reviews: Array.isArray(facet.reviews)
+      ? facet.reviews.map((review) => ({
+        ...review,
+        starRating: normalizeReviewStarRating(review?.starRating),
+      }))
+      : [],
     pagination: {
       page: query.page,
       perPage: query.perPage,

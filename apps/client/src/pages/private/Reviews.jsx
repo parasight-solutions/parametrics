@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 
+import { Skeleton } from "antd";
 import { RefreshCcw, Search } from "lucide-react";
 
 import FormField from "../../components/ui/FormField";
@@ -8,6 +9,8 @@ import Pagination from "../../components/ui/Pagination";
 import CustomInput from "../../components/ui/CustomInput";
 import CustomSelect from "../../components/ui/CustomSelect";
 import CustomButton from "../../components/ui/CustomButton";
+
+import ReviewCard from "../../components/ReviewCard";
 
 import { formatDateInAlphaNumericWithTime } from "../../utils/dateAndTime";
 
@@ -18,8 +21,6 @@ import useListParams from "../../hooks/useListParams";
 
 import { useNotify } from "../../context/notification/useNotify";
 import { useLocation } from "../../context/location/useLocation";
-import ReviewCard from "../../components/ReviewCard";
-import { Skeleton } from "antd";
 
 const STATUS_OPTIONS = [
   { label: "All", value: "all" },
@@ -29,13 +30,13 @@ const STATUS_OPTIONS = [
 
 const Reviews = () => {
   const { notify } = useNotify();
-  const { activeLocation, locations, setDisbledLocationUpdate } = useLocation();
+  const { activeLocation, setDisbledLocationUpdate } = useLocation();
 
   const { loading, callApi } = useApi({ reviewsLoading: true });
 
   const [totalPages, setTotalPages] = useState(0);
   const [reviews, setReviews] = useState([]);
-  const [lastSyncByLocation, setLastSyncByLocation] = useState({});
+  const [lastSyncedAt, setLastSyncedAt] = useState(null);
 
   const {
     params,
@@ -54,24 +55,21 @@ const Reviews = () => {
     { syncWithUrl: true, urlKeys: ["keyword", "status", "page"] },
   );
 
-  const activeLocationDetails = locations?.find(
-    (location) =>
-      location?.id === activeLocation || location?.value === activeLocation,
-  );
-  const lastSyncedAt =
-    lastSyncByLocation[activeLocation] ||
-    activeLocationDetails?.post_sync?.last_success_at;
-
   const fetchReviews = useCallback(() => {
     const apiParams = { locationId: activeLocation, ...getParams() };
 
-    return callApi("reviewsLoading", () => reviewsEndpoints.getReviews(apiParams), {
-      loading: false,
-      onSuccess: ({ data }) => {
-        setReviews(data?.reviews || []);
-        setTotalPages(data?.pagination?.totalPages);
+    return callApi(
+      "reviewsLoading",
+      () => reviewsEndpoints.getReviews(apiParams),
+      {
+        loading: false,
+        onSuccess: ({ data }) => {
+          setReviews(data?.reviews || []);
+          setTotalPages(data?.pagination?.totalPages);
+          setLastSyncedAt(data?.lastSyncedAt);
+        },
       },
-    });
+    );
   }, [callApi, activeLocation, getParams]);
 
   const syncReviews = async () => {
@@ -82,14 +80,7 @@ const Reviews = () => {
       "syncingReviews",
       () => reviewsEndpoints.syncReviews({ locationId: activeLocation }),
       {
-        onSuccess: ({ data }) => {
-          if (data?.since) {
-            setLastSyncByLocation((prev) => ({
-              ...prev,
-              [activeLocation]: data.since,
-            }));
-          }
-
+        onSuccess: () => {
           notify.msgSuccess(`Reviews synced!`);
           fetchReviews();
         },

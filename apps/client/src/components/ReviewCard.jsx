@@ -5,21 +5,13 @@ import { Pen, Star } from "lucide-react";
 import FormField from "./ui/FormField";
 import CustomButton from "./ui/CustomButton";
 import CustomTextarea from "./ui/CustomTextarea";
+import ExpandableText from "./ExpandableText";
 
 import useApi from "../hooks/useApi";
 
 import { reviewsEndpoints } from "../services/reviews.service";
 
 import { useNotify } from "../context/notification/useNotify";
-import ExpandableText from "./ExpandableText";
-
-const STAR_RATING = {
-  ONE: 1,
-  TWO: 2,
-  THREE: 3,
-  FOUR: 4,
-  FIVE: 5,
-};
 
 const ReviewCard = ({ review, onReply }) => {
   const { notify } = useNotify();
@@ -28,7 +20,6 @@ const ReviewCard = ({ review, onReply }) => {
   const { id, reviewer, comment, starRating, reviewReply } = review || {};
   const { profilePhotoUrl, displayName } = reviewer || {};
 
-  const rating = STAR_RATING[starRating] ?? 0;
   const ogReply = reviewReply?.comment ?? "";
   const hasReply = Boolean(ogReply.trim());
 
@@ -85,7 +76,7 @@ const ReviewCard = ({ review, onReply }) => {
 
           <div className="flex items-center gap-1">
             {[...Array(5)].map((_, idx) => {
-              const isFilled = idx + 1 <= rating;
+              const isFilled = idx + 1 <= starRating;
 
               return (
                 <Star

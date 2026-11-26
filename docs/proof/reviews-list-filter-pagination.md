@@ -1,6 +1,6 @@
 # Reviews List Filtering and Pagination Proof
 
-Date: 25 November 2026
+Date: 26 November 2026
 
 ## Scope
 
@@ -18,7 +18,7 @@ Date: 25 November 2026
 - `page`: positive integer, default 1
 - `perPage` or `per_page`: positive integer, default 10, capped at 100
 
-The standardized success data contains `reviews`, `pagination`, location-wide `counts`, and `sync`. Requested pages beyond the matching result remain requested and return an empty row array.
+The standardized success data contains `reviews`, `pagination`, location-wide `counts`, `lastSyncedAt`, and `sync`. `lastSyncedAt` is the location's last successful review synchronization timestamp as an ISO string, or `null`. Requested pages beyond the matching result remain requested and return an empty row array.
 
 ## Classification and aggregation
 
@@ -40,19 +40,30 @@ The migration-free design deliberately computes reply classification and four-fi
 
 The sync worker now stores `organization_id` and `client_id` on future review upserts so newly synchronized rows remain visible to the canonical scoped query. Existing reply and manual synchronization endpoints retain their provider behavior.
 
+## Manual synchronization correction
+
+Every manual sync job now carries `mode: "full"` and `since: null`, irrespective of `force`. The extracted reconciliation service deliberately ignores legacy queued-job cursors, follows every Google result page, and never uses a timestamp early stop. An unsupported Google `orderBy` is retried without ordering while still traversing the complete listing.
+
+MongoDB `bulkWrite` results now populate fetched, processed, inserted, matched, modified, unchanged, and pages-fetched counters. Queued, running, and failed transitions do not set or unset `last_synced_at`; only complete successful reconciliation advances it. Active BullMQ jobs deterministically suppress duplicate manual requests, while retained completed/failed jobs are removed before a subsequent manual sync is enqueued.
+
+Review ratings are normalized only at the response boundary: Google enums and valid numeric values become integers 1–5, invalid values become `null`, and persisted values are unchanged. The legacy frontend now consumes the numeric contract. The excluded new client remains unchanged; its current enum-only `ReviewCard` mapping does not render numeric values and requires a separately authorized compatibility update.
+
 ## Legacy UI behavior
 
 The legacy page consumes server rows, counts, pagination, and sync metadata. `status`, `keyword`, `page`, and `perPage` are URL state. Search is debounced by 350 ms. In-flight reads use both `AbortController` and a request generation check so stale location or filter results cannot replace newer state. Reply success refreshes the active query and returns to the last valid page when reclassification empties the current page. Manual sync remains queued and refreshes metadata once without polling.
 
 ## Verification evidence
 
-- `npm test -w @parametrics/api`: 358 passed, 0 failed
-- `npm test -w @parametrics/web -- --run`: 127 passed, 0 failed across 12 files
+- `npm test -w @parametrics/api`: 370 passed, 0 failed
+- `npm test -w @parametrics/web -- --run`: 128 passed, 0 failed across 12 files
 - `npm run lint -w @parametrics/web`: passed
 - `npm run build -w @parametrics/web`: passed, 293 modules transformed
-- `git diff --check`: passed (Git emitted only the existing Windows LF/CRLF advisory)
-- Focused backend Reviews tests: 14 passed
-- Focused legacy Reviews tests: 10 passed
+- `npm test -w client`: 38 passed, 0 failed across 7 files (read-only verification)
+- `npm run lint -w client`: passed with one pre-existing React Hook Form warning and no errors
+- `npm run build -w client`: passed, 4204 modules transformed (read-only verification)
+- `node --check` on the review route, reconciliation service, and BullMQ worker: passed
+- Focused backend Reviews and reconciliation tests: 26 passed
+- Focused legacy Reviews tests: 11 passed
 
 No authenticated browser automation was performed. No production deployment was performed.
 

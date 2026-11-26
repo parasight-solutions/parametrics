@@ -6,6 +6,7 @@ import {
   buildReviewReplyExpression,
   normalizeReviewListQuery,
   readReviewListFacet,
+  normalizeReviewStarRating,
 } from "./reviewList.js";
 
 function isBadRequest(fn) {
@@ -153,4 +154,25 @@ test("review list facet reader defaults absent buckets to empty values", () => {
     pagination: { page: 1, perPage: 10, total: 0, totalPages: 0 },
     counts: { total: 0, replied: 0, unreplied: 0 },
   });
+});
+
+test("review star ratings normalize provider enums and valid numeric values", () => {
+  const cases = [
+    ["ONE", 1], ["TWO", 2], ["THREE", 3], ["FOUR", 4], ["FIVE", 5],
+    [1, 1], [5, 5], ["3", 3],
+    [0, null], [6, null], ["ZERO", null], [null, null], [undefined, null],
+    [true, null], [[], null], [{}, null],
+  ];
+  for (const [input, expected] of cases) assert.equal(normalizeReviewStarRating(input), expected);
+});
+
+test("review list facet reader exposes numeric ratings without mutating source rows", () => {
+  const source = { id: "review-1", starRating: "FOUR" };
+  const result = readReviewListFacet([{
+    reviews: [source], matching: [{ value: 1 }], total: [{ value: 1 }],
+    replied: [], unreplied: [{ value: 1 }],
+  }], { page: 1, perPage: 10 });
+
+  assert.equal(result.reviews[0].starRating, 4);
+  assert.equal(source.starRating, "FOUR");
 });

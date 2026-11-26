@@ -30,9 +30,7 @@ function hasBusinessReply(review) {
 }
 
 function Stars({ value }) {
-  const names = { ONE: 1, TWO: 2, THREE: 3, FOUR: 4, FIVE: 5 };
-  const raw = typeof value === "number" ? value : names[String(value || "").toUpperCase()] || Number.parseInt(value, 10);
-  const rating = Number.isFinite(raw) ? Math.max(0, Math.min(5, Math.round(raw))) : 0;
+  const rating = Number.isInteger(value) && value >= 1 && value <= 5 ? value : 0;
   return <div className="flex items-center gap-2" aria-label={`Rating ${rating ? `${rating}/5` : "-"}`}>
     <div className="flex">{Array.from({ length: 5 }, (_, index) => <span key={index} className={index < rating ? "text-gray-900" : "text-gray-300"}>★</span>)}</div>
     <span className="text-xs text-gray-500">{rating ? `${rating}/5` : "-"}</span>

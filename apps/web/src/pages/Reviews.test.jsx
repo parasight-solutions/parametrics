@@ -90,6 +90,17 @@ describe("legacy Reviews server state", () => {
     expect(screen.getByText("Page 2 of 2")).toBeTruthy();
   });
 
+  it("consumes only numeric review ratings from the API contract", async () => {
+    api.mockResolvedValueOnce(result({ reviews: [{ ...review("numeric"), starRating: 5 }] }));
+    mount();
+    expect(await screen.findByLabelText("Rating 5/5")).toBeTruthy();
+
+    cleanup();
+    api.mockResolvedValueOnce(result({ reviews: [{ ...review("legacy"), starRating: "FIVE" }] }));
+    mount();
+    expect(await screen.findByLabelText("Rating -")).toBeTruthy();
+  });
+
   it("debounces keyword requests and resets the page", async () => {
     vi.useFakeTimers();
     mount("/reviews?page=3");
