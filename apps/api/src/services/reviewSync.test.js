@@ -9,7 +9,11 @@ const location = {
   provider_account_name: "accounts/1", provider_location_name: "locations/1",
 };
 
-function harness({ pages, failAtPage, bulkResults = [] } = {}) {
+function reviewName(reviewId, accountId = "1", locationId = "1") {
+  return `accounts/${accountId}/locations/${locationId}/reviews/${reviewId}`;
+}
+
+function harness({ pages, failAtPage, bulkResults = [], legacyRows = [], bulkError = null } = {}) {
   const stateUpdates = [];
   const bulkCalls = [];
   const updateManyCalls = [];
@@ -21,8 +25,10 @@ function harness({ pages, failAtPage, bulkResults = [] } = {}) {
     locations: { findOne: async () => location },
     review_sync_state: { updateOne: async (filter, update, options) => stateUpdates.push({ filter, update, options }) },
     reviews: {
+      find: () => ({ limit: () => ({ toArray: async () => legacyRows }) }),
       bulkWrite: async (operations) => {
         bulkCalls.push(operations);
+        if (bulkError) throw bulkError;
         return bulkResults[bulkIndex++] || { upsertedCount: operations.length, matchedCount: 0, modifiedCount: 0 };
       },
       updateMany: async (...args) => { updateManyCalls.push(args); return { matchedCount: 0, modifiedCount: 0 }; },
@@ -56,8 +62,8 @@ function harness({ pages, failAtPage, bulkResults = [] } = {}) {
 test("full review reconciliation ignores a legacy cursor and fetches every page", async () => {
   const h = harness({
     pages: [
-      { reviews: [{ name: "reviews/1", updateTime: "2020-01-01T00:00:00Z" }], nextPageToken: "next" },
-      { reviews: [{ name: "reviews/2" }, { name: "reviews/3" }] },
+      { reviews: [{ name: reviewName("1"), updateTime: "2020-01-01T00:00:00Z" }], nextPageToken: "next" },
+      { reviews: [{ name: reviewName("2") }, { name: reviewName("3") }] },
     ],
     bulkResults: [
       { upsertedCount: 1, matchedCount: 0, modifiedCount: 0 },
@@ -80,7 +86,7 @@ test("full review reconciliation ignores a legacy cursor and fetches every page"
   ]);
   assert.equal(h.bulkCalls.flat().length, 3);
   assert.deepEqual(h.bulkCalls[0][0].updateOne.filter, {
-    user_id: "owner-1", location_id: "location-1", provider_review_name: "reviews/1",
+    user_id: "owner-1", location_id: "location-1", provider: "google", provider_review_id: "1",
   });
   assert.deepEqual(
     h.bulkCalls[0][0].updateOne.update.$set.updated_at,
@@ -97,7 +103,7 @@ test("full review reconciliation ignores a legacy cursor and fetches every page"
 });
 
 test("failed reconciliation records failure without overwriting last_synced_at", async () => {
-  const h = harness({ pages: [{ reviews: [{ name: "reviews/1" }], nextPageToken: "next" }], failAtPage: 1 });
+  const h = harness({ pages: [{ reviews: [{ name: reviewName("1") }], nextPageToken: "next" }], failAtPage: 1 });
   await assert.rejects(runReviewSyncJob({ id: "job-2", data: { userId: "owner-1", locationId: "location-1" } }, h.deps), /google_down/);
   const runningSet = h.stateUpdates[0].update.$set;
   const failedSet = h.stateUpdates.at(-1).update.$set;
@@ -110,13 +116,16 @@ test("failed reconciliation records failure without overwriting last_synced_at",
 });
 
 test("MongoDB write failures remain retryable and preserve the previous successful timestamp", async () => {
-  const h = harness({ pages: [{ reviews: [{ name: "reviews/1" }] }] });
+  const h = harness({ pages: [{ reviews: [{ name: reviewName("1") }] }] });
   h.deps.getCollection = async (name) => {
     if (name === "locations") return { findOne: async () => location };
     if (name === "review_sync_state") return {
       updateOne: async (filter, update, options) => h.stateUpdates.push({ filter, update, options }),
     };
-    return { bulkWrite: async () => { throw new Error("mongo_down"); } };
+    return {
+      find: () => ({ limit: () => ({ toArray: async () => [] }) }),
+      bulkWrite: async () => { throw new Error("mongo_down"); },
+    };
   };
 
   await assert.rejects(
@@ -158,7 +167,7 @@ test("reconciliation falls back from rejected orderBy without skipping older rev
       error.body = { error: { message: "Invalid orderBy" } };
       throw error;
     }
-    return { reviews: [{ name: "reviews/old", updateTime: "2019-01-01T00:00:00Z" }] };
+    return { reviews: [{ name: reviewName("old"), updateTime: "2019-01-01T00:00:00Z" }] };
   };
   const result = await runReviewSyncJob({ id: "job-3", data: {
     userId: "owner-1", locationId: "location-1", since: "2026-01-01T00:00:00Z",
@@ -172,7 +181,7 @@ test("observed reviews become active and provider-owned edits including reply de
   const h = harness({ pages: [{
     totalReviewCount: 1,
     reviews: [{
-      name: "reviews/1", comment: "Edited", starRating: "TWO",
+      name: reviewName("1"), comment: "Edited", starRating: "TWO",
       reviewer: { displayName: "Updated reviewer" }, updateTime: "2026-11-27T08:00:00.000Z",
     }],
   }] });
@@ -200,7 +209,7 @@ test("observed reviews become active and provider-owned edits including reply de
 });
 
 test("a complete snapshot marks absent reviews missing without deleting history", async () => {
-  const h = harness({ pages: [{ totalReviewCount: 1, reviews: [{ name: "reviews/present" }] }] });
+  const h = harness({ pages: [{ totalReviewCount: 1, reviews: [{ name: reviewName("present") }] }] });
   await runReviewSyncJob({ id: "job-missing", data: {
     userId: "owner-1", locationId: "location-1", runId: "run-missing",
   } }, h.deps);
@@ -209,7 +218,10 @@ test("a complete snapshot marks absent reviews missing without deleting history"
   assert.deepEqual(absence[0], {
     user_id: "owner-1", organization_id: "org-1", client_id: "client-1",
     location_id: "location-1", provider: "google",
-    provider_review_name: { $type: "string", $nin: ["reviews/present"] },
+    $or: [
+      { provider_review_id: { $type: "string", $nin: ["present"] } },
+      { provider_review_id: { $exists: false } },
+    ],
     provider_last_missing_run_id: { $ne: "run-missing" },
   });
   assert.equal(Array.isArray(absence[1]), true);
@@ -223,7 +235,7 @@ test("a complete snapshot marks absent reviews missing without deleting history"
 });
 
 test("inconsistent provider totals skip absence reconciliation and do not advance last_synced_at", async () => {
-  const h = harness({ pages: [{ totalReviewCount: 2, reviews: [{ name: "reviews/1" }] }] });
+  const h = harness({ pages: [{ totalReviewCount: 2, reviews: [{ name: reviewName("1") }] }] });
   const result = await runReviewSyncJob({ id: "job-incomplete", data: {
     userId: "owner-1", locationId: "location-1", runId: "run-incomplete",
   } }, h.deps);
@@ -239,8 +251,8 @@ test("inconsistent provider totals skip absence reconciliation and do not advanc
 
 test("repeated page tokens are handled as incomplete and cannot mark reviews missing", async () => {
   const h = harness({ pages: [
-    { totalReviewCount: 2, reviews: [{ name: "reviews/1" }], nextPageToken: "repeat" },
-    { totalReviewCount: 2, reviews: [{ name: "reviews/2" }], nextPageToken: "repeat" },
+    { totalReviewCount: 2, reviews: [{ name: reviewName("1") }], nextPageToken: "repeat" },
+    { totalReviewCount: 2, reviews: [{ name: reviewName("2") }], nextPageToken: "repeat" },
   ] });
   const result = await runReviewSyncJob({ id: "job-repeat", data: {
     userId: "owner-1", locationId: "location-1", runId: "run-repeat",
@@ -269,7 +281,7 @@ test("absence updates are idempotent per run and require two misses separated by
 test("duplicate provider review ids make the snapshot incomplete and do not create duplicate upserts", async () => {
   const h = harness({ pages: [{
     totalReviewCount: 1,
-    reviews: [{ name: "reviews/1", comment: "first" }, { name: "reviews/1", comment: "duplicate" }],
+    reviews: [{ name: reviewName("1", "1"), comment: "first" }, { name: reviewName("1", "2"), comment: "duplicate" }],
   }] });
   const result = await runReviewSyncJob({ id: "job-duplicate", data: {
     userId: "owner-1", locationId: "location-1", runId: "run-duplicate",
@@ -281,11 +293,67 @@ test("duplicate provider review ids make the snapshot incomplete and do not crea
 });
 
 test("invalid totalReviewCount metadata makes the snapshot incomplete", async () => {
-  const h = harness({ pages: [{ totalReviewCount: "unknown", reviews: [{ name: "reviews/1" }] }] });
+  const h = harness({ pages: [{ totalReviewCount: "unknown", reviews: [{ name: reviewName("1") }] }] });
   const result = await runReviewSyncJob({ id: "job-invalid-total", data: {
     userId: "owner-1", locationId: "location-1", runId: "run-invalid-total",
   } }, h.deps);
   assert.equal(result.snapshotComplete, false);
   assert.equal(result.snapshotDiagnostic, "invalid_total_review_count");
   assert.equal(h.updateManyCalls.some((call) => call[0]?.provider_last_missing_run_id), false);
+});
+
+test("an account switch promotes one legacy record and preserves its local id", async () => {
+  const legacy = {
+    _id: "mongo-review-1",
+    id: "local-review-1",
+    provider_review_name: reviewName("same-review", "1"),
+  };
+  const h = harness({
+    pages: [{ totalReviewCount: 1, reviews: [{ name: reviewName("same-review", "2") }] }],
+    legacyRows: [legacy],
+    bulkResults: [{ upsertedCount: 0, matchedCount: 1, modifiedCount: 1 }],
+  });
+
+  await runReviewSyncJob({ id: "job-account-switch", data: {
+    userId: "owner-1", locationId: "location-1", runId: "run-account-switch",
+  } }, h.deps);
+
+  const promotion = h.updateOneCalls.find(([filter]) => filter?._id === "mongo-review-1");
+  assert.ok(promotion);
+  assert.equal(promotion[1].$set.provider_review_id, "same-review");
+  assert.equal(h.bulkCalls[0][0].updateOne.update.$set.provider_review_name, reviewName("same-review", "2"));
+  assert.equal(h.bulkCalls[0][0].updateOne.update.$set.provider_sync_status, "active");
+  assert.equal(h.bulkCalls[0][0].updateOne.update.$setOnInsert.id.startsWith("uuid-"), true);
+});
+
+test("malformed and location-mismatched review names make the snapshot incomplete without writes", async () => {
+  const h = harness({ pages: [{ totalReviewCount: 2, reviews: [
+    { name: "locations/1/reviews/bad" },
+    { name: reviewName("wrong-location", "1", "9") },
+  ] }] });
+  const result = await runReviewSyncJob({ id: "job-invalid-name", data: {
+    userId: "owner-1", locationId: "location-1", runId: "run-invalid-name",
+  } }, h.deps);
+
+  assert.equal(result.snapshotComplete, false);
+  assert.equal(result.snapshotDiagnostic, "invalid_provider_review_name");
+  assert.equal(h.bulkCalls.length, 0);
+});
+
+test("a concurrent canonical insert is recovered as an update instead of failing the sync", async () => {
+  const duplicateKey = new Error("duplicate key");
+  duplicateKey.code = 11000;
+  const h = harness({
+    pages: [{ totalReviewCount: 1, reviews: [{ name: reviewName("concurrent") }] }],
+    bulkError: duplicateKey,
+  });
+
+  const result = await runReviewSyncJob({ id: "job-concurrent", data: {
+    userId: "owner-1", locationId: "location-1", runId: "run-concurrent",
+  } }, h.deps);
+
+  assert.equal(result.ok, true);
+  const retry = h.updateOneCalls.find(([filter]) => filter?.provider_review_id === "concurrent");
+  assert.ok(retry);
+  assert.equal(retry[2].upsert, false);
 });

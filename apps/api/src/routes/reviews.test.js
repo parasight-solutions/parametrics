@@ -202,23 +202,25 @@ test("reviews endpoint preserves the previous successful timestamp while sync st
 
 test("successful provider reply persists a reply that classifies as replied", async () => {
   const updates = [];
+  const providerCalls = [];
   const res = response();
   await replyToReview({
     user: { user_id: "user-1" }, params: { id: "review-1" }, body: { comment: " Thank you " },
   }, res, {
     getCollection: async () => ({
-      findOne: async () => ({ id: "review-1", user_id: "user-1", organization_id: "org-1", client_id: "client-1", location_id: "location-1", provider: "google", provider_review_name: "locations/1/reviews/1" }),
+      findOne: async () => ({ id: "review-1", user_id: "user-1", organization_id: "org-1", client_id: "client-1", location_id: "location-1", provider: "google", provider_review_id: "1", provider_review_name: "accounts/2/locations/1/reviews/1" }),
       updateOne: async (filter, update) => updates.push({ filter, update }),
     }),
-    requireAccess: async () => ({ location: { id: "location-1", user_id: "user-1", organization_id: "org-1", client_id: "client-1", integration_id: "integration-1" }, membership: { role: "manager" } }),
+    requireAccess: async () => ({ location: { id: "location-1", user_id: "user-1", organization_id: "org-1", client_id: "client-1", integration_id: "integration-1", provider_account_name: "accounts/2", provider_location_name: "locations/1" }, membership: { role: "manager" } }),
     getIntegration: async () => ({ id: "integration-1" }),
     ensureToken: async () => ({ access_token: "token" }),
-    updateProviderReply: async () => {},
+    updateProviderReply: async (...args) => { providerCalls.push(args); },
     auditSuccess: async () => {},
     auditFailure: async () => {},
   });
 
   assert.equal(res.statusCode, 200);
+  assert.deepEqual(providerCalls[0], ["accounts/2/locations/1/reviews/1", "Thank you", "token"]);
   assert.equal(updates[0].update.$set.reviewReply.comment, "Thank you");
   assert.ok(updates[0].update.$set.local_reply_updated_at instanceof Date);
 });

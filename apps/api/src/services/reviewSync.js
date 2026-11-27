@@ -4,6 +4,7 @@ import { col } from "../lib/mongo.js";
 import { listReviews } from "../integrations/google.js";
 import { ensureAccessToken, getGoogleIntegrationById } from "../integrations/google.store.js";
 import { buildReviewSyncDocument } from "./reviewSyncDocument.js";
+import { canonicalReviewFilter, validateGoogleReviewIdentity } from "./googleReviewIdentity.js";
 
 const BATCH_SIZE = 200;
 const PAGE_SIZE = 50;
@@ -60,6 +61,35 @@ function buildAbsencePipeline({ observedAt, runId }) {
       provider_last_missing_run_id: runId,
     },
   }];
+}
+
+async function promoteSingleLegacyReview({ reviews, location, userId, locationId, identity }) {
+  const legacyRows = await reviews.find({
+    user_id: userId,
+    organization_id: location.organization_id,
+    client_id: location.client_id,
+    location_id: locationId,
+    provider: "google",
+    provider_review_id: { $exists: false },
+    provider_review_name: {
+      $regex: `/locations/${identity.locationId}/reviews/${identity.reviewId}$`,
+    },
+  }).limit(2).toArray();
+  if (legacyRows.length > 1) return false;
+  if (legacyRows.length === 1) {
+    try {
+      await reviews.updateOne(
+        { _id: legacyRows[0]._id, provider_review_id: { $exists: false } },
+        { $set: {
+          provider_review_id: identity.reviewId,
+          provider_google_location_id: identity.locationId,
+        } },
+      );
+    } catch (error) {
+      if (error?.code !== 11000) throw error;
+    }
+  }
+  return true;
 }
 
 async function updateSyncState(collection, filter, patch, timestamp, randomUUID) {
@@ -119,7 +149,7 @@ export async function runReviewSyncJob(job, {
     const reviews = await getCollection("reviews");
     const operations = [];
     const replyOperations = [];
-    const observedReviewNames = new Set();
+    const observedReviewIds = new Set();
     const seenPageTokens = new Set();
     const reportedTotals = new Set();
     let snapshotDiagnostic = null;
@@ -127,7 +157,22 @@ export async function runReviewSyncJob(job, {
     const flush = async () => {
       if (!operations.length) return;
       const batch = operations.splice(0, operations.length);
-      const result = await reviews.bulkWrite(batch, { ordered: false });
+      let result;
+      try {
+        result = await reviews.bulkWrite(batch, { ordered: false });
+      } catch (error) {
+        if (error?.code !== 11000) throw error;
+        const retryResults = [];
+        for (const operation of batch) {
+          const { filter, update } = operation.updateOne;
+          retryResults.push(await reviews.updateOne(filter, update, { upsert: false }));
+        }
+        result = {
+          upsertedCount: 0,
+          matchedCount: retryResults.reduce((sum, item) => sum + Number(item?.matchedCount || 0), 0),
+          modifiedCount: retryResults.reduce((sum, item) => sum + Number(item?.modifiedCount || 0), 0),
+        };
+      }
       const inserted = Number(result?.upsertedCount || 0);
       const matched = Number(result?.matchedCount || 0);
       const modified = Number(result?.modifiedCount || 0);
@@ -169,15 +214,28 @@ export async function runReviewSyncJob(job, {
       if (reportedTotal !== null && reportedTotal !== undefined) reportedTotals.add(reportedTotal);
       counters.fetched += pageReviews.length;
       for (const review of pageReviews) {
-        if (!review?.name) {
-          snapshotDiagnostic ||= "missing_provider_review_id";
+        let identity;
+        try {
+          identity = validateGoogleReviewIdentity({
+            reviewName: review?.name,
+            providerLocationName: location.provider_location_name,
+          });
+        } catch (error) {
+          snapshotDiagnostic ||= error?.message || "invalid_provider_review_name";
           continue;
         }
-        if (observedReviewNames.has(review.name)) {
+        if (observedReviewIds.has(identity.reviewId)) {
           snapshotDiagnostic ||= "duplicate_provider_review_id";
           continue;
         }
-        observedReviewNames.add(review.name);
+        observedReviewIds.add(identity.reviewId);
+        const legacyReady = await promoteSingleLegacyReview({
+          reviews, location, userId, locationId, identity,
+        });
+        if (!legacyReady) {
+          snapshotDiagnostic ||= "ambiguous_legacy_review_identity";
+          continue;
+        }
         counters.processed += 1;
         const document = buildReviewSyncDocument({
           userId,
@@ -199,9 +257,7 @@ export async function runReviewSyncJob(job, {
         operations.push({
           updateOne: {
             filter: {
-              user_id: userId,
-              location_id: locationId,
-              provider_review_name: review.name,
+              ...canonicalReviewFilter({ userId, locationId, reviewId: identity.reviewId }),
             },
             update: {
               $set: document,
@@ -221,7 +277,7 @@ export async function runReviewSyncJob(job, {
             client_id: location.client_id,
             location_id: locationId,
             provider: "google",
-            provider_review_name: review.name,
+            provider_review_id: identity.reviewId,
             $or: [
               { local_reply_updated_at: { $exists: false } },
               { local_reply_updated_at: { $lte: startedAt } },
@@ -244,12 +300,12 @@ export async function runReviewSyncJob(job, {
 
     if (reportedTotals.size > 1) snapshotDiagnostic ||= "inconsistent_total_review_count";
     const [reportedTotal] = reportedTotals;
-    if (reportedTotal !== undefined && reportedTotal !== observedReviewNames.size) {
+    if (reportedTotal !== undefined && reportedTotal !== observedReviewIds.size) {
       snapshotDiagnostic ||= "total_review_count_mismatch";
     }
     const snapshotComplete = !snapshotDiagnostic;
 
-    if (observedReviewNames.size) {
+    if (observedReviewIds.size) {
       await reviews.updateMany(
         {
           user_id: userId,
@@ -257,7 +313,7 @@ export async function runReviewSyncJob(job, {
           client_id: location.client_id,
           location_id: locationId,
           provider: "google",
-          provider_review_name: { $in: [...observedReviewNames] },
+          provider_review_id: { $in: [...observedReviewIds] },
           provider_first_seen_at: { $exists: false },
         },
         { $set: { provider_first_seen_at: startedAt } },
@@ -276,7 +332,10 @@ export async function runReviewSyncJob(job, {
           client_id: location.client_id,
           location_id: locationId,
           provider: "google",
-          provider_review_name: { $type: "string", $nin: [...observedReviewNames] },
+          $or: [
+            { provider_review_id: { $type: "string", $nin: [...observedReviewIds] } },
+            { provider_review_id: { $exists: false } },
+          ],
           provider_last_missing_run_id: { $ne: runId },
         },
         buildAbsencePipeline({ observedAt: startedAt, runId }),

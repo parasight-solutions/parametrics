@@ -99,6 +99,21 @@ export async function ensureReviewIndexes(reviews) {
 
   await ensureIndex(
     reviews,
+    { user_id: 1, location_id: 1, provider: 1, provider_review_id: 1 },
+    {
+      unique: true,
+      name: "uniq_reviews_canonical_provider_identity",
+      partialFilterExpression: {
+        user_id: { $type: "string" },
+        location_id: { $type: "string" },
+        provider: "google",
+        provider_review_id: { $type: "string" },
+      },
+    },
+  );
+
+  await ensureIndex(
+    reviews,
     { user_id: 1, location_id: 1, provider_review_name: 1 },
     {
       unique: true,
@@ -121,6 +136,16 @@ export async function ensureReviewIndexes(reviews) {
       name: "idx_reviews_org_client_location_updateTime",
     }
   );
+}
+
+export async function ensureReviewDuplicateArchiveIndexes(collection) {
+  await ensureIndex(collection, { source_review_id: 1 }, {
+    unique: true,
+    name: "uniq_review_duplicate_archive_source_review_id",
+  });
+  await ensureIndex(collection, { user_id: 1, location_id: 1, archived_at: -1 }, {
+    name: "idx_review_duplicate_archive_scope",
+  });
 }
 
 export async function ensureIndexes() {
@@ -348,6 +373,9 @@ export async function ensureIndexes() {
   // ---------------------------------------------------------------------------
   const reviews = await col("reviews");
   await ensureReviewIndexes(reviews);
+
+  const reviewDuplicateArchive = await col("review_duplicate_archive");
+  await ensureReviewDuplicateArchiveIndexes(reviewDuplicateArchive);
 
   // ---------------------------------------------------------------------------
   // review_sync_state

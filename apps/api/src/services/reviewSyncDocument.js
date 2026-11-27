@@ -1,3 +1,5 @@
+import { validateGoogleReviewIdentity } from "./googleReviewIdentity.js";
+
 export function buildReviewSyncDocument({
   userId,
   locationId,
@@ -5,6 +7,10 @@ export function buildReviewSyncDocument({
   review,
   updatedAt = new Date(),
 }) {
+  const identity = validateGoogleReviewIdentity({
+    reviewName: review.name,
+    providerLocationName: location.provider_location_name,
+  });
   return {
     user_id: userId,
     organization_id: location.organization_id,
@@ -15,6 +21,8 @@ export function buildReviewSyncDocument({
     provider_account_name: location.provider_account_name || null,
     provider_location_name: location.provider_location_name || null,
     provider_review_name: review.name,
+    provider_review_id: identity.reviewId,
+    provider_google_location_id: identity.locationId,
     starRating: review.starRating || null,
     comment: review.comment || null,
     reviewer: review.reviewer || null,
