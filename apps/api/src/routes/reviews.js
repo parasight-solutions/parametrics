@@ -30,6 +30,63 @@ const LOCATION_OPERATION_ROLES = Object.freeze(["owner", "admin", "manager"]);
 const reviewError = (res, statusCode, code, message = code) =>
   sendError(res, { statusCode, message, errors: [{ code, message }] });
 
+function providerErrorDetails(error) {
+  const providerError = error?.body?.error;
+  const detail = Array.isArray(providerError?.details) ? providerError.details[0] : null;
+  return {
+    providerStatus: Number(error?.status) || null,
+    providerErrorCode: providerError?.code ?? null,
+    providerReason: String(
+      providerError?.status || detail?.reason || detail?.errorCode || "",
+    ).trim() || null,
+  };
+}
+
+export function classifyGoogleReviewReplyError(error) {
+  if (error?.code === "reauth_required") return null;
+  const diagnostics = providerErrorDetails(error);
+  const status = diagnostics.providerStatus;
+  const reason = String(diagnostics.providerReason || "").toUpperCase();
+
+  if (status === 404 && reason === "NOT_FOUND" && Number(diagnostics.providerErrorCode) === 404) {
+    return {
+      statusCode: 404,
+      code: "google_review_unavailable",
+      message: "This review is currently unavailable on Google. Please try again later.",
+      errorMessage: "Google could not find this review.",
+      diagnostics,
+    };
+  }
+  if (status === 429) {
+    return {
+      statusCode: 429,
+      code: "google_rate_limited",
+      message: "Google is temporarily rate limiting review replies. Please try again later.",
+      errorMessage: "Google temporarily rate limited this request.",
+      diagnostics,
+    };
+  }
+  if (status === 403) {
+    return {
+      statusCode: 403,
+      code: "google_permission_denied",
+      message: "Google denied permission to update this review reply.",
+      errorMessage: "Permission to update this Google review was denied.",
+      diagnostics,
+    };
+  }
+  if (status >= 500 || error?.code === "ETIMEDOUT" || error?.name === "AbortError") {
+    return {
+      statusCode: 503,
+      code: "google_provider_unavailable",
+      message: "Google review replies are temporarily unavailable. Please try again later.",
+      errorMessage: "Google is temporarily unavailable.",
+      diagnostics,
+    };
+  }
+  return null;
+}
+
 async function getSyncStateForLocation(loc, getCollection = col) {
   const c = await getCollection("review_sync_state");
   return c.findOne(
@@ -276,6 +333,7 @@ export async function replyToReview(req, res, {
   updateProviderReply = updateReviewReply,
   auditSuccess: writeSuccessAudit = auditSuccess,
   auditFailure: writeFailureAudit = auditFailure,
+  logger = console,
 } = {}) {
   let auditTarget = {};
   try {
@@ -332,6 +390,7 @@ export async function replyToReview(req, res, {
 
     await updateProviderReply(review.provider_review_name, comment, access_token);
 
+    const repliedAt = new Date();
     await c.updateOne(
       {
         id,
@@ -342,8 +401,9 @@ export async function replyToReview(req, res, {
       },
       {
         $set: {
-          reviewReply: { comment, updateTime: new Date().toISOString() },
-          updated_at: new Date(),
+          reviewReply: { comment, updateTime: repliedAt.toISOString() },
+          local_reply_updated_at: repliedAt,
+          updated_at: repliedAt,
         },
       }
     );
@@ -362,6 +422,25 @@ export async function replyToReview(req, res, {
       ...auditTarget,
       metadata: { ...(auditTarget.metadata || {}), reason: e?.message || e?.code || "server_error" },
     });
+    const mapped = classifyGoogleReviewReplyError(e);
+    if (auditTarget.target_id) {
+      const diagnostics = mapped?.diagnostics || providerErrorDetails(e);
+      logger.warn?.({
+        reviewId: auditTarget.target_id,
+        locationId: auditTarget.location_id,
+        providerStatus: diagnostics.providerStatus,
+        providerErrorCode: diagnostics.providerErrorCode,
+        providerReason: diagnostics.providerReason,
+        correlationId: req.headers?.["x-request-id"] || req.headers?.["x-correlation-id"] || null,
+      });
+    }
+    if (mapped) {
+      return sendError(res, {
+        statusCode: mapped.statusCode,
+        message: mapped.message,
+        errors: [{ code: mapped.code, message: mapped.errorMessage }],
+      });
+    }
     return toApiError(res, e);
   }
 }

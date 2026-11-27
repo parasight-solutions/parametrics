@@ -176,3 +176,42 @@ test("review list facet reader exposes numeric ratings without mutating source r
   assert.equal(result.reviews[0].starRating, 4);
   assert.equal(source.starRating, "FOUR");
 });
+
+test("review list facet reader exposes availability metadata with ISO dates and legacy defaults", () => {
+  const query = normalizeReviewListQuery({});
+  const result = readReviewListFacet([{
+    reviews: [
+      {
+        id: "review-active",
+        provider_sync_status: "missing",
+        provider_first_seen_at: new Date("2026-11-25T08:00:00.000Z"),
+        provider_last_seen_at: "2026-11-26T08:00:00.000Z",
+        provider_missing_since: new Date("2026-11-27T08:00:00.000Z"),
+        provider_last_checked_at: new Date("2026-11-27T08:00:00.000Z"),
+        provider_consecutive_misses: 1,
+      },
+      { id: "review-legacy" },
+    ],
+  }], query);
+
+  assert.deepEqual(result.reviews[0], {
+    id: "review-active",
+    starRating: null,
+    provider_sync_status: "missing",
+    provider_first_seen_at: "2026-11-25T08:00:00.000Z",
+    provider_last_seen_at: "2026-11-26T08:00:00.000Z",
+    provider_missing_since: "2026-11-27T08:00:00.000Z",
+    provider_last_checked_at: "2026-11-27T08:00:00.000Z",
+    provider_consecutive_misses: 1,
+  });
+  assert.deepEqual(result.reviews[1], {
+    id: "review-legacy",
+    starRating: null,
+    provider_sync_status: "active",
+    provider_first_seen_at: null,
+    provider_last_seen_at: null,
+    provider_missing_since: null,
+    provider_last_checked_at: null,
+    provider_consecutive_misses: 0,
+  });
+});

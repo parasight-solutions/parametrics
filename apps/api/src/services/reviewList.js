@@ -2,6 +2,13 @@ export const REVIEW_LIST_DEFAULT_PER_PAGE = 10;
 export const REVIEW_LIST_MAX_PER_PAGE = 100;
 
 const REVIEW_STATUSES = new Set(["all", "replied", "unreplied"]);
+const PROVIDER_SYNC_STATUSES = new Set(["active", "missing", "unavailable"]);
+const AVAILABILITY_DATE_FIELDS = [
+  "provider_first_seen_at",
+  "provider_last_seen_at",
+  "provider_missing_since",
+  "provider_last_checked_at",
+];
 const REVIEW_STAR_RATINGS = Object.freeze({
   ONE: 1,
   TWO: 2,
@@ -158,13 +165,36 @@ function countOf(bucket) {
   return Number.isSafeInteger(value) && value >= 0 ? value : 0;
 }
 
+function availabilityDate(value) {
+  if (!value) return null;
+  const date = value instanceof Date ? value : new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date.toISOString();
+}
+
+function normalizeReviewAvailability(review) {
+  const normalized = {
+    ...review,
+    provider_sync_status: PROVIDER_SYNC_STATUSES.has(review?.provider_sync_status)
+      ? review.provider_sync_status
+      : "active",
+    provider_consecutive_misses: Number.isSafeInteger(review?.provider_consecutive_misses)
+      && review.provider_consecutive_misses >= 0
+      ? review.provider_consecutive_misses
+      : 0,
+  };
+  for (const field of AVAILABILITY_DATE_FIELDS) {
+    normalized[field] = availabilityDate(review?.[field]);
+  }
+  return normalized;
+}
+
 export function readReviewListFacet(result, query) {
   const facet = result?.[0] || {};
   const total = countOf(facet.matching);
   return {
     reviews: Array.isArray(facet.reviews)
       ? facet.reviews.map((review) => ({
-        ...review,
+        ...normalizeReviewAvailability(review),
         starRating: normalizeReviewStarRating(review?.starRating),
       }))
       : [],

@@ -7,6 +7,7 @@ import { buildReviewSyncDocument } from "./reviewSyncDocument.js";
 
 const BATCH_SIZE = 200;
 const PAGE_SIZE = 50;
+const MISSING_ESCALATION_MS = 30 * 60 * 1000;
 
 function safeError(error) {
   return {
@@ -27,6 +28,38 @@ function providerTimestamp(review) {
   if (!raw) return null;
   const timestamp = new Date(raw);
   return Number.isNaN(timestamp.getTime()) ? null : timestamp;
+}
+
+function providerTotalReviewCount(data) {
+  if (data?.totalReviewCount === undefined || data?.totalReviewCount === null) return undefined;
+  const total = Number(data.totalReviewCount);
+  return Number.isSafeInteger(total) && total >= 0 ? total : null;
+}
+
+function buildAbsencePipeline({ observedAt, runId }) {
+  const cutoff = new Date(observedAt.getTime() - MISSING_ESCALATION_MS);
+  const previousMisses = { $ifNull: ["$provider_consecutive_misses", 0] };
+  const missingSince = { $ifNull: ["$provider_missing_since", observedAt] };
+  return [{
+    $set: {
+      provider_sync_status: {
+        $cond: [
+          {
+            $and: [
+              { $gte: [previousMisses, 1] },
+              { $lte: [missingSince, cutoff] },
+            ],
+          },
+          "unavailable",
+          "missing",
+        ],
+      },
+      provider_missing_since: missingSince,
+      provider_consecutive_misses: { $add: [previousMisses, 1] },
+      provider_last_checked_at: observedAt,
+      provider_last_missing_run_id: runId,
+    },
+  }];
 }
 
 async function updateSyncState(collection, filter, patch, timestamp, randomUUID) {
@@ -85,6 +118,11 @@ export async function runReviewSyncJob(job, {
     const { access_token: accessToken } = await ensureToken(integration);
     const reviews = await getCollection("reviews");
     const operations = [];
+    const replyOperations = [];
+    const observedReviewNames = new Set();
+    const seenPageTokens = new Set();
+    const reportedTotals = new Set();
+    let snapshotDiagnostic = null;
 
     const flush = async () => {
       if (!operations.length) return;
@@ -126,10 +164,38 @@ export async function runReviewSyncJob(job, {
 
       counters.pagesFetched += 1;
       const pageReviews = Array.isArray(data?.reviews) ? data.reviews : [];
+      const reportedTotal = providerTotalReviewCount(data);
+      if (reportedTotal === null) snapshotDiagnostic ||= "invalid_total_review_count";
+      if (reportedTotal !== null && reportedTotal !== undefined) reportedTotals.add(reportedTotal);
       counters.fetched += pageReviews.length;
       for (const review of pageReviews) {
-        if (!review?.name) continue;
+        if (!review?.name) {
+          snapshotDiagnostic ||= "missing_provider_review_id";
+          continue;
+        }
+        if (observedReviewNames.has(review.name)) {
+          snapshotDiagnostic ||= "duplicate_provider_review_id";
+          continue;
+        }
+        observedReviewNames.add(review.name);
         counters.processed += 1;
+        const document = buildReviewSyncDocument({
+          userId,
+          locationId,
+          location,
+          review,
+          updatedAt: providerTimestamp(review),
+        });
+        const providerReply = document.reviewReply;
+        delete document.reviewReply;
+        Object.assign(document, {
+          provider_sync_status: "active",
+          provider_last_seen_at: startedAt,
+          provider_missing_since: null,
+          provider_consecutive_misses: 0,
+          provider_last_checked_at: startedAt,
+          provider_last_observed_run_id: runId,
+        });
         operations.push({
           updateOne: {
             filter: {
@@ -138,30 +204,94 @@ export async function runReviewSyncJob(job, {
               provider_review_name: review.name,
             },
             update: {
-              $set: buildReviewSyncDocument({
-                userId,
-                locationId,
-                location,
-                review,
-                updatedAt: providerTimestamp(review),
-              }),
-              $setOnInsert: { id: randomUUID(), created_at: startedAt },
+              $set: document,
+              $setOnInsert: {
+                id: randomUUID(),
+                created_at: startedAt,
+                provider_first_seen_at: startedAt,
+              },
             },
             upsert: true,
           },
         });
+        replyOperations.push({
+          filter: {
+            user_id: userId,
+            organization_id: location.organization_id,
+            client_id: location.client_id,
+            location_id: locationId,
+            provider: "google",
+            provider_review_name: review.name,
+            $or: [
+              { local_reply_updated_at: { $exists: false } },
+              { local_reply_updated_at: { $lte: startedAt } },
+            ],
+          },
+          update: { $set: { reviewReply: providerReply } },
+        });
         if (operations.length >= BATCH_SIZE) await flush();
       }
       await flush();
-      pageToken = data?.nextPageToken || null;
+      const nextPageToken = data?.nextPageToken || null;
+      if (nextPageToken && seenPageTokens.has(nextPageToken)) {
+        snapshotDiagnostic ||= "repeated_page_token";
+        break;
+      }
+      if (nextPageToken) seenPageTokens.add(nextPageToken);
+      pageToken = nextPageToken;
       if (!pageToken) break;
     }
 
+    if (reportedTotals.size > 1) snapshotDiagnostic ||= "inconsistent_total_review_count";
+    const [reportedTotal] = reportedTotals;
+    if (reportedTotal !== undefined && reportedTotal !== observedReviewNames.size) {
+      snapshotDiagnostic ||= "total_review_count_mismatch";
+    }
+    const snapshotComplete = !snapshotDiagnostic;
+
+    if (observedReviewNames.size) {
+      await reviews.updateMany(
+        {
+          user_id: userId,
+          organization_id: location.organization_id,
+          client_id: location.client_id,
+          location_id: locationId,
+          provider: "google",
+          provider_review_name: { $in: [...observedReviewNames] },
+          provider_first_seen_at: { $exists: false },
+        },
+        { $set: { provider_first_seen_at: startedAt } },
+      );
+    }
+    for (const operation of replyOperations) {
+      await reviews.updateOne(operation.filter, operation.update);
+    }
+
+    let absenceResult = { matchedCount: 0, modifiedCount: 0 };
+    if (snapshotComplete) {
+      absenceResult = await reviews.updateMany(
+        {
+          user_id: userId,
+          organization_id: location.organization_id,
+          client_id: location.client_id,
+          location_id: locationId,
+          provider: "google",
+          provider_review_name: { $type: "string", $nin: [...observedReviewNames] },
+          provider_last_missing_run_id: { $ne: runId },
+        },
+        buildAbsencePipeline({ observedAt: startedAt, runId }),
+      );
+    }
+
     const finishedAt = now();
-    await updateSyncState(syncState, stateFilter, {
-      status: "ok",
+    const completedState = {
+      status: snapshotComplete ? "ok" : "incomplete",
       finished_at: finishedAt,
-      last_error: null,
+      last_error: snapshotComplete ? null : {
+        code: "incomplete_review_snapshot",
+        message: "Google review snapshot was incomplete",
+        reason: snapshotDiagnostic,
+      },
       last_fetched: counters.fetched,
       last_processed: counters.processed,
       last_inserted: counters.inserted,
@@ -170,10 +300,27 @@ export async function runReviewSyncJob(job, {
       last_modified: counters.modified,
       last_unchanged: counters.unchanged,
       last_pages_fetched: counters.pagesFetched,
-      last_synced_at: finishedAt,
-      last_success_started_at: startedAt,
-    }, finishedAt, randomUUID);
-    const result = { ok: true, ...counters };
+      last_snapshot_complete: snapshotComplete,
+      last_snapshot_diagnostic: snapshotDiagnostic,
+      last_snapshot_observation_run_id: runId,
+      last_absence_reconciled: snapshotComplete,
+      last_absence_matched: Number(absenceResult?.matchedCount || 0),
+      last_absence_modified: Number(absenceResult?.modifiedCount || 0),
+    };
+    if (snapshotComplete) {
+      completedState.last_synced_at = finishedAt;
+      completedState.last_success_started_at = startedAt;
+      completedState.last_absence_run_id = runId;
+    }
+    await updateSyncState(syncState, stateFilter, completedState, finishedAt, randomUUID);
+    const result = {
+      ok: true,
+      ...counters,
+      snapshotComplete,
+      snapshotDiagnostic,
+      absenceMatched: Number(absenceResult?.matchedCount || 0),
+      absenceModified: Number(absenceResult?.modifiedCount || 0),
+    };
     logger.info?.({ userId, locationId, jobId: job.id, ...counters }, "Review sync done");
     return result;
   } catch (error) {

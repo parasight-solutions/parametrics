@@ -84,7 +84,17 @@ test("reviews endpoint authorizes before running a tenant-scoped facet", async (
     success: true,
     message: "Reviews fetched successfully",
     data: {
-      reviews: [{ id: "review-1", comment: "Great", starRating: 5 }],
+      reviews: [{
+        id: "review-1",
+        comment: "Great",
+        starRating: 5,
+        provider_sync_status: "active",
+        provider_first_seen_at: null,
+        provider_last_seen_at: null,
+        provider_missing_since: null,
+        provider_last_checked_at: null,
+        provider_consecutive_misses: 0,
+      }],
       pagination: { page: 2, perPage: 10, total: 25, totalPages: 3 },
       counts: { total: 3, replied: 1, unreplied: 2 },
       lastSyncedAt: "2026-11-26T10:34:43.073Z",
@@ -210,6 +220,7 @@ test("successful provider reply persists a reply that classifies as replied", as
 
   assert.equal(res.statusCode, 200);
   assert.equal(updates[0].update.$set.reviewReply.comment, "Thank you");
+  assert.ok(updates[0].update.$set.local_reply_updated_at instanceof Date);
 });
 
 test("failed provider reply leaves the local review classification unchanged", async () => {
@@ -228,9 +239,99 @@ test("failed provider reply leaves the local review classification unchanged", a
     updateProviderReply: async () => { const error = new Error("provider failed"); error.status = 503; error.code = "provider_unavailable"; throw error; },
     auditSuccess: async () => {},
     auditFailure: async () => {},
+    logger: { warn() {} },
   });
 
   assert.equal(res.statusCode, 503);
+  assert.equal(updates, 0);
+});
+
+function googleReplyError(status, providerStatus, message = "provider failure") {
+  const error = new Error("google_http_error");
+  error.status = status;
+  error.body = {
+    error: {
+      code: status,
+      status: providerStatus,
+      message,
+      details: [{ reason: "provider_reason", access_token: "secret-token" }],
+    },
+    access_token: "secret-token",
+  };
+  return error;
+}
+
+async function failedReplyResponse(error, { logger = { warn() {} } } = {}) {
+  let updates = 0;
+  const res = response();
+  await replyToReview({
+    user: { user_id: "user-1" },
+    params: { id: "review-1" },
+    body: { comment: "Thank you" },
+    headers: { "x-request-id": "correlation-1" },
+  }, res, {
+    getCollection: async () => ({
+      findOne: async () => ({
+        id: "review-1", user_id: "user-1", organization_id: "org-1", client_id: "client-1",
+        location_id: "location-1", provider: "google", provider_review_name: "accounts/1/locations/1/reviews/1",
+      }),
+      updateOne: async () => { updates += 1; },
+    }),
+    requireAccess: async () => ({ location: {
+      id: "location-1", user_id: "user-1", organization_id: "org-1", client_id: "client-1", integration_id: "integration-1",
+    }, membership: { role: "manager" } }),
+    getIntegration: async () => ({ id: "integration-1" }),
+    ensureToken: async () => ({ access_token: "token" }),
+    updateProviderReply: async () => { throw error; },
+    auditSuccess: async () => {}, auditFailure: async () => {}, logger,
+  });
+  return { res, updates };
+}
+
+test("Google review-specific NOT_FOUND maps to a safe unavailable error without changing MongoDB", async () => {
+  const logged = [];
+  const { res, updates } = await failedReplyResponse(
+    googleReplyError(404, "NOT_FOUND", "Requested review resource was not found"),
+    { logger: { warn: (entry) => logged.push(entry) } },
+  );
+
+  assert.equal(res.statusCode, 404);
+  assert.deepEqual(res.body, {
+    statusCode: 404,
+    success: false,
+    message: "This review is currently unavailable on Google. Please try again later.",
+    errors: [{ code: "google_review_unavailable", message: "Google could not find this review." }],
+  });
+  assert.equal(updates, 0);
+  assert.deepEqual(logged[0], {
+    reviewId: "review-1", locationId: "location-1", providerStatus: 404,
+    providerErrorCode: 404, providerReason: "NOT_FOUND", correlationId: "correlation-1",
+  });
+  assert.equal(JSON.stringify(res.body).includes("secret-token"), false);
+  assert.equal(JSON.stringify(logged).includes("secret-token"), false);
+});
+
+for (const [status, providerStatus, expectedCode, expectedStatus] of [
+  [429, "RESOURCE_EXHAUSTED", "google_rate_limited", 429],
+  [403, "PERMISSION_DENIED", "google_permission_denied", 403],
+  [503, "UNAVAILABLE", "google_provider_unavailable", 503],
+]) {
+  test(`Google ${status} reply failure maps to ${expectedCode}`, async () => {
+    const { res, updates } = await failedReplyResponse(googleReplyError(status, providerStatus));
+    assert.equal(res.statusCode, expectedStatus);
+    assert.equal(res.body.errors[0].code, expectedCode);
+    assert.equal(updates, 0);
+    assert.equal(Object.hasOwn(res.body, "body"), false);
+  });
+}
+
+test("network timeout maps to provider unavailable without exposing internals", async () => {
+  const error = new Error("socket timeout with token secret-token");
+  error.code = "ETIMEDOUT";
+  const { res, updates } = await failedReplyResponse(error);
+  assert.equal(res.statusCode, 503);
+  assert.equal(res.body.errors[0].code, "google_provider_unavailable");
+  assert.equal(JSON.stringify(res.body).includes("secret-token"), false);
   assert.equal(updates, 0);
 });
 

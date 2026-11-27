@@ -1,6 +1,6 @@
 # Reviews List Filtering and Pagination Proof
 
-Date: 26 November 2026
+Date: 27 November 2026
 
 ## Scope
 
@@ -48,13 +48,21 @@ MongoDB `bulkWrite` results now populate fetched, processed, inserted, matched, 
 
 Review ratings are normalized only at the response boundary: Google enums and valid numeric values become integers 1–5, invalid values become `null`, and persisted values are unchanged. The legacy frontend now consumes the numeric contract. The excluded new client remains unchanged; its current enum-only `ReviewCard` mapping does not render numeric values and requires a separately authorized compatibility update.
 
+## Provider errors and availability reconciliation
+
+Google review-reply failures are classified at the Reviews route boundary without weakening the centralized sanitizer. Review-specific Google `404 NOT_FOUND`, rate limiting, permission denial, provider 5xx, and network timeouts return safe application errors. Failed provider calls do not update the stored reply. Logs contain only review/location identifiers, provider status/code/reason, and an available correlation ID.
+
+Each complete manual snapshot now records active review observations, initializes first-seen metadata lazily, reconciles provider-owned comments, ratings, reviewer fields, and replies, and clears a reply when Google omits it. A local reply timestamp prevents a snapshot that started earlier from overwriting a newer successful local reply.
+
+Only a complete snapshot may mark absent reviews `missing`. Duplicate provider IDs, missing provider IDs, invalid or inconsistent `totalReviewCount`, repeated page tokens, page failures, and MongoDB failures cannot apply absence reconciliation. Missing records retain their content, reply history, rating, and local ID. The per-review run marker prevents a retried run from incrementing misses twice; a review can become operationally `unavailable` only after another successful miss at least 30 minutes after the first. Reappearing reviews return to `active`. No record is classified as definitively deleted.
+
 ## Legacy UI behavior
 
 The legacy page consumes server rows, counts, pagination, and sync metadata. `status`, `keyword`, `page`, and `perPage` are URL state. Search is debounced by 350 ms. In-flight reads use both `AbortController` and a request generation check so stale location or filter results cannot replace newer state. Reply success refreshes the active query and returns to the last valid page when reclassification empties the current page. Manual sync remains queued and refreshes metadata once without polling.
 
 ## Verification evidence
 
-- `npm test -w @parametrics/api`: 370 passed, 0 failed
+- `npm test -w @parametrics/api`: 383 passed, 0 failed
 - `npm test -w @parametrics/web -- --run`: 128 passed, 0 failed across 12 files
 - `npm run lint -w @parametrics/web`: passed
 - `npm run build -w @parametrics/web`: passed, 293 modules transformed
@@ -62,7 +70,7 @@ The legacy page consumes server rows, counts, pagination, and sync metadata. `st
 - `npm run lint -w client`: passed with one pre-existing React Hook Form warning and no errors
 - `npm run build -w client`: passed, 4204 modules transformed (read-only verification)
 - `node --check` on the review route, reconciliation service, and BullMQ worker: passed
-- Focused backend Reviews and reconciliation tests: 26 passed
+- Focused backend Reviews, Google client, and reconciliation tests: 43 passed
 - Focused legacy Reviews tests: 11 passed
 
 No authenticated browser automation was performed. No production deployment was performed.

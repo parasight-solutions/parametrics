@@ -12,16 +12,28 @@ import useApi from "../hooks/useApi";
 import { reviewsEndpoints } from "../services/reviews.service";
 
 import { useNotify } from "../context/notification/useNotify";
+import Badge from "./ui/Badge";
 
 const ReviewCard = ({ review, onReply }) => {
   const { notify } = useNotify();
   const { loading, callApi } = useApi();
 
-  const { id, reviewer, comment, starRating, reviewReply } = review || {};
+  const {
+    id,
+    reviewer,
+    comment,
+    starRating,
+    reviewReply,
+    provider_sync_status,
+  } = review || {};
   const { profilePhotoUrl, displayName } = reviewer || {};
 
   const ogReply = reviewReply?.comment ?? "";
   const hasReply = Boolean(ogReply.trim());
+
+  const isUnavailable = ["unavailable", "missing"]?.includes(
+    provider_sync_status,
+  );
 
   const [draftReply, setDraftReply] = useState(null);
 
@@ -44,7 +56,7 @@ const ReviewCard = ({ review, onReply }) => {
   };
 
   const saveReply = () => {
-    if (!id || isUnEdited) return;
+    if (isUnavailable || !id || isUnEdited) return;
 
     callApi(
       "replying",
@@ -52,11 +64,13 @@ const ReviewCard = ({ review, onReply }) => {
       {
         onSuccess: async (res) => {
           await onReply();
-          cancleEditing();
           notify.msgSuccess(res?.message || "Reply posted!");
         },
         onError: (error) => {
           notify.msgError(error?.message || "Error posting reply!");
+        },
+        atLast: () => {
+          cancleEditing();
         },
       },
     );
@@ -64,33 +78,37 @@ const ReviewCard = ({ review, onReply }) => {
 
   return (
     <div className="p-3 flex flex-col gap-3 border border-gray-300 rounded-xl">
-      <div className="flex items-center gap-3">
-        <img
-          src={profilePhotoUrl}
-          alt={displayName}
-          className="shrink-0 size-8 rounded-full"
-        />
+      <div className="flex items-center justify-between gap-1">
+        <div className="flex items-center gap-3">
+          <img
+            src={profilePhotoUrl}
+            alt={displayName}
+            className="shrink-0 size-8 rounded-full"
+          />
 
-        <div className="flex flex-col gap-0.5">
-          <p className="font-medium text-base">{displayName}</p>
+          <div className="flex flex-col gap-0.5">
+            <p className="font-medium text-base">{displayName}</p>
 
-          <div className="flex items-center gap-1">
-            {[...Array(5)].map((_, idx) => {
-              const isFilled = idx + 1 <= starRating;
+            <div className="flex items-center gap-1">
+              {[...Array(5)].map((_, idx) => {
+                const isFilled = idx + 1 <= starRating;
 
-              return (
-                <Star
-                  size={16}
-                  className={
-                    isFilled
-                      ? "text-yellow-400 fill-yellow-400"
-                      : "text-gray-300 fill-gray-300"
-                  }
-                />
-              );
-            })}
+                return (
+                  <Star
+                    size={16}
+                    className={
+                      isFilled
+                        ? "text-yellow-400 fill-yellow-400"
+                        : "text-gray-300 fill-gray-300"
+                    }
+                  />
+                );
+              })}
+            </div>
           </div>
         </div>
+
+        {isUnavailable && <Badge variant="red" text={provider_sync_status} />}
       </div>
 
       <ExpandableText text={comment} />
@@ -101,6 +119,7 @@ const ReviewCard = ({ review, onReply }) => {
         id={id}
         label="Reply"
         attachment={
+          !isUnavailable &&
           hasReply && (
             <button
               onClick={isEditing ? cancleEditing : startEditing}
@@ -123,13 +142,15 @@ const ReviewCard = ({ review, onReply }) => {
         />
       </FormField>
 
-      <CustomButton
-        onClick={saveReply}
-        className="self-end"
-        name="Send Reply"
-        loading={isReplying}
-        disabled={!isEditable || isUnEdited}
-      />
+      {!isUnavailable && (
+        <CustomButton
+          onClick={saveReply}
+          className="self-end"
+          name="Send Reply"
+          loading={isReplying}
+          disabled={!isEditable || isUnEdited}
+        />
+      )}
     </div>
   );
 };
