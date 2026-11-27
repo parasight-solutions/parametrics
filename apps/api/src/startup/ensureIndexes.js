@@ -83,6 +83,71 @@ export async function ensurePostDeletionTombstoneIndexes(collection) {
   }, { name: "idx_post_deletion_tombstones_provider_resource" });
 }
 
+export async function ensureReviewIndexes(reviews) {
+  const revIdx = await listIdx(reviews);
+  const legacyReviewsKey = { location_id: 1, provider_review_name: 1 };
+  const legacyReviews = revIdx.find(
+    (ix) => ix.unique && keyEq(ix.key, legacyReviewsKey)
+  );
+  if (legacyReviews) {
+    console.warn(
+      "[indexes] dropping legacy unique index on reviews:",
+      legacyReviews.name
+    );
+    await dropIndexIfExists(reviews, legacyReviews.name);
+  }
+
+  await ensureIndex(
+    reviews,
+    { user_id: 1, location_id: 1, provider: 1, provider_review_id: 1 },
+    {
+      unique: true,
+      name: "uniq_reviews_canonical_provider_identity",
+      partialFilterExpression: {
+        user_id: { $type: "string" },
+        location_id: { $type: "string" },
+        provider: "google",
+        provider_review_id: { $type: "string" },
+      },
+    },
+  );
+
+  await ensureIndex(
+    reviews,
+    { user_id: 1, location_id: 1, provider_review_name: 1 },
+    {
+      unique: true,
+      name: "uniq_reviews_user_location_provider_review",
+    }
+  );
+
+  await ensureIndex(
+    reviews,
+    { user_id: 1, location_id: 1, provider: 1, updateTime: -1, createTime: -1, _id: -1 },
+    {
+      name: "idx_reviews_user_location_provider_updateTime",
+    }
+  );
+
+  await ensureIndex(
+    reviews,
+    { organization_id: 1, client_id: 1, location_id: 1, updateTime: -1, createTime: -1 },
+    {
+      name: "idx_reviews_org_client_location_updateTime",
+    }
+  );
+}
+
+export async function ensureReviewDuplicateArchiveIndexes(collection) {
+  await ensureIndex(collection, { source_review_id: 1 }, {
+    unique: true,
+    name: "uniq_review_duplicate_archive_source_review_id",
+  });
+  await ensureIndex(collection, { user_id: 1, location_id: 1, archived_at: -1 }, {
+    name: "idx_review_duplicate_archive_scope",
+  });
+}
+
 export async function ensureIndexes() {
   // ---------------------------------------------------------------------------
   // auth_sessions
@@ -307,44 +372,10 @@ export async function ensureIndexes() {
   // reviews
   // ---------------------------------------------------------------------------
   const reviews = await col("reviews");
+  await ensureReviewIndexes(reviews);
 
-  const revIdx = await listIdx(reviews);
-  const legacyReviewsKey = { location_id: 1, provider_review_name: 1 };
-  const legacyReviews = revIdx.find(
-    (ix) => ix.unique && keyEq(ix.key, legacyReviewsKey)
-  );
-  if (legacyReviews) {
-    console.warn(
-      "[indexes] dropping legacy unique index on reviews:",
-      legacyReviews.name
-    );
-    await dropIndexIfExists(reviews, legacyReviews.name);
-  }
-
-  await ensureIndex(
-    reviews,
-    { user_id: 1, location_id: 1, provider_review_name: 1 },
-    {
-      unique: true,
-      name: "uniq_reviews_user_location_provider_review",
-    }
-  );
-
-  await ensureIndex(
-    reviews,
-    { user_id: 1, location_id: 1, provider: 1, updateTime: -1, createTime: -1 },
-    {
-      name: "idx_reviews_user_location_provider_updateTime",
-    }
-  );
-
-  await ensureIndex(
-    reviews,
-    { organization_id: 1, client_id: 1, location_id: 1, updateTime: -1, createTime: -1 },
-    {
-      name: "idx_reviews_org_client_location_updateTime",
-    }
-  );
+  const reviewDuplicateArchive = await col("review_duplicate_archive");
+  await ensureReviewDuplicateArchiveIndexes(reviewDuplicateArchive);
 
   // ---------------------------------------------------------------------------
   // review_sync_state
